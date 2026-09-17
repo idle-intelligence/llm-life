@@ -1,0 +1,29 @@
+[package]
+name = "llm-life"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A language model as the update rule of a cellular automaton"
+
+[[bin]]
+name = "llm-life"
+path = "src/bin/llm-life.rs"
+required-features = ["native"]
+
+[features]
+default = ["native"]
+# Backend/feature selection lives in the consumer crate, not the library
+# (CLAUDE.md "Code"): llm-wasm's own `native` feature pulls wgpu + the
+# native tokenizer.
+native = ["llm-wasm/native", "dep:clap"]
+
+[dependencies]
+life = { path = "../life" }
+# The engine, from a dedicated worktree + branch of llm-web whose Cargo
+# manifests are frozen (CLAUDE.md "Code").
+llm-wasm = { path = "../../../llm-web/.claude/worktrees/llm-life/crates/llm-wasm", default-features = false, features = ["wgpu"] }
+# Types only (WgpuDevice, Tensor) — the wgpu backend feature is unified in
+# from llm-wasm, which owns the backend choice.
+burn = { version = "0.20", default-features = false, features = ["std"] }
+anyhow = { workspace = true }
+clap = { version = "4.5", features = ["derive"], optional = true }
