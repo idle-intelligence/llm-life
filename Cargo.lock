@@ -2724,7 +2724,6 @@ dependencies = [
  "anyhow",
  "burn",
  "clap",
- "console_error_panic_hook",
  "life",
  "llm-wasm",
  "wasm-bindgen",

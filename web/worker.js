@@ -3,7 +3,7 @@
 // The worker fetches the GGUF in chunks and pushes them into the engine
 // (`appendModelShard`) rather than handing it one giant ArrayBuffer — the
 // engine reads through a sharded cursor for exactly this reason.
-import init, { LifeEngine, initWgpuDevice } from './pkg/llm_life.js';
+import init, { LifeEngine, initWgpuDevice } from './pkg-llm/llm_life.js';
 
 let engine = null;
 

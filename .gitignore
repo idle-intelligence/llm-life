@@ -1,3 +1,4 @@
 /target
 /web/pkg
+/web/pkg-llm
 /scripts/headless/out
