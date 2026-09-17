@@ -2727,6 +2727,7 @@ dependencies = [
  "life",
  "llm-wasm",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 
