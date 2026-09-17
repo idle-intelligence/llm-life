@@ -20,16 +20,10 @@ fn log(msg: &str) {
     web_sys::console::log_1(&JsValue::from_str(msg));
 }
 
-#[wasm_bindgen(start)]
-pub fn start() {
-    console_error_panic_hook::set_once();
-}
-
-/// Must be called and awaited once before constructing a [`LifeEngine`].
-#[wasm_bindgen(js_name = initWgpuDevice)]
-pub async fn init_wgpu_device() -> Result<(), JsError> {
-    llm_wasm::web::init_wgpu_device().await
-}
+// `initWgpuDevice` and the panic hook are NOT redefined here: llm-wasm's
+// `web` module already exports both, and wasm-bindgen collects exports from
+// every linked crate into one module — a second `#[wasm_bindgen(start)]` or a
+// second `initWgpuDevice` would collide. JS imports them from this same pkg.
 
 #[wasm_bindgen]
 pub struct LifeEngine {
