@@ -818,6 +818,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "const-random"
 version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2100,9 +2110,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2712,8 +2724,11 @@ dependencies = [
  "anyhow",
  "burn",
  "clap",
+ "console_error_panic_hook",
  "life",
  "llm-wasm",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -2724,14 +2739,21 @@ dependencies = [
  "burn",
  "byteorder",
  "clap",
+ "console_error_panic_hook",
  "cubecl",
  "cubek-matmul",
+ "getrandom 0.3.4",
+ "js-sys",
  "minijinja",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tokenizers",
  "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wgpu",
 ]
 
 [[package]]

@@ -37,7 +37,7 @@
   <legend>Input</legend>
   <div class="row">
     <label><input type="radio" name="mode" value="classical" checked /> classical</label>
-    <label><input type="radio" name="mode" value="llm" disabled /> LLM (variant B)</label>
+    <label><input type="radio" name="mode" value="llm" /> LLM (variant B)</label>
     <span id="mode-note" style="font-size:0.8rem;color:#888;"></span>
   </div>
   <div class="row" style="margin-top:0.6rem;">
@@ -65,6 +65,7 @@
     <tr><td class="k">generation</td><td class="v" id="p-gen">0</td></tr>
     <tr><td class="k">live cells</td><td class="v" id="p-live">0</td></tr>
     <tr><td class="k">seconds / generation</td><td class="v" id="p-sec">—</td></tr>
+    <tr><td class="k">tokens / forward pass</td><td class="v" id="p-tok">—</td></tr>
     <tr><td class="k">agreement with true Life</td><td class="v" id="p-acc">100.00% (classical mode is exact)</td></tr>
   </table>
   <p style="font-size:0.75rem;color:#888;margin-bottom:0;">All timings provisional: shared GPU.</p>
@@ -84,6 +85,7 @@ const els = {
   random: document.getElementById('random'),
   glider: document.getElementById('glider'),
   gen: document.getElementById('p-gen'),
+  tok: document.getElementById('p-tok'),
   live: document.getElementById('p-live'),
   sec: document.getElementById('p-sec'),
   acc: document.getElementById('p-acc'),
@@ -103,6 +105,9 @@ function log(msg) {
 // real rule from the same starting grid, so the diff panel is meaningful in
 // both modes (in classical mode the two are the same object's state).
 let app, truth, playing = false, timer = null, lastSec = null;
+// `mode` picks which update rule fills the model panel; `lastP` is the
+// model's p(alive) (LLM mode paints it as gray, classical mode has none).
+let mode = 'classical', lastP = null, generation = 0, lastAccuracy = 1;
 
 // Paint a [0,1] float per cell: 0 = white, 1 = black. Binary grids are just
 // the two endpoints; LLM mode paints p(alive) as gray.
@@ -122,7 +127,7 @@ function paint(c, values) {
 function render() {
   const model = app.cells();
   const t = truth.cells();
-  paint(ctx.model, model);
+  paint(ctx.model, lastP ?? model);
   paint(ctx.truth, t);
   const diff = new Float32Array(W * H);
   let wrong = 0;
@@ -132,17 +137,23 @@ function render() {
     wrong += d;
   }
   paint(ctx.diff, diff);
-  els.gen.textContent = app.generation();
+  els.gen.textContent = generation;
   els.live.textContent = app.live_count();
   els.sec.textContent = lastSec === null ? '—' : lastSec.toFixed(3);
-  const acc = 100 * (1 - wrong / (W * H));
+  lastAccuracy = 1 - wrong / (W * H);
+  const acc = 100 * lastAccuracy;
   els.acc.textContent = acc.toFixed(2) + '%' + (wrong === 0 ? ' (exact)' : ` (${wrong} cells differ)`);
 }
 
-function stepOnce() {
+async function stepOnce() {
+  if (mode === 'llm') {
+    if (!llmReady) { log('LLM mode: no model loaded'); return; }
+    return llmStepOnce();
+  }
   const t0 = performance.now();
   app.step(1);
   truth.step(1);
+  generation++;
   lastSec = (performance.now() - t0) / 1000;
   render();
 }
@@ -158,7 +169,13 @@ function setPlaying(on) {
 function resync() {
   truth.set_cells(app.cells());
   lastSec = null;
+  lastP = null;
+  generation = 0;
   render();
+}
+
+for (const r of document.querySelectorAll('input[name=mode]')) {
+  r.addEventListener('change', () => { if (r.checked) window.__app.setMode(r.value); });
 }
 
 await init();
@@ -173,7 +190,6 @@ els.step.onclick = () => { setPlaying(false); stepOnce(); };
 els.clear.onclick = () => { setPlaying(false); app.clear(); truth.clear(); resync(); };
 els.random.onclick = () => { setPlaying(false); app.randomize(BigInt(Date.now()), 0.28); resync(); };
 els.glider.onclick = () => { setPlaying(false); app.clear(); app.place_glider(2, 2); resync(); };
-els.note.textContent = 'LLM mode arrives with the wasm engine build.';
 
 document.getElementById('c-model').addEventListener('click', (e) => {
   const r = e.target.getBoundingClientRect();
@@ -183,23 +199,79 @@ document.getElementById('c-model').addEventListener('click', (e) => {
   resync();
 });
 
-// Headless-harness surface. The page is driven through this, never through
-// synthetic DOM clicks (CLAUDE.md "Demo").
+// ---------------------------------------------------------------------------
+// LLM mode — variant B through the wasm engine, in a Worker (the main thread
+// does UI only).
+// ---------------------------------------------------------------------------
+let worker = null, nextId = 1, pending = new Map(), llmReady = false, loading = null;
+
+function ask(type, payload) {
+  return new Promise((resolve, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve, reject });
+    worker.postMessage({ id, type, payload });
+  });
+}
+
+function ensureWorker() {
+  if (worker) return;
+  worker = new Worker('./worker.js', { type: 'module' });
+  worker.onmessage = (e) => {
+    const { id, ok, result, type, stage, fraction } = e.data;
+    if (type === 'progress') { log(`${stage}: ${(fraction * 100).toFixed(0)}%`); return; }
+    const p = pending.get(id);
+    pending.delete(id);
+    ok ? p.resolve(result) : p.reject(new Error(result));
+  };
+}
+
+async function loadLlm(spec) {
+  ensureWorker();
+  if (!loading) {
+    log('loading model into the worker…');
+    loading = ask('load', { ...spec, width: W, height: H, rulestring: app.rulestring() })
+      .then((info) => { llmReady = true; els.tok.textContent = info.packedTokens; log('LLM mode ready'); return info; })
+      .catch((e) => { loading = null; log('load failed: ' + e.message); throw e; });
+  }
+  return loading;
+}
+
+async function llmStepOnce() {
+  const t0 = performance.now();
+  const r = await ask('step', { cells: Array.from(app.cells()) });
+  lastSec = (performance.now() - t0) / 1000;
+  lastP = r.pAlive;
+  // The model's argmax becomes the next state it is fed; truth advances
+  // independently from its own history, so the diff panel shows accumulated
+  // divergence, not one-step error.
+  app.set_cells(Uint8Array.from(r.pAlive, (v) => (v >= 0.5 ? 1 : 0)));
+  truth.step(1);
+  generation++;
+  render();
+}
+
+els.note.textContent = 'LLM mode: load a model through window.__app.loadLlm({ggufUrl, tokenizerUrl}).';
+
 window.__app = {
   ready: true,
   width: W,
   height: H,
-  mode: () => 'classical',
-  generation: () => app.generation(),
+  mode: () => mode,
+  setMode: (m) => { setPlaying(false); mode = m; lastSec = null; lastP = null; resync(); return mode; },
+  llmReady: () => llmReady,
+  loadLlm,
+  generation: () => generation,
   grid: () => Array.from(app.cells()),
   truthGrid: () => Array.from(truth.cells()),
+  pAlive: () => lastP,
   liveCount: () => app.live_count(),
   rulestring: () => app.rulestring(),
+  accuracy: () => lastAccuracy,
   toggle: (x, y) => { app.toggle(x, y); resync(); },
   clear: () => { setPlaying(false); app.clear(); truth.clear(); resync(); },
   glider: () => { setPlaying(false); app.clear(); app.place_glider(2, 2); resync(); },
   randomize: (seed, density) => { setPlaying(false); app.randomize(BigInt(seed), density ?? 0.28); resync(); },
-  step: (n) => { for (let i = 0; i < (n ?? 1); i++) stepOnce(); return app.generation(); },
+  step: async (n) => { for (let i = 0; i < (n ?? 1); i++) await stepOnce(); return generation; },
   secondsPerGeneration: () => lastSec,
 };
 </script>

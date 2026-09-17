@@ -7,3 +7,6 @@
 pub mod pgm;
 pub mod score;
 pub mod variant_b;
+
+#[cfg(feature = "web")]
+pub mod web;

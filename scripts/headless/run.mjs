@@ -47,6 +47,7 @@ const info = await page.evaluate(() => ({
 check('page reports a grid and a rule', info.w > 0 && info.h > 0 && info.rule === 'B3/S23',
   `${info.w}x${info.h} ${info.rule}`);
 
+// `step` is async in LLM mode, so the harness awaits it in both modes.
 // A single toggle must flip exactly one cell.
 const toggled = await page.evaluate(() => {
   window.__app.clear();
@@ -58,10 +59,10 @@ check('toggle flips exactly one cell', toggled.before === 0 && toggled.after ===
   JSON.stringify(toggled));
 
 // A glider must still be a glider after 4 generations, translated by (1,1).
-const glider = await page.evaluate(() => {
+const glider = await page.evaluate(async () => {
   window.__app.glider();
   const before = window.__app.grid().slice();
-  window.__app.step(4);
+  await window.__app.step(4);
   const after = window.__app.grid().slice();
   const W = window.__app.width, H = window.__app.height;
   let moved = 0;
@@ -76,9 +77,9 @@ check('glider translates by (1,1) in 4 generations', glider.live === 5 && glider
   JSON.stringify(glider));
 
 // The model panel and the truth panel must agree in classical mode.
-const agree = await page.evaluate(() => {
+const agree = await page.evaluate(async () => {
   window.__app.randomize(1234, 0.3);
-  window.__app.step(5);
+  await window.__app.step(5);
   const a = window.__app.grid(), b = window.__app.truthGrid();
   return a.every((v, i) => v === b[i]);
 });
