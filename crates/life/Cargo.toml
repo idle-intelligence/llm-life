@@ -1,0 +1,16 @@
+[package]
+name = "life"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Classical cellular automaton (Game of Life, general B/S rules) — the ground truth llm-life is scored against"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+web = ["dep:wasm-bindgen"]
+
+[dependencies]
+wasm-bindgen = { workspace = true, optional = true }
