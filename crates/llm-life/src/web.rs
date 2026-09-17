@@ -40,10 +40,15 @@ pub struct LifeEngine {
 
 #[wasm_bindgen]
 impl LifeEngine {
+    /// Call **after** `initWgpuDevice()` has been awaited: the engine picks
+    /// up the device that call created. A `WgpuDevice::default()` here would
+    /// spin up a second, uninitialized runtime whose readback panics in the
+    /// browser ("Failed to read tensor data synchronously").
     #[wasm_bindgen(constructor)]
     pub fn new(width: usize, height: usize) -> LifeEngine {
         LifeEngine {
-            device: WgpuDevice::default(),
+            device: llm_wasm::web::wgpu_device()
+                .expect("initWgpuDevice() must be awaited before constructing LifeEngine"),
             shards: Vec::new(),
             model: None,
             head: None,
