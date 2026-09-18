@@ -300,6 +300,18 @@
             <div class="metric-label">accuracy</div>
         </div>
         <div class="metric">
+            <div class="metric-value" id="p-iou">1.000</div>
+            <div class="metric-label">IoU</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="p-wrong">0</div>
+            <div class="metric-label">wrong cells</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="p-f1">1.000</div>
+            <div class="metric-label">F1</div>
+        </div>
+        <div class="metric">
             <div class="metric-value" id="p-gen">0</div>
             <div class="metric-label">generation</div>
         </div>
@@ -338,6 +350,9 @@ const els = {
   trueLive: document.getElementById('p-true-live'),
   sec: document.getElementById('p-sec'),
   acc: document.getElementById('p-acc'),
+  iou: document.getElementById('p-iou'),
+  wrong: document.getElementById('p-wrong'),
+  f1: document.getElementById('p-f1'),
   thresh: document.getElementById('p-thresh'),
   overlay: document.getElementById('overlay-palive'),
   note: document.getElementById('mode-note'),
@@ -385,7 +400,7 @@ let app, truth, playing = false, timer = null, lastSec = null;
 // model's p(alive) — `app`'s own cells are always the *binarized* grid (the
 // thing that is actually compared against true Life and fed forward), and
 // the overlay checkbox only changes what gets painted.
-let mode = 'classical', lastP = null, generation = 0, lastAccuracy = 1;
+let mode = 'classical', lastP = null, generation = 0, lastAccuracy = 1, lastIou = 1, lastF1 = 1, lastWrong = 0;
 let lastChunks = null, lastTokens = null;
 // LLM-mode binarization: label-free, no ground truth involved. Otsu is the
 // default; z-score is reachable only through `window.__app.setThreshold`,
@@ -414,12 +429,25 @@ function render() {
   paint(ctx.model, showOverlay ? lastP : model);
   paint(ctx.truth, t);
   const diff = new Float32Array(W * H);
-  let wrong = 0;
+  // Same formulas as crate::score::score (crates/llm-life/src/score.rs),
+  // computed directly here rather than round-tripping through wasm: they
+  // are one-line arithmetic over counts this loop is already accumulating,
+  // unlike Otsu/z-score (genuinely nontrivial, reused from wasm below).
+  let wrong = 0, inter = 0, modelLive = 0, trueLive = 0;
   for (let i = 0; i < W * H; i++) {
-    const d = (model[i] !== t[i]) ? 1 : 0;
+    const m = model[i] !== 0, tr = t[i] !== 0;
+    const d = (m !== tr) ? 1 : 0;
     diff[i] = d;
     wrong += d;
+    if (m) modelLive++;
+    if (tr) trueLive++;
+    if (m && tr) inter++;
   }
+  const union = modelLive + trueLive - inter;
+  const iou = union === 0 ? 1 : inter / union;
+  const precision = modelLive === 0 ? (trueLive === 0 ? 1 : 0) : inter / modelLive;
+  const recall = trueLive === 0 ? 1 : inter / trueLive;
+  const f1 = (precision + recall) === 0 ? 0 : 2 * precision * recall / (precision + recall);
   paint(ctx.diff, diff);
   els.gen.textContent = generation;
   els.live.textContent = app.live_count();
@@ -431,8 +459,14 @@ function render() {
     ? `${thresholdName}${lastThresholdValue === null ? '' : ` (t=${lastThresholdValue.toFixed(3)})`}`
     : '—';
   lastAccuracy = 1 - wrong / (W * H);
+  lastIou = iou;
+  lastF1 = f1;
+  lastWrong = wrong;
   const acc = 100 * lastAccuracy;
   els.acc.textContent = acc.toFixed(2) + '%';
+  els.iou.textContent = iou.toFixed(3);
+  els.wrong.textContent = wrong;
+  els.f1.textContent = f1.toFixed(3);
 }
 
 async function stepOnce() {
@@ -607,7 +641,7 @@ async function llmStepOnce() {
   generation++;
   render();
   setStatus('ready', 'Ready');
-  logReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (true ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)}`);
+  logReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (true ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)} · IoU ${lastIou.toFixed(2)} · wrong ${lastWrong}`);
 }
 
 els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell. Click a cell in the model grid to toggle it.';
@@ -638,6 +672,9 @@ window.__app = {
   trueLiveCount: () => truth.live_count(),
   rulestring: () => app.rulestring(),
   accuracy: () => lastAccuracy,
+  iou: () => lastIou,
+  f1: () => lastF1,
+  wrongCells: () => lastWrong,
   // Label-free binarization of p(alive) — Otsu (default) or z-score, k
   // optional (default 2.0). No UI control: CLAUDE.md "Demo" bars settings
   // panels, so z-score is reachable only here.
