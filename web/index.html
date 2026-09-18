@@ -103,8 +103,23 @@ const ctx = {
   diff: document.getElementById('c-diff').getContext('2d'),
 };
 
+let statusLines = [];
+function renderStatus() {
+  els.status.textContent = statusLines.join('\n');
+}
 function log(msg) {
-  els.status.textContent = msg + '\n' + els.status.textContent;
+  statusLines.unshift(msg);
+  if (statusLines.length > 8) statusLines.length = 8;
+  renderStatus();
+  console.log('[llm-life]', msg);
+}
+// Replace the current top line instead of pushing a new one — used for the
+// ticking "running…" line so it doesn't spam the scrolling log.
+function logReplace(msg) {
+  if (statusLines.length === 0) statusLines.unshift(msg);
+  else statusLines[0] = msg;
+  renderStatus();
+  console.log('[llm-life]', msg);
 }
 
 // `model` holds whatever the current mode produced; `truth` always runs the
@@ -232,6 +247,7 @@ document.getElementById('c-model').addEventListener('click', (e) => {
 // does UI only).
 // ---------------------------------------------------------------------------
 let worker = null, nextId = 1, pending = new Map(), llmReady = false, loading = null;
+let genPhase = 'running';
 
 function ask(type, payload) {
   return new Promise((resolve, reject) => {
@@ -246,7 +262,11 @@ function ensureWorker() {
   worker = new Worker('./worker.js', { type: 'module' });
   worker.onmessage = (e) => {
     const { id, ok, result, type, stage, fraction } = e.data;
-    if (type === 'progress') { log(`${stage}: ${(fraction * 100).toFixed(0)}%`); return; }
+    if (type === 'progress') {
+      if (fraction !== undefined) { log(`${stage}: ${(fraction * 100).toFixed(0)}%`); }
+      else { genPhase = stage; }
+      return;
+    }
     const p = pending.get(id);
     pending.delete(id);
     ok ? p.resolve(result) : p.reject(new Error(result));
@@ -258,15 +278,36 @@ async function loadLlm(spec) {
   if (!loading) {
     log('loading model into the worker…');
     loading = ask('load', { ...spec, width: W, height: H, rulestring: app.rulestring() })
-      .then((info) => { llmReady = true; els.tok.textContent = info.packedTokens; log('LLM mode ready'); return info; })
+      .then((info) => {
+        llmReady = true;
+        els.tok.textContent = info.packedTokens;
+        const name = spec.ggufUrl.split('/').pop().replace(/\.gguf$/, '');
+        log(`model loaded: ${name} · ${info.packedTokens} tokens/forward · grid ${W}x${H}`);
+        return info;
+      })
       .catch((e) => { loading = null; log('load failed: ' + e.message); throw e; });
   }
   return loading;
 }
 
 async function llmStepOnce() {
+  const genLabel = generation + 1;
   const t0 = performance.now();
-  const r = await ask('step', { cells: Array.from(app.cells()), threshold: thresholdName, k: thresholdK });
+  genPhase = 'running';
+  log(`generation ${genLabel}: ${genPhase}… 0.0 s`);
+  const ticker = setInterval(() => {
+    const elapsed = (performance.now() - t0) / 1000;
+    logReplace(`generation ${genLabel}: ${genPhase}… ${elapsed.toFixed(1)} s`);
+  }, 250);
+  let r;
+  try {
+    r = await ask('step', { cells: Array.from(app.cells()), threshold: thresholdName, k: thresholdK });
+  } catch (e) {
+    clearInterval(ticker);
+    logReplace(`generation ${genLabel}: failed — ${e.message}`);
+    throw e;
+  }
+  clearInterval(ticker);
   lastSec = (performance.now() - t0) / 1000;
   lastP = r.pAlive;
   lastThresholdValue = r.thresholdValue;
@@ -279,6 +320,7 @@ async function llmStepOnce() {
   truth.step(1);
   generation++;
   render();
+  logReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (true ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)}`);
 }
 
 els.note.textContent = 'LLM mode loads its model automatically on first switch.';
