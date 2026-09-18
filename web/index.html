@@ -411,6 +411,11 @@ let app, truth, playing = false, timer = null, lastSec = null;
 // the overlay checkbox only changes what gets painted.
 let mode = 'classical', lastP = null, generation = 0, lastAccuracy = 1, lastIou = 1, lastF1 = 1, lastWrong = 0;
 let lastChunks = null, lastTokens = null;
+// `generating` is true for the duration of one in-flight LLM generation
+// (request sent, awaiting the worker's reply). A grid-size change requested
+// while it's true is deferred to `pendingGridSize` and applied once that
+// generation lands, instead of resizing `app`/`truth` out from under it.
+let generating = false, pendingGridSize = null;
 // LLM-mode binarization: label-free, no ground truth involved. Otsu is the
 // default; z-score is reachable only through `window.__app.setThreshold`,
 // never a UI control (CLAUDE.md "Demo": no settings panels).
@@ -491,10 +496,43 @@ async function stepOnce() {
   render();
 }
 
+// LLM modes are completion-driven, not timer-driven: a generation takes
+// seconds, so a fixed-rate timer would fire again while the previous
+// generation's async step is still in flight (the bug this loop fixes).
+// Each iteration awaits one generation, then checks `playing` before asking
+// for the next.
+// Guards against a second loop starting while one is still finishing its
+// current `llmStepOnce()` — pausing doesn't cancel an in-flight generation,
+// so a quick pause/resume could otherwise call `llmStepOnce` twice
+// concurrently on the main thread even though the worker queue keeps the
+// engine calls themselves serialized.
+let llmLoopActive = false;
+async function llmPlayLoop() {
+  if (llmLoopActive) return;
+  llmLoopActive = true;
+  try {
+    while (playing) {
+      try {
+        await llmStepOnce();
+      } catch (e) {
+        playing = false;
+        els.play.textContent = 'Play';
+        break;
+      }
+    }
+  } finally {
+    llmLoopActive = false;
+  }
+}
+
 function setPlaying(on) {
   playing = on;
   els.play.textContent = on ? 'Pause' : 'Play';
   if (timer) { clearInterval(timer); timer = null; }
+  if (mode === 'llm' || mode === 'llm-a') {
+    if (on) llmPlayLoop();
+    return;
+  }
   if (on) timer = setInterval(stepOnce, 1000 / GENS_PER_SEC);
 }
 
@@ -619,6 +657,7 @@ async function llmStepOnce() {
   const genLabel = generation + 1;
   const t0 = performance.now();
   genPhase = 'running';
+  generating = true;
   setStatus('generating', 'Generating…');
   log(`generation ${genLabel}: ${genPhase}… 0.0 s`);
   const ticker = setInterval(() => {
@@ -636,7 +675,11 @@ async function llmStepOnce() {
       k: thresholdK,
     });
   } catch (e) {
+    // Leave the page paused and recoverable: clear the ticker, log one
+    // error line (not a growing spam of them), and drop back to ready so
+    // the next step/play works without a reload.
     clearInterval(ticker);
+    generating = false;
     setStatus('error', 'Generation failed');
     logReplace(`generation ${genLabel}: failed — ${e.message}`);
     throw e;
@@ -655,6 +698,15 @@ async function llmStepOnce() {
   app.set_cells(Uint8Array.from(r.binarized));
   truth.step(1);
   generation++;
+  generating = false;
+  // A grid-size change requested mid-generation (`window.__app.setGrid`)
+  // was deferred; apply it now that this generation's result has already
+  // landed on the old-sized `app`/`truth`.
+  if (pendingGridSize !== null && mode !== 'llm-a') {
+    const n = pendingGridSize;
+    pendingGridSize = null;
+    setGridSize(n);
+  }
   render();
   setStatus('ready', 'Ready');
   logReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (true ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)} · IoU ${lastIou.toFixed(2)} · wrong ${lastWrong}`);
@@ -682,7 +734,13 @@ window.__app = {
     if (![32, 64, 128].includes(n)) throw new Error('grid size must be 32, 64 or 128');
     llmGridSize = n;
     for (const r of document.querySelectorAll('input[name=gridsize]')) r.checked = Number(r.value) === n;
-    if (mode !== 'llm-a') { setGridSize(n); resync(); }
+    if (mode !== 'llm-a') {
+      // Mid-generation, resizing `app`/`truth` now would apply the in-flight
+      // result (sized for the old grid) to a mismatched grid. Defer instead —
+      // `llmStepOnce` applies it once that generation lands.
+      if (generating) pendingGridSize = n;
+      else { setGridSize(n); resync(); }
+    }
     return llmGridSize;
   },
   llmReady: () => llmReady,
@@ -717,6 +775,8 @@ window.__app = {
   randomize: (seed, density) => { setPlaying(false); app.randomize(BigInt(seed), density ?? 0.28); resync(); },
   step: async (n) => { for (let i = 0; i < (n ?? 1); i++) await stepOnce(); return generation; },
   secondsPerGeneration: () => lastSec,
+  play: (on) => { setPlaying(on ?? !playing); return playing; },
+  isPlaying: () => playing,
 };
 </script>
 </body>
