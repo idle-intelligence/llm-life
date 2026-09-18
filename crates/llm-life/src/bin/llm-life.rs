@@ -11,10 +11,12 @@ use life::{Grid, Rule};
 use llm_life::pgm::{read_pgm, write_binary_pgm, write_pgm};
 use llm_life::score::{median_threshold_grid, otsu_threshold_grid, per_case_recall, score, zscore_threshold_grid};
 use llm_life::variant_a;
-use llm_life::variant_b::{argmax_grid, fewshot_rules_prefix, p_alive, pack, rules_prefix};
+use llm_life::variant_b::{
+    argmax_grid, fewshot_rules_prefix, p_alive, pack_sparse, rules_prefix, MAX_STENCIL_KEYS,
+};
 use llm_wasm::gguf::Q4ModelLoader;
 use llm_wasm::kv::KvCache;
-use llm_wasm::model::{ForwardSpec, LlmModel};
+use llm_wasm::model::{ForwardSpec, LlmModel, SparseMask};
 use llm_wasm::tokenizer::Tokenizer;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -199,11 +201,18 @@ impl Runner {
     /// One generation: pack the grid, one forward pass, read p(alive) at
     /// every cell.
     fn step(&self, grid: &Grid) -> Result<(Vec<f32>, f64)> {
-        let packed = pack(grid, &self.prefix, self.dead, self.alive);
-        let t = packed.len();
+        let packed = pack_sparse(grid, &self.prefix, self.dead, self.alive);
+        let t = packed.tokens.len();
         let spec = ForwardSpec::default()
             .with_positions(packed.positions.clone())
-            .with_allowed(&packed.allowed, t, t, self.model.device());
+            .with_sparse(SparseMask::new(
+                &packed.prefix_len,
+                &packed.n_keys,
+                &packed.keys,
+                MAX_STENCIL_KEYS,
+                t,
+                self.model.device(),
+            ));
 
         let start = Instant::now();
         let mut cache = self.model.new_cache(t);

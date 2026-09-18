@@ -138,3 +138,71 @@ pub fn p_alive(logits: &[f32], grid_start: usize, n_cells: usize) -> Vec<f32> {
 pub fn argmax_grid(p: &[f32], width: usize, height: usize) -> Grid {
     Grid::from_cells(width, height, p.iter().map(|&v| (v >= 0.5) as u8).collect())
 }
+
+/// The same packed sequence as [`pack`], with the stencil expressed as
+/// llm-web's `SparseMask` (a contiguous key prefix plus an explicit key
+/// list per query) instead of a dense `[T, T]` bool mask.
+///
+/// This is the form the mask has always had — a cell reads the rules prefix
+/// and its 9-cell neighbourhood — and the dense form was only ever a
+/// transcription of it. At 64x64 that transcription is a 17M-entry
+/// `Vec<bool>`; at 128x128 it is 271 MB on the CPU and the same again on
+/// the GPU, before a single attention score is computed. Here it is
+/// `T * (2 + 9)` u32 either way.
+///
+/// [`pack`] stays: it is what `tests/variant_b.rs` checks the topology
+/// against and what llm-web's `tests/stencil.rs` uses as the numerical
+/// oracle for the kernel.
+pub struct PackedSparse {
+    pub tokens: Vec<u32>,
+    pub positions: Vec<u32>,
+    /// Per query, the length of the attended contiguous key range `[0, .)`:
+    /// `i + 1` for a prefix row (causal), the whole prefix for a cell row.
+    pub prefix_len: Vec<u32>,
+    /// Per query, how many of its `keys` row is valid.
+    pub n_keys: Vec<u32>,
+    /// Row-major `[T, MAX_STENCIL_KEYS]`.
+    pub keys: Vec<u32>,
+    pub grid_start: usize,
+}
+
+/// Self plus 8 neighbours — the widest explicit key list a cell row has.
+pub const MAX_STENCIL_KEYS: usize = 9;
+
+pub fn pack_sparse(grid: &Grid, prefix_tokens: &[u32], dead: u32, alive: u32) -> PackedSparse {
+    let p = prefix_tokens.len();
+    let n = grid.width() * grid.height();
+    let t = p + n;
+
+    let mut tokens = Vec::with_capacity(t);
+    tokens.extend_from_slice(prefix_tokens);
+    tokens.extend(grid.cells().iter().map(|&c| if c != 0 { alive } else { dead }));
+
+    let mut positions: Vec<u32> = (0..p as u32).collect();
+    positions.extend(std::iter::repeat_n(p as u32, n));
+
+    let mut prefix_len: Vec<u32> = (1..=p as u32).collect();
+    prefix_len.extend(std::iter::repeat_n(p as u32, n));
+    let mut n_keys = vec![0u32; t];
+    let mut keys = vec![0u32; t * MAX_STENCIL_KEYS];
+    for c in 0..n {
+        let row = p + c;
+        let base = row * MAX_STENCIL_KEYS;
+        keys[base] = (p + c) as u32;
+        let mut k = 1;
+        for j in grid.neighbor_indices(c) {
+            keys[base + k] = (p + j) as u32;
+            k += 1;
+        }
+        n_keys[row] = k as u32;
+    }
+
+    PackedSparse {
+        tokens,
+        positions,
+        prefix_len,
+        n_keys,
+        keys,
+        grid_start: p,
+    }
+}
