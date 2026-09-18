@@ -8,8 +8,8 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use life::{Grid, Rule};
-use llm_life::pgm::{write_binary_pgm, write_pgm};
-use llm_life::score::{median_threshold_grid, score};
+use llm_life::pgm::{read_pgm, write_binary_pgm, write_pgm};
+use llm_life::score::{median_threshold_grid, otsu_threshold_grid, score, zscore_threshold_grid};
 use llm_life::variant_a;
 use llm_life::variant_b::{argmax_grid, fewshot_rules_prefix, p_alive, pack, rules_prefix};
 use llm_wasm::gguf::Q4ModelLoader;
@@ -92,6 +92,16 @@ enum Command {
         /// Filename prefix for this attempt's pictures and summary.
         #[arg(long, default_value = "a")]
         tag: String,
+    },
+    /// Re-score an already-written `<tag>-<seed>-gen1-{palive,true}.pgm`
+    /// pair at the Otsu and z-score (k=2) thresholds, label-free, no rerun.
+    Rescore {
+        #[arg(long, default_value = "docs/pictures")]
+        dir: PathBuf,
+        #[arg(long)]
+        tag: String,
+        #[arg(long)]
+        seed: String,
     },
 }
 
@@ -528,5 +538,32 @@ fn main() -> Result<()> {
                 freerun,
             )
         }
+        Command::Rescore { dir, tag, seed } => rescore(&dir, &tag, &seed),
     }
+}
+
+/// Re-score a picture already on disk (no GPU, no rerun): read its
+/// `palive`/`true` PGMs and print accuracy, live recall and model live count
+/// at the Otsu and z-score (k=2) thresholds, alongside the median for
+/// comparison.
+fn rescore(dir: &Path, tag: &str, seed: &str) -> Result<()> {
+    let (p, w, h) = read_pgm(&dir.join(format!("{tag}-{seed}-gen1-palive.pgm")), 6)?;
+    let (true_cells, tw, th) = read_pgm(&dir.join(format!("{tag}-{seed}-gen1-true.pgm")), 6)?;
+    anyhow::ensure!((w, h) == (tw, th), "palive/true dimension mismatch");
+    let truth = Grid::from_cells(w, h, true_cells.iter().map(|&v| (v > 0.5) as u8).collect());
+
+    let otsu = otsu_threshold_grid(&p, w, h);
+    let z2 = zscore_threshold_grid(&p, w, h, 2.0);
+    let med = median_threshold_grid(&p, w, h);
+    let s_otsu = score(&truth, &otsu, &p, 1);
+    let s_z2 = score(&truth, &z2, &p, 1);
+    let s_med = score(&truth, &med, &p, 1);
+    println!(
+        "{tag} {seed}: true_live={} | otsu acc={:.4} recall={:.4} live={} | z2 acc={:.4} recall={:.4} live={} | median acc={:.4} recall={:.4} live={}",
+        s_otsu.true_live,
+        s_otsu.accuracy, s_otsu.live_recall, s_otsu.model_live,
+        s_z2.accuracy, s_z2.live_recall, s_z2.model_live,
+        s_med.accuracy, s_med.live_recall, s_med.model_live,
+    );
+    Ok(())
 }
