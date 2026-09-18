@@ -248,6 +248,11 @@
         <label><input type="radio" name="mode" value="llm" /> LLM (variant B)</label>
         <label><input type="radio" name="mode" value="llm-a" /> LLM (variant A)</label>
     </div>
+    <div class="radios" id="grid-choice">
+        <label><input type="radio" name="gridsize" value="32" /> 32&times;32</label>
+        <label><input type="radio" name="gridsize" value="64" checked /> 64&times;64</label>
+        <label><input type="radio" name="gridsize" value="128" /> 128&times;128</label>
+    </div>
     <div class="controls">
         <button id="play" class="primary">Play</button>
         <button id="step">Step</button>
@@ -331,7 +336,11 @@ import init, { LifeApp } from './pkg/life.js';
 // chunks). The grid is resized when the mode changes, and the classical and
 // true-Life panels follow it.
 let W = 64, H = 64;
-const GRID_FOR_MODE = { classical: 64, llm: 64, 'llm-a': 16 };
+// Classical and variant B share one grid size, chosen in the INPUT section
+// (32/64/128); variant A stays fixed at 16x16 (its per-cell cost makes
+// larger grids impractical).
+let llmGridSize = 64;
+const GRID_FOR_MODE = () => ({ classical: llmGridSize, llm: llmGridSize, 'llm-a': 16 });
 const GENS_PER_SEC = 4;   // deliberately slow: you are meant to watch it
 
 const els = {
@@ -528,6 +537,13 @@ for (const r of document.querySelectorAll('input[name=mode]')) {
   });
 }
 
+for (const r of document.querySelectorAll('input[name=gridsize]')) {
+  r.addEventListener('change', () => {
+    if (!r.checked) return;
+    window.__app.setGrid(Number(r.value));
+  });
+}
+
 await init();
 app = new LifeApp(W, H);
 truth = new LifeApp(W, H);
@@ -656,9 +672,18 @@ window.__app = {
     mode = m;
     lastSec = null;
     lastP = null;
-    setGridSize(GRID_FOR_MODE[m] ?? 64);
+    setGridSize(GRID_FOR_MODE()[m] ?? 64);
     resync();
     return mode;
+  },
+  // Grid size for classical and variant B (32/64/128); variant A is
+  // unaffected (fixed 16x16). No-op in variant A mode.
+  setGrid: (n) => {
+    if (![32, 64, 128].includes(n)) throw new Error('grid size must be 32, 64 or 128');
+    llmGridSize = n;
+    for (const r of document.querySelectorAll('input[name=gridsize]')) r.checked = Number(r.value) === n;
+    if (mode !== 'llm-a') { setGridSize(n); resync(); }
+    return llmGridSize;
   },
   llmReady: () => llmReady,
   loadLlm,
