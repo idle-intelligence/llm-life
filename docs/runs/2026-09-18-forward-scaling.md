@@ -55,3 +55,10 @@ tokens, 7.10x the time) — clearly superlinear, roughly halfway between linear
 and quadratic, and variant A shows the same knee (T^1.28 over 975 -> 3663, flat
 s/token up to 1871 then a jump at 3663), so the dense O(T^2) attention/mask term
 overtakes the O(T) matmul term somewhere around T ~ 2000 on this model.
+
+---
+
+**Superseded for the "after" numbers**: `2026-09-18-forward-profile.md` broke
+this table down by component, and `2026-09-18-forward-scaling-after.md`
+re-measures both tables after the sparse-attention kernel and the tiled GEMM
+landed. The numbers above stand as the before.

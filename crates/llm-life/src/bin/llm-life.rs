@@ -107,7 +107,7 @@ enum Command {
         #[arg(long)]
         tokenizer: PathBuf,
         /// Square grid edge lengths for variant B.
-        #[arg(long, value_delimiter = ',', default_value = "16,32,45,64")]
+        #[arg(long, value_delimiter = ',', default_value = "16,32,45,64,128")]
         sizes: Vec<usize>,
         /// Cells per chunk for variant A.
         #[arg(long, value_delimiter = ',', default_value = "16,32,64,128")]
