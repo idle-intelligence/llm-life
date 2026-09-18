@@ -93,6 +93,30 @@ enum Command {
         #[arg(long, default_value = "a")]
         tag: String,
     },
+    /// Time one full forward pass at several sizes, to see how it scales.
+    ///
+    /// Variant B: the whole grid in one pass (prefill + sliced-head
+    /// readback) at each square grid size. Variant A: one chunk's forward
+    /// against the resident prefix, at each chunk size. `reps` timed
+    /// repetitions after one warm-up; the table reports the median.
+    BenchForward {
+        #[arg(long)]
+        gguf: PathBuf,
+        #[arg(long)]
+        tokenizer: PathBuf,
+        /// Square grid edge lengths for variant B.
+        #[arg(long, value_delimiter = ',', default_value = "16,32,45,64")]
+        sizes: Vec<usize>,
+        /// Cells per chunk for variant A.
+        #[arg(long, value_delimiter = ',', default_value = "16,32,64,128")]
+        chunks: Vec<usize>,
+        #[arg(long, default_value = "3")]
+        reps: usize,
+        #[arg(long, default_value = "0.28")]
+        density: f64,
+        #[arg(long)]
+        fewshot: bool,
+    },
     /// Re-score an already-written `<tag>-<seed>-gen1-{palive,true}.pgm`
     /// pair at the Otsu and z-score (k=2) thresholds, label-free, no rerun.
     Rescore {
@@ -362,6 +386,40 @@ impl RunnerA {
         }
         Ok((p, secs))
     }
+
+    /// One chunk's forward against the resident prefix, timed. Returns
+    /// `(tokens, seconds)` where `tokens` counts the resident prefix plus
+    /// the chunk's own tokens — the KV length the pass attends over.
+    fn bench_chunk(&self, grid: &Grid, chunk_cells: usize) -> Result<(usize, f64)> {
+        let cells: Vec<usize> = (0..chunk_cells).collect();
+        let chunk = variant_a::pack_chunk(
+            &cells,
+            |c| {
+                let nb: Vec<u8> = grid
+                    .neighbor_indices(c)
+                    .iter()
+                    .map(|&j| grid.cells()[j])
+                    .collect();
+                self.prompts[case_index(&nb, grid.cells()[c])].clone()
+            },
+            self.prefix_len,
+        );
+        let t = chunk.len();
+        let spec = ForwardSpec::default()
+            .with_positions(chunk.positions.clone())
+            .with_allowed(&chunk.allowed, t, self.prefix_len + t, self.model.device());
+
+        let mut cache = self.cache.borrow_mut();
+        let start = Instant::now();
+        let resident = cache.snapshot();
+        let hidden = self
+            .model
+            .forward_hidden_spec(&chunk.tokens, &mut cache, &spec)?;
+        let logits = self.model.lm_head_sliced(hidden, &self.head);
+        let _ = llm_wasm::model::logits_to_vec(logits)?;
+        cache.restore(resident);
+        Ok((self.prefix_len + t, start.elapsed().as_secs_f64()))
+    }
 }
 
 impl Stepper for RunnerA {
@@ -461,6 +519,76 @@ fn run_pictures(
     Ok(())
 }
 
+/// Median of a small sample — the reported statistic for every bench row.
+fn median(mut v: Vec<f64>) -> f64 {
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    v[v.len() / 2]
+}
+
+/// Time one forward pass at several sizes, for both variants, and print the
+/// two markdown tables that go into `docs/runs/`.
+///
+/// The two models are loaded in sequence, not together: each is ~430MB of Q4
+/// weights on the GPU and there is no reason to hold both.
+#[allow(clippy::too_many_arguments)]
+fn bench_forward(
+    gguf: &PathBuf,
+    tokenizer: &PathBuf,
+    rule: &Rule,
+    sizes: &[usize],
+    chunks: &[usize],
+    reps: usize,
+    density: f64,
+    fewshot: bool,
+    device: &WgpuDevice,
+) -> Result<()> {
+    {
+        let runner = Runner::new(gguf, tokenizer, rule, fewshot, device)?;
+        println!("\n## Variant B — one full forward (prefill + sliced-head readback)\n");
+        println!("| grid | cells | tokens T | median s | s/token |");
+        println!("|---|---|---|---|---|");
+        for &size in sizes {
+            let grid = Grid::random(size, size, 1, density);
+            runner.step(&grid)?;
+            let mut ts = Vec::with_capacity(reps);
+            for _ in 0..reps {
+                ts.push(runner.step(&grid)?.1);
+            }
+            let m = median(ts);
+            let t = runner.prefix.len() + size * size;
+            println!(
+                "| {size}x{size} | {} | {t} | {m:.3} | {:.6} |",
+                size * size,
+                m / t as f64
+            );
+        }
+    }
+
+    {
+        let max_chunk = *chunks.iter().max().unwrap();
+        let runner = RunnerA::new(gguf, tokenizer, rule, max_chunk, fewshot, device)?;
+        // Any grid at least `max_chunk` cells wide will do: the chunk is the
+        // unit being timed, not the grid.
+        let grid = Grid::random(64, 64, 1, density);
+        println!("\n## Variant A — one chunk's forward against the resident prefix\n");
+        println!("| chunk cells | tokens T | median s | s/token |");
+        println!("|---|---|---|---|");
+        for &c in chunks {
+            runner.bench_chunk(&grid, c)?;
+            let mut ts = Vec::with_capacity(reps);
+            let mut t = 0;
+            for _ in 0..reps {
+                let (tok, secs) = runner.bench_chunk(&grid, c)?;
+                t = tok;
+                ts.push(secs);
+            }
+            let m = median(ts);
+            println!("| {c} | {t} | {m:.3} | {:.6} |", m / t as f64);
+        }
+    }
+    Ok(())
+}
+
 fn single_token(tok: &Tokenizer, s: &str) -> Result<u32> {
     let ids = tok.encode(s, false)?;
     anyhow::ensure!(ids.len() == 1, "'{s}' is not a single token: {ids:?}");
@@ -538,6 +666,17 @@ fn main() -> Result<()> {
                 freerun,
             )
         }
+        Command::BenchForward {
+            gguf,
+            tokenizer,
+            sizes,
+            chunks,
+            reps,
+            density,
+            fewshot,
+        } => bench_forward(
+            &gguf, &tokenizer, &rule, &sizes, &chunks, reps, density, fewshot, &device,
+        ),
         Command::Rescore { dir, tag, seed } => rescore(&dir, &tag, &seed),
     }
 }
