@@ -2,7 +2,9 @@
 //
 // The worker fetches the GGUF in chunks and pushes them into the engine
 // (`appendModelShard`) rather than handing it one giant ArrayBuffer — the
-// engine reads through a sharded cursor for exactly this reason.
+// engine reads through a sharded cursor for exactly this reason. The dev
+// server (web/serve.py, stdlib http.server) doesn't support Range requests,
+// so this streams the single GET response and slices it into chunks itself.
 import init, { LifeEngine, initWgpuDevice } from './pkg-llm/llm_life.js';
 
 let engine = null;
@@ -10,17 +12,30 @@ let engine = null;
 const CHUNK = 64 * 1024 * 1024;
 
 async function fetchChunks(url, onProgress) {
-  const head = await fetch(url, { method: 'HEAD' });
-  if (!head.ok) throw new Error(`HEAD ${url}: ${head.status}`);
-  const total = Number(head.headers.get('content-length'));
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`GET ${url}: ${r.status}`);
+  const total = Number(r.headers.get('content-length'));
+  const reader = r.body.getReader();
   const chunks = [];
-  for (let start = 0; start < total; start += CHUNK) {
-    const end = Math.min(start + CHUNK, total) - 1;
-    const r = await fetch(url, { headers: { Range: `bytes=${start}-${end}` } });
-    if (!r.ok && r.status !== 206) throw new Error(`GET range ${url}: ${r.status}`);
-    chunks.push(new Uint8Array(await r.arrayBuffer()));
-    onProgress((end + 1) / total);
+  let buf = [], buffered = 0, loaded = 0;
+  const flush = () => {
+    const merged = new Uint8Array(buffered);
+    let off = 0;
+    for (const b of buf) { merged.set(b, off); off += b.length; }
+    chunks.push(merged);
+    buf = [];
+    buffered = 0;
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf.push(value);
+    buffered += value.length;
+    loaded += value.length;
+    onProgress(total ? loaded / total : 0);
+    if (buffered >= CHUNK) flush();
   }
+  if (buffered > 0) flush();
   return chunks;
 }
 
