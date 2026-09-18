@@ -51,9 +51,12 @@ per-generation time swung between 519 s and 957 s for identical work.
 
 | variant | seed | gen | accuracy | live recall | acc (median) | live recall (median) | confidence gap | model live / 4096 | s/gen |
 |---|---|---|---|---|---|---|---|---|---|
-| B | glider | 1 | 0.9988 | 0.000 | — | — | +0.113 | ~0 | — |
-| B | 1 | 1 | 0.6841 | 0.000 | — | — | +0.023 | ~0 | — |
-| B | 2 | 1 | 0.6814 | 0.000 | — | — | +0.021 | ~0 | — |
+| B | glider | 1 | 0.9988 | 0.000 | 0.5125 | 1.000 | +0.1266 | 0 | 53 |
+| B | 1 | 1 | 0.6841 | 0.000 | 0.8162 | 1.000 | +0.0455 | 0 | 53 |
+| B | 2 | 1 | 0.6814 | 0.000 | 0.8188 | 1.000 | +0.0435 | 0 | 53 |
+| B + few-shot | glider | 1 | 0.9988 | 0.000 | 0.5137 | 1.000 | +0.1940 | 0 | 52 |
+| B + few-shot | 1 | 1 | 0.6768 | 0.000 | 0.8162 | 1.000 | +0.0701 | 30 | 50 |
+| B + few-shot | 2 | 1 | 0.6704 | 0.000 | 0.8188 | 1.000 | +0.0694 | 45 | 56 |
 | A | glider | 1 | 0.0010 | 0.400 | 0.7170 | 0.200 | -0.2013 | 4091 | 956 |
 | A | glider | 2 | 0.0010 | 0.400 | 0.7173 | 0.400 | -0.2273 | 4091 | 950 |
 | A | glider | 3 | 0.0010 | 0.400 | 0.7170 | 0.200 | -0.2240 | 4091 | 519 |
@@ -139,3 +142,67 @@ over-predicts alive by about a third (1727 and 1763 against 1294 and 1305),
 which is where the fine-tune of CONCEPT.md §5 has to do its work.
 
 Files: `a-fewshot-1-gen1-*.pgm` (seed 1) and `a-fewshot2-{glider,2}-gen1-*.pgm`.
+
+## Few-shot on variant B
+
+Variant A's six worked examples, verbatim, inserted into variant B's prefix
+just before `Grid:` (68 tokens → 244). They cannot be rewritten in the form B's
+cells take — a cell there is one bare digit token whose self/neighbor roles are
+carried by the stencil mask and by nothing else, so no piece of text *is* one
+cell. This is the closest form, and it is the same text that moved variant A.
+
+Both runs below are 64x64, Qwen2.5-0.5B-Instruct Q4_0, teacher-forced, 3 seeds
+x 3 generations, native, same commit, same session. The rules-only run is a
+re-run, not the first picture's numbers: it exists to fill the median columns
+the first run predates. It reproduces the first picture's generation-1
+accuracies (0.9988 / 0.6841 / 0.6814) and its 12 PGMs are byte-identical to
+`b-*.pgm`, so the pipeline is unchanged. Timings **provisional** — the Metal
+GPU was shared with another repo's training job.
+
+| prefix | seed | gen | accuracy | live recall | acc (median) | live recall (median) | confidence gap | true live | model live | s/gen |
+|---|---|---|---|---|---|---|---|---|---|---|
+| rules only | glider | 1 | 0.9988 | 0.0000 | 0.5125 | 1.0000 | +0.1266 | 5 | 0 | 53.5 |
+| rules only | glider | 2 | 0.9988 | 0.0000 | 0.5164 | 1.0000 | +0.1127 | 5 | 0 | 52.0 |
+| rules only | glider | 3 | 0.9988 | 0.0000 | 0.5181 | 1.0000 | +0.1266 | 5 | 0 | 51.7 |
+| rules only | 1 | 1 | 0.6841 | 0.0000 | 0.8162 | 1.0000 | +0.0455 | 1294 | 0 | 53.1 |
+| rules only | 1 | 2 | 0.7368 | 0.0000 | 0.6670 | 0.8183 | +0.0234 | 1073 | 5 | 52.8 |
+| rules only | 1 | 3 | 0.7344 | 0.0000 | 0.7659 | 1.0000 | +0.0490 | 1088 | 0 | 51.9 |
+| rules only | 2 | 1 | 0.6814 | 0.0000 | 0.8188 | 1.0000 | +0.0435 | 1305 | 0 | 53.1 |
+| rules only | 2 | 2 | 0.7253 | 0.0000 | 0.6462 | 0.7670 | +0.0210 | 1120 | 5 | 52.2 |
+| rules only | 2 | 3 | 0.7288 | 0.0000 | 0.7698 | 1.0000 | +0.0432 | 1104 | 7 | 52.9 |
+| few-shot | glider | 1 | 0.9988 | 0.0000 | 0.5137 | 1.0000 | +0.1940 | 5 | 0 | 52.5 |
+| few-shot | glider | 2 | 0.9988 | 0.0000 | 0.5090 | 1.0000 | +0.1699 | 5 | 0 | 49.7 |
+| few-shot | glider | 3 | 0.9988 | 0.0000 | 0.5156 | 1.0000 | +0.1940 | 5 | 0 | 50.4 |
+| few-shot | 1 | 1 | 0.6768 | 0.0000 | 0.8162 | 1.0000 | +0.0701 | 1294 | 30 | 50.4 |
+| few-shot | 1 | 2 | 0.6687 | 0.0000 | 0.6670 | 0.8183 | +0.0400 | 1073 | 284 | 50.2 |
+| few-shot | 1 | 3 | 0.7075 | 0.0000 | 0.7659 | 1.0000 | +0.0777 | 1088 | 110 | 50.5 |
+| few-shot | 2 | 1 | 0.6704 | 0.0000 | 0.8188 | 1.0000 | +0.0694 | 1305 | 45 | 56.1 |
+| few-shot | 2 | 2 | 0.6626 | 0.0000 | 0.6467 | 0.7679 | +0.0373 | 1120 | 262 | 50.6 |
+| few-shot | 2 | 3 | 0.6975 | 0.0000 | 0.7698 | 1.0000 | +0.0697 | 1104 | 135 | 50.4 |
+
+**Few-shot does not move variant B's live recall off zero.** It answers `1` on
+0–284 of 4096 cells instead of 0–7, and every one of those is wrong: live
+recall at 0.5 is 0.0000 on all 18 rows of both runs. Accuracy at 0.5 is
+slightly *worse* than rules-only on generations 2 and 3 (0.66–0.71 against
+0.72–0.74), for the same reason variant A's was: the extra `1`s land on dead
+cells.
+
+**The confidence gap was already positive in B, and few-shot widens it** —
++0.0455 → +0.0701 (seed 1 gen 1), +0.0435 → +0.0694 (seed 2 gen 1), +0.127 →
++0.194 (glider). That is the same direction as variant A's -0.094 → +0.040,
+but in A few-shot *created* a correct ordering where there was an
+anti-correlated one, and in B it only sharpens an ordering that was already
+right.
+
+**And the ordering itself does not change.** The median-threshold accuracy is
+identical between the two runs to four decimals on every random-seed row
+(0.8162 / 0.6670 / 0.7659 and 0.8188 / 0.646x / 0.7698) and its live recall is
+1.0000 wherever it is 1.0000 in the control. Every cell true Life says is alive
+is already in the top half of B's p(alive) *without* few-shot; the examples
+scale the logit difference without reordering the cells. So few-shot buys
+variant B a wider margin and nothing that a threshold could not have bought —
+unlike variant A, where it was the ranking that moved.
+
+Files: `b-fewshot-{glider,1,2}-gen1-*.pgm`, `b-fewshot-picture.md`, and the
+control `b-rules-picture.md` (whose PGMs are byte-identical to `b-*.pgm` and
+were not duplicated).
