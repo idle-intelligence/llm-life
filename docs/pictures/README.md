@@ -122,3 +122,20 @@ was not attempted tonight.
 above. On rules-only variant A it lifts accuracy 0.30 → 0.45 and no further,
 because the underlying ranking is anti-correlated; once few-shot fixes the
 ranking, the median and 0.5 agree to within 0.04.
+
+### Few-shot variant A across all three seeds (64x64, generation 1)
+
+| seed | accuracy | live recall | acc (median) | live recall (median) | confidence gap | model live | true live | s/gen |
+|---|---|---|---|---|---|---|---|---|
+| glider | 0.9985 | 0.600 | 0.5911 | 1.000 | +0.1843 | 7 | 5 | 861 |
+| 1 | 0.6252 | 0.574 | 0.5906 | 0.643 | +0.0400 | 1727 | 1294 | 849 |
+| 2 | 0.6172 | 0.575 | 0.5986 | 0.654 | +0.0380 | 1763 | 1305 | 847 |
+
+The confidence gap is positive on every seed. On the glider — a grid that is
+4091/4096 dead with one five-cell object — the model puts 7 cells alive against
+a true 5 and gets 3 of the 5 right, which is the first output in this repo that
+looks like a Life step rather than a constant. On the random seeds it still
+over-predicts alive by about a third (1727 and 1763 against 1294 and 1305),
+which is where the fine-tune of CONCEPT.md §5 has to do its work.
+
+Files: `a-fewshot-1-gen1-*.pgm` (seed 1) and `a-fewshot2-{glider,2}-gen1-*.pgm`.
