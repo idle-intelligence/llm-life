@@ -8,14 +8,14 @@
 
 use crate::score::{otsu_threshold, zscore_threshold};
 use crate::variant_a;
-use crate::variant_b::{p_alive, pack, rules_prefix};
+use crate::variant_b::{p_alive, pack_sparse, rules_prefix, MAX_STENCIL_KEYS};
 use burn::backend::wgpu::WgpuDevice;
 use burn::backend::Wgpu;
 use burn::tensor::Tensor;
 use life::{Grid, Rule};
 use llm_wasm::gguf::Q4ModelLoader;
 use llm_wasm::kv::KvCache;
-use llm_wasm::model::{ForwardSpec, LlmModel};
+use llm_wasm::model::{ForwardSpec, LlmModel, SparseMask};
 use llm_wasm::tokenizer::Tokenizer;
 use wasm_bindgen::prelude::*;
 
@@ -209,11 +209,19 @@ impl LifeEngine {
             return Err(JsError::new("cells length does not match the grid"));
         }
         let grid = Grid::from_cells(self.width, self.height, cells);
-        let packed = pack(&grid, &self.prefix, self.dead, self.alive);
-        let t = packed.len();
+        let packed = pack_sparse(&grid, &self.prefix, self.dead, self.alive);
+        let t = packed.tokens.len();
+        let sparse = SparseMask::new(
+            &packed.prefix_len,
+            &packed.n_keys,
+            &packed.keys,
+            MAX_STENCIL_KEYS,
+            t,
+            &self.device,
+        );
         let spec = ForwardSpec::default()
             .with_positions(packed.positions.clone())
-            .with_allowed(&packed.allowed, t, t, &self.device);
+            .with_sparse(sparse);
 
         let mut cache = model.new_cache(t);
         let hidden = model
