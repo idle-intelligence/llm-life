@@ -5,7 +5,7 @@
 // engine reads through a sharded cursor for exactly this reason. The dev
 // server (web/serve.py, stdlib http.server) doesn't support Range requests,
 // so this streams the single GET response and slices it into chunks itself.
-import init, { LifeEngine, initWgpuDevice } from './pkg-llm/llm_life.js';
+import init, { LifeEngine, initWgpuDevice, otsuThreshold, zscoreThreshold } from './pkg-llm/llm_life.js';
 
 let engine = null;
 
@@ -57,7 +57,19 @@ self.onmessage = async (e) => {
     } else if (type === 'step') {
       const t0 = performance.now();
       const p = await engine.step(new Uint8Array(payload.cells));
-      reply(true, { pAlive: Array.from(p), seconds: (performance.now() - t0) / 1000 });
+      const pArr = Float32Array.from(p);
+      // Label-free binarization — same code (crate::score) as the native
+      // `rescore` tool and docs/pictures/README.md, not a JS reimplementation.
+      const thresholdValue = payload.threshold === 'zscore'
+        ? zscoreThreshold(pArr, payload.k ?? 2.0)
+        : otsuThreshold(pArr);
+      const binarized = Array.from(p, (v) => (v > thresholdValue ? 1 : 0));
+      reply(true, {
+        pAlive: Array.from(p),
+        binarized,
+        thresholdValue,
+        seconds: (performance.now() - t0) / 1000,
+      });
     } else {
       throw new Error(`unknown message ${type}`);
     }

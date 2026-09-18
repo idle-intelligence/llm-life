@@ -57,18 +57,21 @@
     <div class="panel"><canvas id="c-true" width="64" height="64"></canvas>true Life</div>
     <div class="panel"><canvas id="c-diff" width="64" height="64"></canvas>diff</div>
   </div>
+  <p style="margin-bottom:0;"><label><input type="checkbox" id="overlay-palive" /> show p(alive) overlay on the model panel (LLM mode only — the model panel otherwise shows the binarized grid)</label></p>
 </fieldset>
 
 <fieldset>
   <legend>Performance</legend>
   <table>
     <tr><td class="k">generation</td><td class="v" id="p-gen">0</td></tr>
-    <tr><td class="k">live cells</td><td class="v" id="p-live">0</td></tr>
+    <tr><td class="k">threshold</td><td class="v" id="p-thresh">— (classical mode)</td></tr>
+    <tr><td class="k">model live cells</td><td class="v" id="p-live">0</td></tr>
+    <tr><td class="k">true live cells</td><td class="v" id="p-true-live">0</td></tr>
     <tr><td class="k">seconds / generation</td><td class="v" id="p-sec">—</td></tr>
     <tr><td class="k">tokens / forward pass</td><td class="v" id="p-tok">—</td></tr>
-    <tr><td class="k">agreement with true Life</td><td class="v" id="p-acc">100.00% (classical mode is exact)</td></tr>
+    <tr><td class="k">accuracy vs true Life (active threshold)</td><td class="v" id="p-acc">100.00% (classical mode is exact)</td></tr>
   </table>
-  <p style="font-size:0.75rem;color:#888;margin-bottom:0;">All timings provisional: shared GPU.</p>
+  <p style="font-size:0.75rem;color:#888;margin-bottom:0;">All timings provisional: shared GPU. LLM mode binarizes p(alive) with a label-free threshold (default: Otsu 1979) before painting the model panel and feeding it forward as the next generation's input — z-score (mean + k·std) is selectable via <code>window.__app.setThreshold('zscore', k)</code>, no UI setting.</p>
 </fieldset>
 
 <script type="module">
@@ -87,8 +90,11 @@ const els = {
   gen: document.getElementById('p-gen'),
   tok: document.getElementById('p-tok'),
   live: document.getElementById('p-live'),
+  trueLive: document.getElementById('p-true-live'),
   sec: document.getElementById('p-sec'),
   acc: document.getElementById('p-acc'),
+  thresh: document.getElementById('p-thresh'),
+  overlay: document.getElementById('overlay-palive'),
   note: document.getElementById('mode-note'),
 };
 const ctx = {
@@ -106,8 +112,14 @@ function log(msg) {
 // both modes (in classical mode the two are the same object's state).
 let app, truth, playing = false, timer = null, lastSec = null;
 // `mode` picks which update rule fills the model panel; `lastP` is the
-// model's p(alive) (LLM mode paints it as gray, classical mode has none).
+// model's p(alive) — `app`'s own cells are always the *binarized* grid (the
+// thing that is actually compared against true Life and fed forward), and
+// the overlay checkbox only changes what gets painted.
 let mode = 'classical', lastP = null, generation = 0, lastAccuracy = 1;
+// LLM-mode binarization: label-free, no ground truth involved. Otsu is the
+// default; z-score is reachable only through `window.__app.setThreshold`,
+// never a UI control (CLAUDE.md "Demo": no settings panels).
+let thresholdName = 'otsu', thresholdK = 2.0, lastThresholdValue = null;
 
 // Paint a [0,1] float per cell: 0 = white, 1 = black. Binary grids are just
 // the two endpoints; LLM mode paints p(alive) as gray.
@@ -125,9 +137,10 @@ function paint(c, values) {
 }
 
 function render() {
-  const model = app.cells();
+  const model = app.cells(); // always the binarized grid, in every mode
   const t = truth.cells();
-  paint(ctx.model, lastP ?? model);
+  const showOverlay = mode === 'llm' && els.overlay.checked && lastP;
+  paint(ctx.model, showOverlay ? lastP : model);
   paint(ctx.truth, t);
   const diff = new Float32Array(W * H);
   let wrong = 0;
@@ -139,7 +152,11 @@ function render() {
   paint(ctx.diff, diff);
   els.gen.textContent = generation;
   els.live.textContent = app.live_count();
+  els.trueLive.textContent = truth.live_count();
   els.sec.textContent = lastSec === null ? '—' : lastSec.toFixed(3);
+  els.thresh.textContent = mode === 'llm'
+    ? `${thresholdName}${lastThresholdValue === null ? '' : ` (t=${lastThresholdValue.toFixed(3)})`}`
+    : '— (classical mode)';
   lastAccuracy = 1 - wrong / (W * H);
   const acc = 100 * lastAccuracy;
   els.acc.textContent = acc.toFixed(2) + '%' + (wrong === 0 ? ' (exact)' : ` (${wrong} cells differ)`);
@@ -249,13 +266,16 @@ async function loadLlm(spec) {
 
 async function llmStepOnce() {
   const t0 = performance.now();
-  const r = await ask('step', { cells: Array.from(app.cells()) });
+  const r = await ask('step', { cells: Array.from(app.cells()), threshold: thresholdName, k: thresholdK });
   lastSec = (performance.now() - t0) / 1000;
   lastP = r.pAlive;
-  // The model's argmax becomes the next state it is fed; truth advances
-  // independently from its own history, so the diff panel shows accumulated
-  // divergence, not one-step error.
-  app.set_cells(Uint8Array.from(r.pAlive, (v) => (v >= 0.5 ? 1 : 0)));
+  lastThresholdValue = r.thresholdValue;
+  // The model's *binarized* output (label-free threshold, not 0.5) becomes
+  // the next state it is fed — free-running, not teacher-forced: there is no
+  // teacher-forced mode in the tab. Truth advances independently from its own
+  // history, so the diff panel shows accumulated divergence, not one-step
+  // error.
+  app.set_cells(Uint8Array.from(r.binarized));
   truth.step(1);
   generation++;
   render();
@@ -276,8 +296,20 @@ window.__app = {
   truthGrid: () => Array.from(truth.cells()),
   pAlive: () => lastP,
   liveCount: () => app.live_count(),
+  trueLiveCount: () => truth.live_count(),
   rulestring: () => app.rulestring(),
   accuracy: () => lastAccuracy,
+  // Label-free binarization of p(alive) — Otsu (default) or z-score, k
+  // optional (default 2.0). No UI control: CLAUDE.md "Demo" bars settings
+  // panels, so z-score is reachable only here.
+  threshold: () => ({ name: thresholdName, k: thresholdK, value: lastThresholdValue }),
+  setThreshold: (name, k) => {
+    if (name !== 'otsu' && name !== 'zscore') throw new Error("threshold must be 'otsu' or 'zscore'");
+    thresholdName = name;
+    if (k !== undefined) thresholdK = k;
+    return { name: thresholdName, k: thresholdK };
+  },
+  setOverlay: (on) => { els.overlay.checked = on; render(); },
   toggle: (x, y) => { app.toggle(x, y); resync(); },
   clear: () => { setPlaying(false); app.clear(); truth.clear(); resync(); },
   glider: () => { setPlaying(false); app.clear(); app.place_glider(2, 2); resync(); },
