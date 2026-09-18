@@ -1,78 +1,307 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>llm-life — idle intelligence</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Crect width='8' height='8' fill='%23fff'/%3E%3Crect x='2' y='1' width='1' height='1'/%3E%3Crect x='3' y='2' width='1' height='1'/%3E%3Crect x='1' y='3' width='3' height='1'/%3E%3C/svg%3E" />
-<title>llm-life — a language model as the update rule of a cellular automaton</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: -apple-system, system-ui, sans-serif; max-width: 980px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; background: #fff; }
-  h1 { font-size: 1.25rem; margin-bottom: 0.2rem; }
-  p.sub { color: #666; font-size: 0.85rem; margin-top: 0; }
-  fieldset { margin-bottom: 1rem; border: 1px solid #ccc; border-radius: 6px; }
-  legend { font-size: 0.8rem; letter-spacing: 0.08em; text-transform: uppercase; color: #666; }
-  button { padding: 0.4rem 0.9rem; font-size: 0.9rem; cursor: pointer; }
-  button:disabled { opacity: 0.45; cursor: default; }
-  .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-  .grids { display: flex; gap: 1.2rem; flex-wrap: wrap; }
-  .panel { text-align: center; font-size: 0.75rem; color: #666; }
-  canvas { border: 1px solid #ccc; image-rendering: pixelated; width: 320px; height: 320px; display: block; }
-  table { border-collapse: collapse; font-size: 0.85rem; }
-  td { padding: 0.15rem 0.8rem 0.15rem 0; }
-  td.k { color: #666; }
-  td.v { font-family: ui-monospace, Menlo, monospace; }
-  #status { font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; white-space: pre-wrap; background: #f6f6f6; border: 1px solid #ddd; border-radius: 6px; padding: 0.6rem; max-height: 22vh; overflow-y: auto; }
+    :root {
+        --bg: #fdfdfd;
+        --text: #1a1a1a;
+        --muted: #555;
+        --faint: #999;
+        --border: #ddd;
+        --green: #2d7d46;
+        --yellow: #b58900;
+        --red: #c0392b;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 48px 24px 96px;
+        color: var(--text);
+        background: var(--bg);
+        line-height: 1.5;
+        font-size: 15px;
+    }
+    a { color: var(--text); }
+    a:hover { color: var(--muted); }
+
+    header { margin-bottom: 48px; }
+    .org {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        color: var(--muted);
+        letter-spacing: 0.02em;
+        margin-bottom: 2px;
+    }
+    h1 {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 24px;
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+    .tagline {
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.6;
+    }
+    .tagline a { text-decoration: underline; color: var(--muted); }
+    .tagline a:hover { color: var(--text); }
+    .repo {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        margin-top: 4px;
+    }
+    .repo a { color: var(--faint); text-decoration: none; }
+    .repo a:hover { color: var(--muted); }
+
+    section {
+        border-top: 1px solid var(--border);
+        padding: 24px 0;
+    }
+    section h2 {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        color: var(--faint);
+        margin-bottom: 12px;
+    }
+    section h2 .sub { font-weight: 400; }
+
+    .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+    }
+    .status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--faint);
+        flex-shrink: 0;
+    }
+    .status-dot.loading { background: var(--yellow); }
+    .status-dot.ready { background: var(--green); }
+    .status-dot.error { background: var(--red); }
+    .status-dot.generating {
+        background: var(--text);
+        animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+    }
+
+    #statusLog {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        color: var(--muted);
+        border: 1px solid var(--border);
+        padding: 12px;
+        margin-top: 12px;
+        white-space: pre-wrap;
+        line-height: 1.6;
+        min-height: 8.6em;
+    }
+
+    .controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .radios {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        font-size: 14px;
+        margin-bottom: 12px;
+    }
+    .radios label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    button {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        font-weight: 500;
+        padding: 8px 16px;
+        cursor: pointer;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        border-radius: 0;
+        transition: border-color 0.15s;
+    }
+    button:hover:not(:disabled) { border-color: var(--text); }
+    button:disabled { opacity: 0.3; cursor: not-allowed; }
+    button.primary {
+        background: var(--text);
+        color: var(--bg);
+        border-color: var(--text);
+    }
+    button.primary:hover:not(:disabled) {
+        background: var(--muted);
+        border-color: var(--muted);
+    }
+    .info {
+        font-size: 13px;
+        color: var(--faint);
+        margin-top: 12px;
+    }
+    label.overlay {
+        font-size: 13px;
+        color: var(--muted);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 12px;
+    }
+
+    .grids {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+    .panel {
+        text-align: center;
+    }
+    .panel canvas {
+        border: 1px solid var(--border);
+        image-rendering: pixelated;
+        width: 192px;
+        height: 192px;
+        display: block;
+        background: #fff;
+    }
+    .panel .caption {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 11px;
+        color: var(--faint);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-top: 6px;
+    }
+
+    .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+    }
+    .metric { text-align: center; }
+    .metric-value {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 16px;
+        font-weight: 600;
+    }
+    .metric-label {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 11px;
+        color: var(--faint);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-top: 2px;
+    }
+
+    footer {
+        border-top: 1px solid var(--border);
+        padding-top: 24px;
+        margin-top: 24px;
+    }
+    footer a {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        color: var(--faint);
+        text-decoration: none;
+    }
+    footer a:hover { color: var(--muted); }
 </style>
 </head>
 <body>
-<h1>llm-life</h1>
-<p class="sub">A language model as the update rule of a cellular automaton. Classical mode is a for-loop; LLM mode asks the model what each cell does next and paints its confidence.</p>
+<header>
+    <p class="org">idle intelligence</p>
+    <h1>llm-life</h1>
+    <p class="tagline">A language model as the update rule of Conway's Game of Life. Classical mode is a for-loop; LLM mode asks the model what each cell does next and paints its confidence.</p>
+    <p class="repo">
+        <a href="https://github.com/idle-intelligence/llm-life">github.com/idle-intelligence/llm-life</a>
+    </p>
+</header>
 
-<fieldset>
-  <legend>Status</legend>
-  <div id="status">booting…</div>
-</fieldset>
+<section>
+    <h2>STATUS</h2>
+    <div class="status">
+        <span class="status-dot loading" id="statusDot"></span>
+        <span id="statusText">booting…</span>
+    </div>
+    <div id="statusLog"></div>
+</section>
 
-<fieldset>
-  <legend>Input</legend>
-  <div class="row">
-    <label><input type="radio" name="mode" value="classical" checked /> classical</label>
-    <label><input type="radio" name="mode" value="llm" /> LLM (variant B)</label>
-    <span id="mode-note" style="font-size:0.8rem;color:#888;"></span>
-  </div>
-  <div class="row" style="margin-top:0.6rem;">
-    <button id="play">Play</button>
-    <button id="step">Step</button>
-    <button id="clear">Clear</button>
-    <button id="random">Random</button>
-    <button id="glider">Glider</button>
-  </div>
-  <p style="font-size:0.8rem;color:#888;margin-bottom:0;">Click a cell in the left grid to toggle it.</p>
-</fieldset>
+<section>
+    <h2>INPUT</h2>
+    <div class="radios">
+        <label><input type="radio" name="mode" value="classical" checked /> classical</label>
+        <label><input type="radio" name="mode" value="llm" /> LLM (variant B)</label>
+    </div>
+    <div class="controls">
+        <button id="play" class="primary">Play</button>
+        <button id="step">Step</button>
+        <button id="clear">Clear</button>
+        <button id="random">Random</button>
+        <button id="glider">Glider</button>
+    </div>
+    <p class="info" id="mode-note">Click a cell in the model grid to toggle it.</p>
+    <label class="overlay"><input type="checkbox" id="overlay-palive" /> show p(alive) overlay on the model panel (LLM mode only)</label>
+</section>
 
-<fieldset>
-  <legend>Output</legend>
-  <div class="grids">
-    <div class="panel"><canvas id="c-model" width="64" height="64"></canvas>model</div>
-    <div class="panel"><canvas id="c-true" width="64" height="64"></canvas>true Life</div>
-    <div class="panel"><canvas id="c-diff" width="64" height="64"></canvas>diff</div>
-  </div>
-  <p style="margin-bottom:0;"><label><input type="checkbox" id="overlay-palive" /> show p(alive) overlay on the model panel (LLM mode only — the model panel otherwise shows the binarized grid)</label></p>
-</fieldset>
+<section>
+    <h2>OUTPUT</h2>
+    <div class="grids">
+        <div class="panel"><canvas id="c-model" width="64" height="64"></canvas><div class="caption">model</div></div>
+        <div class="panel"><canvas id="c-true" width="64" height="64"></canvas><div class="caption">true Life</div></div>
+        <div class="panel"><canvas id="c-diff" width="64" height="64"></canvas><div class="caption">diff</div></div>
+    </div>
+</section>
 
-<fieldset>
-  <legend>Performance</legend>
-  <table>
-    <tr><td class="k">generation</td><td class="v" id="p-gen">0</td></tr>
-    <tr><td class="k">threshold</td><td class="v" id="p-thresh">— (classical mode)</td></tr>
-    <tr><td class="k">model live cells</td><td class="v" id="p-live">0</td></tr>
-    <tr><td class="k">true live cells</td><td class="v" id="p-true-live">0</td></tr>
-    <tr><td class="k">seconds / generation</td><td class="v" id="p-sec">—</td></tr>
-    <tr><td class="k">tokens / forward pass</td><td class="v" id="p-tok">—</td></tr>
-    <tr><td class="k">accuracy vs true Life (active threshold)</td><td class="v" id="p-acc">100.00% (classical mode is exact)</td></tr>
-  </table>
-  <p style="font-size:0.75rem;color:#888;margin-bottom:0;">All timings provisional: shared GPU. LLM mode binarizes p(alive) with a label-free threshold (default: Otsu 1979) before painting the model panel and feeding it forward as the next generation's input — z-score (mean + k·std) is selectable via <code>window.__app.setThreshold('zscore', k)</code>, no UI setting.</p>
-</fieldset>
+<section>
+    <h2>PERFORMANCE</h2>
+    <div class="metrics-grid">
+        <div class="metric">
+            <div class="metric-value" id="p-sec">—</div>
+            <div class="metric-label">s / generation</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="p-thresh">—</div>
+            <div class="metric-label">threshold</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="p-live">0</div>
+            <div class="metric-label">model live</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="p-true-live">0</div>
+            <div class="metric-label">true live</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="p-acc">100.00%</div>
+            <div class="metric-label">accuracy</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="p-gen">0</div>
+            <div class="metric-label">generation</div>
+        </div>
+    </div>
+    <p class="info">All timings provisional: shared GPU. LLM mode binarizes p(alive) with a label-free threshold (default: Otsu 1979) before painting the model panel and feeding it forward as the next generation's input — z-score (mean + k·std) is selectable via <code>window.__app.setThreshold('zscore', k)</code>, no UI setting. Tokens/forward pass: <span id="p-tok">—</span>.</p>
+</section>
+
+<footer>
+    <a href="https://idleintelligence.org">idleintelligence.org</a>
+</footer>
 
 <script type="module">
 import init, { LifeApp } from './pkg/life.js';
@@ -81,7 +310,9 @@ const W = 64, H = 64;
 const GENS_PER_SEC = 4;   // deliberately slow: you are meant to watch it
 
 const els = {
-  status: document.getElementById('status'),
+  statusDot: document.getElementById('statusDot'),
+  statusText: document.getElementById('statusText'),
+  statusLog: document.getElementById('statusLog'),
   play: document.getElementById('play'),
   step: document.getElementById('step'),
   clear: document.getElementById('clear'),
@@ -103,9 +334,14 @@ const ctx = {
   diff: document.getElementById('c-diff').getContext('2d'),
 };
 
+function setStatus(state, text) {
+  els.statusDot.className = 'status-dot ' + state;
+  els.statusText.textContent = text;
+}
+
 let statusLines = [];
 function renderStatus() {
-  els.status.textContent = statusLines.join('\n');
+  els.statusLog.textContent = statusLines.join('\n');
 }
 function log(msg) {
   statusLines.unshift(msg);
@@ -171,10 +407,10 @@ function render() {
   els.sec.textContent = lastSec === null ? '—' : lastSec.toFixed(3);
   els.thresh.textContent = mode === 'llm'
     ? `${thresholdName}${lastThresholdValue === null ? '' : ` (t=${lastThresholdValue.toFixed(3)})`}`
-    : '— (classical mode)';
+    : '—';
   lastAccuracy = 1 - wrong / (W * H);
   const acc = 100 * lastAccuracy;
-  els.acc.textContent = acc.toFixed(2) + '%' + (wrong === 0 ? ' (exact)' : ` (${wrong} cells differ)`);
+  els.acc.textContent = acc.toFixed(2) + '%';
 }
 
 async function stepOnce() {
@@ -226,6 +462,7 @@ app = new LifeApp(W, H);
 truth = new LifeApp(W, H);
 app.place_glider(2, 2);
 resync();
+setStatus('ready', 'Ready');
 log(`ready — ${W}×${H}, rule ${app.rulestring()}, ${GENS_PER_SEC} generations/s`);
 
 els.play.onclick = () => setPlaying(!playing);
@@ -276,16 +513,18 @@ function ensureWorker() {
 async function loadLlm(spec) {
   ensureWorker();
   if (!loading) {
+    setStatus('loading', 'Loading model…');
     log('loading model into the worker…');
     loading = ask('load', { ...spec, width: W, height: H, rulestring: app.rulestring() })
       .then((info) => {
         llmReady = true;
         els.tok.textContent = info.packedTokens;
         const name = spec.ggufUrl.split('/').pop().replace(/\.gguf$/, '');
+        setStatus('ready', 'Ready');
         log(`model loaded: ${name} · ${info.packedTokens} tokens/forward · grid ${W}x${H}`);
         return info;
       })
-      .catch((e) => { loading = null; log('load failed: ' + e.message); throw e; });
+      .catch((e) => { loading = null; setStatus('error', 'Load failed'); log('load failed: ' + e.message); throw e; });
   }
   return loading;
 }
@@ -294,6 +533,7 @@ async function llmStepOnce() {
   const genLabel = generation + 1;
   const t0 = performance.now();
   genPhase = 'running';
+  setStatus('generating', 'Generating…');
   log(`generation ${genLabel}: ${genPhase}… 0.0 s`);
   const ticker = setInterval(() => {
     const elapsed = (performance.now() - t0) / 1000;
@@ -304,6 +544,7 @@ async function llmStepOnce() {
     r = await ask('step', { cells: Array.from(app.cells()), threshold: thresholdName, k: thresholdK });
   } catch (e) {
     clearInterval(ticker);
+    setStatus('error', 'Generation failed');
     logReplace(`generation ${genLabel}: failed — ${e.message}`);
     throw e;
   }
@@ -320,10 +561,11 @@ async function llmStepOnce() {
   truth.step(1);
   generation++;
   render();
+  setStatus('ready', 'Ready');
   logReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (true ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)}`);
 }
 
-els.note.textContent = 'LLM mode loads its model automatically on first switch.';
+els.note.textContent = 'LLM mode loads its model automatically on first switch. Click a cell in the model grid to toggle it.';
 
 window.__app = {
   ready: true,
