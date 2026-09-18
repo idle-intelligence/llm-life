@@ -167,7 +167,6 @@
     .grids {
         display: flex;
         gap: 16px;
-        flex-wrap: wrap;
     }
     .panel {
         text-align: center;
@@ -175,8 +174,8 @@
     .panel canvas {
         border: 1px solid var(--border);
         image-rendering: pixelated;
-        width: 192px;
-        height: 192px;
+        width: 176px;
+        height: 176px;
         display: block;
         background: #fff;
     }
@@ -191,7 +190,7 @@
 
     .metrics-grid {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(4, 1fr);
         gap: 12px;
     }
     .metric { text-align: center; }
@@ -247,6 +246,7 @@
     <div class="radios">
         <label><input type="radio" name="mode" value="classical" checked /> classical</label>
         <label><input type="radio" name="mode" value="llm" /> LLM (variant B)</label>
+        <label><input type="radio" name="mode" value="llm-a" /> LLM (variant A)</label>
     </div>
     <div class="controls">
         <button id="play" class="primary">Play</button>
@@ -276,6 +276,14 @@
             <div class="metric-label">s / generation</div>
         </div>
         <div class="metric">
+            <div class="metric-value" id="p-chunks">—</div>
+            <div class="metric-label">chunks</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="p-tok">—</div>
+            <div class="metric-label">tokens / gen</div>
+        </div>
+        <div class="metric">
             <div class="metric-value" id="p-thresh">—</div>
             <div class="metric-label">threshold</div>
         </div>
@@ -296,7 +304,7 @@
             <div class="metric-label">generation</div>
         </div>
     </div>
-    <p class="info">All timings provisional: shared GPU. LLM mode binarizes p(alive) with a label-free threshold (default: Otsu 1979) before painting the model panel and feeding it forward as the next generation's input — z-score (mean + k·std) is selectable via <code>window.__app.setThreshold('zscore', k)</code>, no UI setting. Tokens/forward pass: <span id="p-tok">—</span>.</p>
+    <p class="info">All timings provisional: shared GPU. LLM mode binarizes p(alive) with a label-free threshold (default: Otsu 1979) before painting the model panel and feeding it forward as the next generation's input — z-score (mean + k·std) is selectable via <code>window.__app.setThreshold('zscore', k)</code>, no UI setting. Variant B is one forward over the whole 64&times;64 grid; variant A is 16&times;16, one forward per chunk of 64 cells against a few-shot prefix resident in the KV cache.</p>
 </section>
 
 <footer>
@@ -306,7 +314,12 @@
 <script type="module">
 import init, { LifeApp } from './pkg/life.js';
 
-const W = 64, H = 64;
+// Variant B packs the whole grid into one forward, so it runs at 64x64;
+// variant A pays ~28 tokens *per cell* and runs at 16x16 (256 cells, 4
+// chunks). The grid is resized when the mode changes, and the classical and
+// true-Life panels follow it.
+let W = 64, H = 64;
+const GRID_FOR_MODE = { classical: 64, llm: 64, 'llm-a': 16 };
 const GENS_PER_SEC = 4;   // deliberately slow: you are meant to watch it
 
 const els = {
@@ -320,6 +333,7 @@ const els = {
   glider: document.getElementById('glider'),
   gen: document.getElementById('p-gen'),
   tok: document.getElementById('p-tok'),
+  chunks: document.getElementById('p-chunks'),
   live: document.getElementById('p-live'),
   trueLive: document.getElementById('p-true-live'),
   sec: document.getElementById('p-sec'),
@@ -328,10 +342,15 @@ const els = {
   overlay: document.getElementById('overlay-palive'),
   note: document.getElementById('mode-note'),
 };
+const canvases = {
+  model: document.getElementById('c-model'),
+  truth: document.getElementById('c-true'),
+  diff: document.getElementById('c-diff'),
+};
 const ctx = {
-  model: document.getElementById('c-model').getContext('2d'),
-  truth: document.getElementById('c-true').getContext('2d'),
-  diff: document.getElementById('c-diff').getContext('2d'),
+  model: canvases.model.getContext('2d'),
+  truth: canvases.truth.getContext('2d'),
+  diff: canvases.diff.getContext('2d'),
 };
 
 function setStatus(state, text) {
@@ -367,6 +386,7 @@ let app, truth, playing = false, timer = null, lastSec = null;
 // thing that is actually compared against true Life and fed forward), and
 // the overlay checkbox only changes what gets painted.
 let mode = 'classical', lastP = null, generation = 0, lastAccuracy = 1;
+let lastChunks = null, lastTokens = null;
 // LLM-mode binarization: label-free, no ground truth involved. Otsu is the
 // default; z-score is reachable only through `window.__app.setThreshold`,
 // never a UI control (CLAUDE.md "Demo": no settings panels).
@@ -405,6 +425,8 @@ function render() {
   els.live.textContent = app.live_count();
   els.trueLive.textContent = truth.live_count();
   els.sec.textContent = lastSec === null ? '—' : lastSec.toFixed(3);
+  els.chunks.textContent = lastChunks === null ? '—' : lastChunks;
+  els.tok.textContent = lastTokens === null ? '—' : lastTokens;
   els.thresh.textContent = mode === 'llm'
     ? `${thresholdName}${lastThresholdValue === null ? '' : ` (t=${lastThresholdValue.toFixed(3)})`}`
     : '—';
@@ -414,7 +436,7 @@ function render() {
 }
 
 async function stepOnce() {
-  if (mode === 'llm') {
+  if (mode === 'llm' || mode === 'llm-a') {
     if (!llmReady) { log('LLM mode: no model loaded'); return; }
     return llmStepOnce();
   }
@@ -438,8 +460,23 @@ function resync() {
   truth.set_cells(app.cells());
   lastSec = null;
   lastP = null;
+  lastChunks = null;
+  lastTokens = null;
   generation = 0;
   render();
+}
+
+// Rebuild both grids (and the canvases' pixel sizes) at a new edge length.
+// The CSS size is fixed at 176px, so a 16x16 grid simply draws 11x larger
+// cells — that is what makes variant A's output readable.
+function setGridSize(n) {
+  if (W === n) return;
+  W = H = n;
+  for (const c of Object.values(canvases)) { c.width = W; c.height = H; }
+  app = new LifeApp(W, H);
+  truth = new LifeApp(W, H);
+  app.place_glider(2, 2);
+  resync();
 }
 
 const LLM_MODEL = {
@@ -451,7 +488,7 @@ for (const r of document.querySelectorAll('input[name=mode]')) {
   r.addEventListener('change', async () => {
     if (!r.checked) return;
     window.__app.setMode(r.value);
-    if (r.value === 'llm' && !llmReady && !loading) {
+    if (r.value.startsWith('llm') && !llmReady && !loading) {
       try { await loadLlm(LLM_MODEL); } catch (e) { /* logged in loadLlm */ }
     }
   });
@@ -518,10 +555,9 @@ async function loadLlm(spec) {
     loading = ask('load', { ...spec, width: W, height: H, rulestring: app.rulestring() })
       .then((info) => {
         llmReady = true;
-        els.tok.textContent = info.packedTokens;
         const name = spec.ggufUrl.split('/').pop().replace(/\.gguf$/, '');
         setStatus('ready', 'Ready');
-        log(`model loaded: ${name} · ${info.packedTokens} tokens/forward · grid ${W}x${H}`);
+        log(`model loaded: ${name} · grid ${W}x${H}`);
         return info;
       })
       .catch((e) => { loading = null; setStatus('error', 'Load failed'); log('load failed: ' + e.message); throw e; });
@@ -541,7 +577,14 @@ async function llmStepOnce() {
   }, 250);
   let r;
   try {
-    r = await ask('step', { cells: Array.from(app.cells()), threshold: thresholdName, k: thresholdK });
+    r = await ask('step', {
+      cells: Array.from(app.cells()),
+      variant: mode === 'llm-a' ? 'a' : 'b',
+      width: W,
+      height: H,
+      threshold: thresholdName,
+      k: thresholdK,
+    });
   } catch (e) {
     clearInterval(ticker);
     setStatus('error', 'Generation failed');
@@ -552,6 +595,8 @@ async function llmStepOnce() {
   lastSec = (performance.now() - t0) / 1000;
   lastP = r.pAlive;
   lastThresholdValue = r.thresholdValue;
+  lastChunks = r.chunks;
+  lastTokens = r.tokens;
   // The model's *binarized* output (label-free threshold, not 0.5) becomes
   // the next state it is fed — free-running, not teacher-forced: there is no
   // teacher-forced mode in the tab. Truth advances independently from its own
@@ -565,14 +610,22 @@ async function llmStepOnce() {
   logReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (true ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)}`);
 }
 
-els.note.textContent = 'LLM mode loads its model automatically on first switch. Click a cell in the model grid to toggle it.';
+els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell. Click a cell in the model grid to toggle it.';
 
 window.__app = {
   ready: true,
-  width: W,
-  height: H,
+  get width() { return W; },
+  get height() { return H; },
   mode: () => mode,
-  setMode: (m) => { setPlaying(false); mode = m; lastSec = null; lastP = null; resync(); return mode; },
+  setMode: (m) => {
+    setPlaying(false);
+    mode = m;
+    lastSec = null;
+    lastP = null;
+    setGridSize(GRID_FOR_MODE[m] ?? 64);
+    resync();
+    return mode;
+  },
   llmReady: () => llmReady,
   loadLlm,
   generation: () => generation,
@@ -580,6 +633,8 @@ window.__app = {
   truthGrid: () => Array.from(truth.cells()),
   pAlive: () => lastP,
   liveCount: () => app.live_count(),
+  chunks: () => lastChunks,
+  tokensPerGeneration: () => lastTokens,
   trueLiveCount: () => truth.live_count(),
   rulestring: () => app.rulestring(),
   accuracy: () => lastAccuracy,

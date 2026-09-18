@@ -56,12 +56,31 @@ self.onmessage = async (e) => {
       reply(true, { packedTokens: engine.packedTokens() });
     } else if (type === 'step') {
       const t0 = performance.now();
-      // engine.step() (crates/llm-life/src/web.rs) is a single async call that
-      // packs the grid, tokenizes, runs the forward pass and reads the logits
-      // back with no phase hooks — so 'forward' here covers all three; we
-      // can't report them separately without restructuring the engine.
-      self.postMessage({ type: 'progress', stage: 'forward' });
-      const p = await engine.step(new Uint8Array(payload.cells));
+      // The engine packs for whatever grid it was last told about; variant B
+      // runs at 64x64 and variant A at 16x16 off the same loaded weights.
+      engine.setGrid(payload.width, payload.height);
+      const cells = new Uint8Array(payload.cells);
+      let p;
+      if (payload.variant === 'a') {
+        // Variant A is one forward per chunk of cells against the resident
+        // prefix, so unlike variant B it has a natural progress granularity.
+        const n = engine.chunkCount();
+        p = new Float32Array(cells.length);
+        let at = 0;
+        for (let i = 0; i < n; i++) {
+          self.postMessage({ type: 'progress', stage: `chunk ${i + 1}/${n}` });
+          const q = await engine.stepChunkA(cells, i);
+          p.set(q, at);
+          at += q.length;
+        }
+      } else {
+        // engine.step() (crates/llm-life/src/web.rs) is a single async call that
+        // packs the grid, tokenizes, runs the forward pass and reads the logits
+        // back with no phase hooks — so 'forward' here covers all three; we
+        // can't report them separately without restructuring the engine.
+        self.postMessage({ type: 'progress', stage: 'forward' });
+        p = await engine.step(cells);
+      }
       self.postMessage({ type: 'progress', stage: 'threshold' });
       const pArr = Float32Array.from(p);
       // Label-free binarization — same code (crate::score) as the native
@@ -75,6 +94,8 @@ self.onmessage = async (e) => {
         pAlive: Array.from(p),
         binarized,
         thresholdValue,
+        chunks: payload.variant === 'a' ? engine.chunkCount() : 1,
+        tokens: payload.variant === 'a' ? engine.tokensPerGenerationA() : engine.packedTokens(),
         seconds: (performance.now() - t0) / 1000,
       });
     } else {

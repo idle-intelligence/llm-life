@@ -22,6 +22,10 @@ const URL_ = arg('url', 'http://127.0.0.1:8010/');
 const GGUF = arg('gguf', 'http://127.0.0.1:8010/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf');
 const TOKENIZER = arg('tokenizer', 'http://127.0.0.1:8010/models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json');
 const GENS = parseInt(arg('generations', '1'), 10);
+// 'llm' = variant B (64x64, one forward); 'llm-a' = variant A (16x16, one
+// forward per chunk of 64 cells). The page resizes its grids with the mode.
+const MODE = arg('mode', 'llm');
+const SEED = arg('seed', 'random');
 const TIMEOUT_LOAD = parseInt(arg('timeout-load', String(15 * 60 * 1000)), 10);
 const TIMEOUT_STEP = parseInt(arg('timeout-step', String(15 * 60 * 1000)), 10);
 
@@ -44,7 +48,13 @@ const info = await page.evaluate(
 );
 console.log(`loaded in ${((Date.now() - t0) / 1000).toFixed(1)}s, ${info.packedTokens} tokens/forward pass`);
 
-await page.evaluate(() => { window.__app.setMode('llm'); window.__app.randomize(1, 0.28); });
+await page.evaluate(([mode, seed]) => {
+  window.__app.setMode(mode);
+  if (seed === 'glider') window.__app.glider();
+  else window.__app.randomize(1, 0.28);
+}, [MODE, SEED]);
+const grid = await page.evaluate(() => ({ w: window.__app.width, h: window.__app.height }));
+console.log(`mode ${MODE}, seed ${SEED}, grid ${grid.w}x${grid.h}`);
 
 for (let g = 1; g <= GENS; g++) {
   const r = await page.evaluate(async () => {
@@ -53,10 +63,16 @@ for (let g = 1; g <= GENS; g++) {
       seconds: window.__app.secondsPerGeneration(),
       accuracy: window.__app.accuracy(),
       live: window.__app.liveCount(),
+      trueLive: window.__app.trueLiveCount(),
+      chunks: window.__app.chunks(),
+      tokens: window.__app.tokensPerGeneration(),
       gen: window.__app.generation(),
     };
   }, { timeout: TIMEOUT_STEP });
-  console.log(`gen ${r.gen}: ${r.seconds.toFixed(1)}s  agreement=${(r.accuracy * 100).toFixed(2)}%  model_live=${r.live}`);
+  console.log(
+    `gen ${r.gen}: ${r.seconds.toFixed(1)}s  agreement=${(r.accuracy * 100).toFixed(2)}%` +
+    `  model_live=${r.live}  true_live=${r.trueLive}  chunks=${r.chunks}  tokens=${r.tokens}`,
+  );
 }
 
 await browser.close();
