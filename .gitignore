@@ -1,4 +1,5 @@
 /target
 /web/pkg
 /web/pkg-llm
+/web/models
 /scripts/headless/out

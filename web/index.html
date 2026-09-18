@@ -174,8 +174,19 @@ function resync() {
   render();
 }
 
+const LLM_MODEL = {
+  ggufUrl: './models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf',
+  tokenizerUrl: './models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json',
+};
+
 for (const r of document.querySelectorAll('input[name=mode]')) {
-  r.addEventListener('change', () => { if (r.checked) window.__app.setMode(r.value); });
+  r.addEventListener('change', async () => {
+    if (!r.checked) return;
+    window.__app.setMode(r.value);
+    if (r.value === 'llm' && !llmReady && !loading) {
+      try { await loadLlm(LLM_MODEL); } catch (e) { /* logged in loadLlm */ }
+    }
+  });
 }
 
 await init();
@@ -250,7 +261,7 @@ async function llmStepOnce() {
   render();
 }
 
-els.note.textContent = 'LLM mode: load a model through window.__app.loadLlm({ggufUrl, tokenizerUrl}).';
+els.note.textContent = 'LLM mode loads its model automatically on first switch.';
 
 window.__app = {
   ready: true,
