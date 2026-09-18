@@ -8,6 +8,9 @@
 import init, { LifeEngine, initWgpuDevice, otsuThreshold, zscoreThreshold } from './pkg-llm/llm_life.js';
 
 let engine = null;
+// Tracks the grid size last given to `engine.setGrid`, so a run of `step`
+// messages at the same size doesn't call it redundantly.
+let engineGrid = null;
 
 const CHUNK = 64 * 1024 * 1024;
 
@@ -39,14 +42,32 @@ async function fetchChunks(url, onProgress) {
   return chunks;
 }
 
-self.onmessage = async (e) => {
+// Every `LifeEngine` method call (constructor aside) is chained through this
+// single promise so two can never run concurrently — wasm-bindgen throws
+// "recursive use of an object detected" if the page (or a stale in-flight
+// call) lets two overlap. Each queued task catches its own errors and
+// replies for its own message id, so one failure never breaks the chain for
+// messages queued after it.
+let queue = Promise.resolve();
+function enqueue(task) {
+  const run = queue.then(task, task);
+  queue = run.then(() => {}, () => {});
+  return run;
+}
+
+self.onmessage = (e) => {
   const { id, type, payload } = e.data;
   const reply = (ok, result) => self.postMessage({ id, ok, result });
+  enqueue(() => handle(id, type, payload, reply));
+};
+
+async function handle(id, type, payload, reply) {
   try {
     if (type === 'load') {
       await init();
       await initWgpuDevice();
       engine = new LifeEngine(payload.width, payload.height);
+      engineGrid = { width: payload.width, height: payload.height };
       const chunks = await fetchChunks(payload.ggufUrl, (f) =>
         self.postMessage({ type: 'progress', stage: 'download', fraction: f }));
       for (const c of chunks) engine.appendModelShard(c);
@@ -58,7 +79,13 @@ self.onmessage = async (e) => {
       const t0 = performance.now();
       // The engine packs for whatever grid it was last told about; variant B
       // runs at 64x64 and variant A at 16x16 off the same loaded weights.
-      engine.setGrid(payload.width, payload.height);
+      // Only call setGrid when the size actually changed — redundant calls
+      // are dropped, and since this runs inside the serialized queue it
+      // never overlaps a step already in flight.
+      if (!engineGrid || engineGrid.width !== payload.width || engineGrid.height !== payload.height) {
+        engine.setGrid(payload.width, payload.height);
+        engineGrid = { width: payload.width, height: payload.height };
+      }
       const cells = new Uint8Array(payload.cells);
       let p;
       if (payload.variant === 'a') {
@@ -102,6 +129,9 @@ self.onmessage = async (e) => {
       throw new Error(`unknown message ${type}`);
     }
   } catch (err) {
+    // Failure here doesn't break the queue: `enqueue` chains through
+    // regardless, and `engineGrid`/`engine` state is left as-is, so the next
+    // queued message (a retried step, a fresh load) runs normally.
     reply(false, String(err && err.stack ? err.stack : err));
   }
-};
+}
