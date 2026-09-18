@@ -61,6 +61,8 @@ per-generation time swung between 519 s and 957 s for identical work.
 | A | 1 | 2 | 0.2888 | 0.475 | 0.4263 | 0.335 | -0.1193 | 2860 | 828 |
 | A | 1 | 3 | 0.2439 | 0.484 | 0.4224 | 0.335 | -0.1382 | 3061 | 947 |
 | A | 2 | 1 | 0.2864 | 0.517 | 0.4285 | 0.387 | -0.1136 | 2968 | 947 |
+| A | 2 | 2 | 0.2866 | 0.471 | 0.4170 | 0.333 | -0.1246 | 2856 | 943 |
+| A | 2 | 3 | 0.2490 | 0.469 | 0.4175 | 0.334 | -0.1409 | 3008 | 942 |
 
 Three generations per seed, not ten: at ~15 minutes per generation, ten would
 have been eight hours of a contended GPU.
