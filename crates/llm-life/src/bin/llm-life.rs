@@ -82,9 +82,6 @@ enum Command {
         /// Prepend six worked neighborhood->next examples to the prefix.
         #[arg(long)]
         fewshot: bool,
-        /// Threshold p(alive) at the grid median instead of 0.5.
-        #[arg(long)]
-        median: bool,
         /// Filename prefix for this attempt's pictures and summary.
         #[arg(long, default_value = "a")]
         tag: String,
@@ -363,13 +360,15 @@ fn run_pictures(
     density: f64,
     out: &Path,
     freerun: bool,
-    median: bool,
 ) -> Result<()> {
     std::fs::create_dir_all(out)?;
     let mut summary = format!(
         "# {title}\n\n\
          model: {}\nrule: {}\ngrid: {size}x{size} (torus)\nmode: {}\n{}\
-         threshold: {}\n\n\
+         Scored at two thresholds: p(alive) >= 0.5, and the grid median of\n\
+         p(alive) (equivalently, the logit difference `1`-`0` calibrated to the\n\
+         grid — the median hands the model the live fraction, so its live recall\n\
+         is an upper bound, not an accuracy claim).\n\n\
          Timings provisional: the Metal GPU is shared with another repo's training job.\n\n",
         gguf.display(),
         rule.to_rulestring(),
@@ -379,33 +378,30 @@ fn run_pictures(
             "teacher-forced (each generation starts from true Life)"
         },
         stepper.header(),
-        if median { "grid median of p(alive)" } else { "p(alive) >= 0.5" },
     );
 
     for seed_name in seeds {
         println!("\n=== seed {seed_name} ===");
         summary.push_str(&format!(
             "## seed {seed_name}\n\n\
-             | gen | accuracy | live recall | confidence gap | wrong cells | true live | model live | s/gen |\n\
-             |---|---|---|---|---|---|---|---|\n"
+             | gen | accuracy | live recall | acc (median) | live recall (median) | confidence gap | true live | model live | s/gen |\n\
+             |---|---|---|---|---|---|---|---|---|\n"
         ));
         let mut input = seed_grid(seed_name, size, density)?;
         for gen in 1..=generations {
             let truth = input.step(rule);
             let (p, secs) = stepper.step(&input)?;
-            let model_grid = if median {
-                median_threshold_grid(&p, size, size)
-            } else {
-                argmax_grid(&p, size, size)
-            };
+            let model_grid = argmax_grid(&p, size, size);
+            let med_grid = median_threshold_grid(&p, size, size);
             let s = score(&truth, &model_grid, &p, gen);
+            let m = score(&truth, &med_grid, &p, gen);
             println!(
-                "gen {gen:2}: acc={:.4} live_recall={:.4} gap={:+.4} wrong={} true_live={} model_live={} {:.2}s",
-                s.accuracy, s.live_recall, s.confidence_gap, s.wrong_cells, s.true_live, s.model_live, secs
+                "gen {gen:2}: acc={:.4} live_recall={:.4} | median acc={:.4} live_recall={:.4} | gap={:+.4} true_live={} model_live={} {:.2}s",
+                s.accuracy, s.live_recall, m.accuracy, m.live_recall, s.confidence_gap, s.true_live, s.model_live, secs
             );
             summary.push_str(&format!(
-                "| {gen} | {:.4} | {:.4} | {:+.4} | {} | {} | {} | {:.2} |\n",
-                s.accuracy, s.live_recall, s.confidence_gap, s.wrong_cells, s.true_live, s.model_live, secs
+                "| {gen} | {:.4} | {:.4} | {:.4} | {:.4} | {:+.4} | {} | {} | {:.2} |\n",
+                s.accuracy, s.live_recall, m.accuracy, m.live_recall, s.confidence_gap, s.true_live, s.model_live, secs
             ));
 
             if gen == 1 {
@@ -471,7 +467,6 @@ fn main() -> Result<()> {
                 density,
                 &out,
                 freerun,
-                false,
             )
         }
         Command::PictureA {
@@ -485,7 +480,6 @@ fn main() -> Result<()> {
             freerun,
             chunk_cells,
             fewshot,
-            median,
             tag,
         } => {
             let runner = RunnerA::new(&gguf, &tokenizer, &rule, chunk_cells, fewshot, &device)?;
@@ -502,7 +496,6 @@ fn main() -> Result<()> {
                 density,
                 &out,
                 freerun,
-                median,
             )
         }
     }
