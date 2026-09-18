@@ -89,3 +89,15 @@ fn p_alive_reads_the_two_answer_columns_at_the_cell_rows() {
     assert!(p[1] > 0.999 && p[3] > 0.999);
     assert_eq!(argmax_grid(&p, 2, 2).cells(), &[0, 1, 0, 1]);
 }
+
+#[test]
+fn fewshot_prefix_keeps_the_examples_before_the_grid_lead_in() {
+    // The examples have to land *before* `Grid:`, or the first cell token no
+    // longer follows the lead-in and the packing means something else.
+    let p = llm_life::variant_b::fewshot_rules_prefix(&Rule::life());
+    assert!(p.ends_with("Grid:\n"));
+    assert_eq!(p.matches("Grid:\n").count(), 1);
+    assert!(p.contains("Examples:\n"));
+    assert_eq!(p.matches("Next: ").count(), 6);
+    assert!(p.find("Examples:").unwrap() < p.find("Grid:").unwrap());
+}

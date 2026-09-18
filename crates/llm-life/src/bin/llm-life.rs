@@ -11,7 +11,7 @@ use life::{Grid, Rule};
 use llm_life::pgm::{write_binary_pgm, write_pgm};
 use llm_life::score::{median_threshold_grid, score};
 use llm_life::variant_a;
-use llm_life::variant_b::{argmax_grid, p_alive, pack, rules_prefix};
+use llm_life::variant_b::{argmax_grid, fewshot_rules_prefix, p_alive, pack, rules_prefix};
 use llm_wasm::gguf::Q4ModelLoader;
 use llm_wasm::kv::KvCache;
 use llm_wasm::model::{ForwardSpec, LlmModel};
@@ -54,6 +54,13 @@ enum Command {
         /// rule accuracy from error accumulation.
         #[arg(long)]
         freerun: bool,
+        /// Insert variant A's six worked examples into the prefix before
+        /// `Grid:`.
+        #[arg(long)]
+        fewshot: bool,
+        /// Filename prefix for this run's pictures and summary.
+        #[arg(long, default_value = "b")]
+        tag: String,
     },
     /// Run variant A (packed per-cell prompts) for N generations and write
     /// pictures + a text summary.
@@ -95,12 +102,24 @@ struct Runner {
     dead: u32,
     alive: u32,
     head: burn::tensor::Tensor<burn::backend::Wgpu, 2>,
+    fewshot: bool,
 }
 
 impl Runner {
-    fn new(gguf: &PathBuf, tokenizer: &PathBuf, rule: &Rule, device: &WgpuDevice) -> Result<Self> {
+    fn new(
+        gguf: &PathBuf,
+        tokenizer: &PathBuf,
+        rule: &Rule,
+        fewshot: bool,
+        device: &WgpuDevice,
+    ) -> Result<Self> {
         let tok = Tokenizer::from_json(&std::fs::read(tokenizer).context("read tokenizer.json")?)?;
-        let prefix = tok.encode(&rules_prefix(rule), false)?;
+        let prefix_text = if fewshot {
+            fewshot_rules_prefix(rule)
+        } else {
+            rules_prefix(rule)
+        };
+        let prefix = tok.encode(&prefix_text, false)?;
 
         // The two answer tokens must each be exactly one token, or "read the
         // logits at this position" means something else than intended.
@@ -133,6 +152,7 @@ impl Runner {
             dead,
             alive,
             head,
+            fewshot,
         })
     }
 
@@ -171,10 +191,18 @@ impl Stepper for Runner {
     }
 
     fn header(&self) -> String {
-        "positions: bag (all grid tokens share one position id)\n\
-         mask: prefix (causal) + self + 8 neighbors\n\
-         head: sliced to the two answer tokens\n"
-            .to_string()
+        format!(
+            "positions: bag (all grid tokens share one position id)\n\
+             mask: prefix (causal) + self + 8 neighbors\n\
+             head: sliced to the two answer tokens\n\
+             prefix: {} tokens ({})\n",
+            self.prefix.len(),
+            if self.fewshot {
+                "rules + variant A's 6 worked examples"
+            } else {
+                "rules only"
+            },
+        )
     }
 }
 
@@ -453,12 +481,14 @@ fn main() -> Result<()> {
             density,
             out,
             freerun,
+            fewshot,
+            tag,
         } => {
-            let runner = Runner::new(&gguf, &tokenizer, &rule, &device)?;
+            let runner = Runner::new(&gguf, &tokenizer, &rule, fewshot, &device)?;
             run_pictures(
                 &runner,
-                "First picture — variant B, native",
-                "b",
+                "Variant B — stencil mask, native",
+                &tag,
                 &gguf,
                 &rule,
                 size,

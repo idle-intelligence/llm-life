@@ -29,6 +29,21 @@ pub fn rules_prefix(rule: &Rule) -> String {
     )
 }
 
+/// The rules prefix with variant A's six worked examples inserted just before
+/// `Grid:`.
+///
+/// The examples are variant A's, **verbatim** (`Neighbors: … / Self: … /
+/// Next: N`). They cannot be written in the form variant B's cells take: a
+/// cell here is a single bare digit token whose "self" and "neighbors" roles
+/// are carried by the stencil mask and by nothing else, so there is no text
+/// that is one cell. This is the closest form, and it is the same text that
+/// moved variant A off answering `0` everywhere.
+pub fn fewshot_rules_prefix(rule: &Rule) -> String {
+    let p = rules_prefix(rule);
+    let head = p.strip_suffix("Grid:\n").unwrap();
+    format!("{head}{}Grid:\n", crate::variant_a::fewshot_examples())
+}
+
 /// One packed forward pass: `prefix ++ one token per cell`.
 pub struct Packed {
     /// prefix tokens followed by `width * height` cell tokens.
