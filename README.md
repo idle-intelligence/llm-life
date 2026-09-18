@@ -38,6 +38,14 @@ ln -s ~/Code/idle-intelligence/models web/models   # once, gitignored — LLM mo
 python3 web/serve.py            # http://127.0.0.1:8010/
 node scripts/headless/run.mjs
 
+# LLM mode (variant A + B) — sparse-mask attention and the tiled prefill
+# GEMM live in llm-wasm and are both compiled in unconditionally (no cargo
+# feature or env var to set): `ForwardSpec::sparse` when the caller supplies
+# a `SparseMask`, `TILED_PREFILL_MATMUL` (crates/llm-wasm/src/gguf.rs) at
+# `const … = true`. Rebuild after changing crates/llm-life/src/{variant_b,web}.rs:
+wasm-pack build crates/llm-life --target web --out-dir ../../web/pkg-llm --no-default-features --features web
+node scripts/headless/llm.mjs --url http://127.0.0.1:8010/ --mode llm --seed glider --grid 64
+
 # native first picture (variant B, Qwen2.5-0.5B-Instruct Q4_0)
 cargo run --release -p llm-life -- picture \
   --gguf ~/Code/idle-intelligence/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf \
