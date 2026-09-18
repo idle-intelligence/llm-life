@@ -6,6 +6,7 @@
 //! generation. All readback is `into_data_async().await` — a sync readback
 //! deadlocks the browser.
 
+use crate::score::{otsu_threshold, zscore_threshold};
 use crate::variant_b::{p_alive, pack, rules_prefix};
 use burn::backend::wgpu::WgpuDevice;
 use burn::backend::Wgpu;
@@ -18,6 +19,19 @@ use wasm_bindgen::prelude::*;
 
 fn log(msg: &str) {
     web_sys::console::log_1(&JsValue::from_str(msg));
+}
+
+/// Label-free binarization (`score::otsu_threshold`) — same code path as the
+/// native `rescore` tool, so the tab and `docs/pictures/README.md` agree.
+#[wasm_bindgen(js_name = otsuThreshold)]
+pub fn otsu_threshold_js(p_alive: Vec<f32>) -> f32 {
+    otsu_threshold(&p_alive)
+}
+
+/// Label-free binarization, mean + k*std (`score::zscore_threshold`).
+#[wasm_bindgen(js_name = zscoreThreshold)]
+pub fn zscore_threshold_js(p_alive: Vec<f32>, k: f64) -> f32 {
+    zscore_threshold(&p_alive, k)
 }
 
 // `initWgpuDevice` and the panic hook are NOT redefined here: llm-wasm's
