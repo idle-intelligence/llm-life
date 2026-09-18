@@ -2,8 +2,8 @@
 // real GGUF into the worker, run one variant-B generation, report seconds
 // per generation and agreement with true Life on the same grid.
 //
-// Needs two servers:
-//   python3 ~/Code/idle-intelligence/llm-web/scripts/serve_models.py --dir ~/Code/idle-intelligence/models
+// The page now loads its model itself (web/models is a symlink to
+// ~/Code/idle-intelligence/models), so only one server is needed:
 //   python3 web/serve.py
 const PLAYWRIGHT_MODULE =
   process.env.PLAYWRIGHT_MODULE ??
@@ -19,8 +19,8 @@ function arg(name, dflt) {
   return i === -1 ? dflt : process.argv[i + 1];
 }
 const URL_ = arg('url', 'http://127.0.0.1:8010/');
-const GGUF = arg('gguf', 'http://127.0.0.1:8001/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf');
-const TOKENIZER = arg('tokenizer', 'http://127.0.0.1:8001/hf/Qwen2.5-0.5B-Instruct/tokenizer.json');
+const GGUF = arg('gguf', 'http://127.0.0.1:8010/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf');
+const TOKENIZER = arg('tokenizer', 'http://127.0.0.1:8010/models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json');
 const GENS = parseInt(arg('generations', '1'), 10);
 const TIMEOUT_LOAD = parseInt(arg('timeout-load', String(15 * 60 * 1000)), 10);
 const TIMEOUT_STEP = parseInt(arg('timeout-step', String(15 * 60 * 1000)), 10);

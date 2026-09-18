@@ -34,6 +34,7 @@ on that `llm-life` branch, in `crates/llm-wasm/src/`.
 ```bash
 # classical demo
 wasm-pack build crates/life --target web --out-dir ../../web/pkg --features web
+ln -s ~/Code/idle-intelligence/models web/models   # once, gitignored — LLM mode reads it same-origin
 python3 web/serve.py            # http://127.0.0.1:8010/
 node scripts/headless/run.mjs
 
