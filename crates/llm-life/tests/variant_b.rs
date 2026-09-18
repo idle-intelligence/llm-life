@@ -101,3 +101,42 @@ fn fewshot_prefix_keeps_the_examples_before_the_grid_lead_in() {
     assert_eq!(p.matches("Next: ").count(), 6);
     assert!(p.find("Examples:").unwrap() < p.find("Grid:").unwrap());
 }
+
+/// `pack_sparse` must describe exactly the mask `pack` builds. `pack` is the
+/// one the other tests in this file check cell by cell, and llm-web's
+/// `tests/stencil.rs` uses it as the numerical oracle for the sparse
+/// attention kernel; `pack_sparse` is what production actually runs, so the
+/// two have to be the same topology or the oracle guards nothing.
+#[test]
+fn pack_sparse_is_the_same_mask_as_pack() {
+    let mut g = Grid::new(5, 4);
+    g.set(1, 1, 1);
+    g.set(3, 2, 1);
+    g.set(0, 0, 1);
+    let prefix = vec![100, 101, 102, 103];
+    let dense = pack(&g, &prefix, DEAD, ALIVE);
+    let sparse = llm_life::variant_b::pack_sparse(&g, &prefix, DEAD, ALIVE);
+    let t = dense.len();
+    let stride = llm_life::variant_b::MAX_STENCIL_KEYS;
+
+    assert_eq!(sparse.tokens, dense.tokens);
+    assert_eq!(sparse.positions, dense.positions);
+    assert_eq!(sparse.grid_start, dense.grid_start);
+
+    for i in 0..t {
+        let mut from_sparse = vec![false; t];
+        for j in 0..sparse.prefix_len[i] as usize {
+            from_sparse[j] = true;
+        }
+        for s in 0..sparse.n_keys[i] as usize {
+            let key = sparse.keys[i * stride + s] as usize;
+            assert!(!from_sparse[key], "row {i} names key {key} twice");
+            from_sparse[key] = true;
+        }
+        assert_eq!(
+            from_sparse,
+            dense.allowed[i * t..(i + 1) * t].to_vec(),
+            "row {i} differs"
+        );
+    }
+}
