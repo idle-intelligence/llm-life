@@ -1,6 +1,6 @@
 //! Scoring the model against true Life (CONCEPT.md §8).
 
-use life::Grid;
+use life::{Grid, Rule};
 
 #[derive(Debug, Clone, Copy)]
 pub struct GenScore {
@@ -9,12 +9,25 @@ pub struct GenScore {
     pub accuracy: f64,
     /// Same, over live cells of the *true* next grid only — the number that
     /// actually moves, since a mostly-dead grid scores ~97% by answering 0
-    /// everywhere.
+    /// everywhere. Equal to `recall` below; kept under its original name
+    /// since every existing table column is named `live_recall`.
     pub live_recall: f64,
+    /// |pred alive ∩ true alive| / |model_live|. 1.0 when the model predicts
+    /// no alive cells and truth has none either (no false positives to have).
+    pub precision: f64,
+    /// Alias of `live_recall`: |pred alive ∩ true alive| / |true_live|.
+    pub recall: f64,
+    /// Harmonic mean of precision and recall. 0.0 when both are 0.
+    pub f1: f64,
+    /// IoU (Jaccard) of the alive sets: |pred ∧ true| / |pred ∨ true|.
+    /// 1.0 when both the predicted and true alive sets are empty.
+    pub iou: f64,
     /// Mean p(alive) assigned to cells true Life says are alive, minus the
     /// mean assigned to cells it says are dead. 0 = the model is not
     /// separating them at all.
     pub confidence_gap: f64,
+    /// Hamming distance: number of cells where pred != true. The "mutation
+    /// count per generation" TC asked accuracy alone to not hide.
     pub wrong_cells: usize,
     pub true_live: usize,
     pub model_live: usize,
@@ -24,8 +37,9 @@ pub fn score(truth: &Grid, model: &Grid, p_alive: &[f32], generation: usize) -> 
     let n = truth.cells().len();
     let wrong: usize = truth.diff(model).iter().map(|&d| d as usize).sum();
     let true_live = truth.live_count();
+    let model_live = model.live_count();
 
-    let mut hit = 0usize;
+    let mut hit = 0usize; // |pred alive ∩ true alive|
     let mut sum_live = 0f64;
     let mut sum_dead = 0f64;
     for (i, &p) in p_alive.iter().enumerate().take(n) {
@@ -39,16 +53,130 @@ pub fn score(truth: &Grid, model: &Grid, p_alive: &[f32], generation: usize) -> 
         }
     }
     let dead = n - true_live;
+    let union = true_live + model_live - hit;
+    let recall = if true_live == 0 { 1.0 } else { hit as f64 / true_live as f64 };
+    let precision = if model_live == 0 {
+        if true_live == 0 {
+            1.0
+        } else {
+            0.0
+        }
+    } else {
+        hit as f64 / model_live as f64
+    };
     GenScore {
         generation,
         accuracy: 1.0 - wrong as f64 / n as f64,
-        live_recall: if true_live == 0 { 1.0 } else { hit as f64 / true_live as f64 },
+        live_recall: recall,
+        precision,
+        recall,
+        f1: if precision + recall == 0.0 {
+            0.0
+        } else {
+            2.0 * precision * recall / (precision + recall)
+        },
+        iou: if union == 0 { 1.0 } else { hit as f64 / union as f64 },
         confidence_gap: (if true_live == 0 { 0.0 } else { sum_live / true_live as f64 })
             - (if dead == 0 { 0.0 } else { sum_dead / dead as f64 }),
         wrong_cells: wrong,
         true_live,
-        model_live: model.live_count(),
+        model_live,
     }
+}
+
+/// The six exhaustive Life cases, from a cell's own state and its live
+/// neighbor count. Every cell in a grid falls into exactly one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifeCase {
+    /// Dead, exactly 3 neighbours: the rule says it is born.
+    Birth,
+    /// Alive, exactly 2 neighbours: survives.
+    Survive2,
+    /// Alive, exactly 3 neighbours: survives.
+    Survive3,
+    /// Alive, fewer than 2 neighbours: dies of loneliness.
+    DeathLonely,
+    /// Alive, more than 3 neighbours: dies of overcrowding.
+    DeathCrowded,
+    /// Dead, not exactly 3 neighbours: stays dead.
+    StayDead,
+}
+
+impl LifeCase {
+    pub const ALL: [LifeCase; 6] = [
+        LifeCase::Birth,
+        LifeCase::Survive2,
+        LifeCase::Survive3,
+        LifeCase::DeathLonely,
+        LifeCase::DeathCrowded,
+        LifeCase::StayDead,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            LifeCase::Birth => "birth (dead, =3)",
+            LifeCase::Survive2 => "survive-2",
+            LifeCase::Survive3 => "survive-3",
+            LifeCase::DeathLonely => "death-lonely (<2)",
+            LifeCase::DeathCrowded => "death-crowded (>3)",
+            LifeCase::StayDead => "stay-dead",
+        }
+    }
+}
+
+/// Classify one cell by its own state and live-neighbor count. Assumes
+/// Conway's B3/S23 case boundaries (2/3 to survive, 3 to be born) — the only
+/// rule this repo scores against.
+pub fn classify(alive: bool, neighbors: usize) -> LifeCase {
+    if alive {
+        match neighbors {
+            0 | 1 => LifeCase::DeathLonely,
+            2 => LifeCase::Survive2,
+            3 => LifeCase::Survive3,
+            _ => LifeCase::DeathCrowded,
+        }
+    } else if neighbors == 3 {
+        LifeCase::Birth
+    } else {
+        LifeCase::StayDead
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CaseCount {
+    pub count: usize,
+    pub correct: usize,
+}
+
+impl CaseCount {
+    /// Fraction of this case's cells the model got right. 1.0 on an empty
+    /// class (nothing to get wrong), same convention as `iou`.
+    pub fn fraction(&self) -> f64 {
+        if self.count == 0 {
+            1.0
+        } else {
+            self.correct as f64 / self.count as f64
+        }
+    }
+}
+
+/// Per-neighborhood-class recall, computed from `input` (the seed the model
+/// saw) and `rule`: for every cell, classify it by `input`'s own state and
+/// live-neighbor count, then check whether `model`'s cell matches the one
+/// correct next state for that class.
+pub fn per_case_recall(input: &Grid, model: &Grid, rule: &Rule) -> [(LifeCase, CaseCount); 6] {
+    let mut counts = [CaseCount::default(); 6];
+    for i in 0..input.cells().len() {
+        let alive = input.cells()[i] != 0;
+        let n = input.live_neighbors(i);
+        let case = classify(alive, n);
+        let idx = LifeCase::ALL.iter().position(|&c| c == case).unwrap();
+        counts[idx].count += 1;
+        if (model.cells()[i] != 0) == rule.next(alive, n) {
+            counts[idx].correct += 1;
+        }
+    }
+    std::array::from_fn(|i| (LifeCase::ALL[i], counts[i]))
 }
 
 /// Threshold p(alive) at the grid's **median** instead of 0.5.
@@ -186,5 +314,94 @@ mod tests {
         let p = vec![0.7f32; 16];
         let grid = zscore_threshold_grid(&p, 4, 4, 2.0);
         assert_eq!(grid.live_count(), 0);
+    }
+
+    // The owner's complaint: "99.80% accuracy" with 13 alive predicted vs 5
+    // true feels wrong. IoU, Hamming and F1 are the numbers that catch it.
+    #[test]
+    fn iou_and_f1_punish_overshooting_a_small_true_set() {
+        // 4x4 grid, true alive = {0, 1, 2, 3, 4} (5 cells), model alive =
+        // {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12} (13 cells), all of
+        // true's cells included (so accuracy alone hides the overshoot).
+        let mut true_cells = vec![0u8; 16];
+        for i in 0..5 {
+            true_cells[i] = 1;
+        }
+        let truth = Grid::from_cells(4, 4, true_cells);
+        let mut model_cells = vec![0u8; 16];
+        for i in 0..13 {
+            model_cells[i] = 1;
+        }
+        let model = Grid::from_cells(4, 4, model_cells);
+        let p_alive = vec![0.9f32; 16];
+        let s = score(&truth, &model, &p_alive, 1);
+        assert_eq!(s.wrong_cells, 8); // cells 5..=12 wrong, 8 of them
+        assert_eq!(s.true_live, 5);
+        assert_eq!(s.model_live, 13);
+        assert!((s.recall - 1.0).abs() < 1e-9); // every true cell is covered
+        assert!((s.precision - 5.0 / 13.0).abs() < 1e-9);
+        assert!((s.iou - 5.0 / 13.0).abs() < 1e-9); // union is just model_live here
+        assert!(s.iou < 0.4, "13-vs-5 overshoot should read far below 'looks right'");
+    }
+
+    #[test]
+    fn iou_is_one_when_both_alive_sets_are_empty() {
+        let truth = Grid::new(4, 4);
+        let model = Grid::new(4, 4);
+        let s = score(&truth, &model, &vec![0.1f32; 16], 1);
+        assert_eq!(s.iou, 1.0);
+        assert_eq!(s.f1, 1.0); // precision=recall=1 -> f1=1
+    }
+
+    #[test]
+    fn classify_covers_every_neighbor_count() {
+        // Alive side: 0,1 -> lonely; 2,3 -> survive; 4..=8 -> crowded.
+        assert_eq!(classify(true, 0), LifeCase::DeathLonely);
+        assert_eq!(classify(true, 1), LifeCase::DeathLonely);
+        assert_eq!(classify(true, 2), LifeCase::Survive2);
+        assert_eq!(classify(true, 3), LifeCase::Survive3);
+        for n in 4..=8 {
+            assert_eq!(classify(true, n), LifeCase::DeathCrowded);
+        }
+        // Dead side: only 3 is birth, everything else stays dead.
+        assert_eq!(classify(false, 3), LifeCase::Birth);
+        for n in [0, 1, 2, 4, 5, 6, 7, 8] {
+            assert_eq!(classify(false, n), LifeCase::StayDead);
+        }
+    }
+
+    #[test]
+    fn per_case_recall_counts_and_scores_a_glider_seed() {
+        let rule = Rule::life();
+        let mut input = Grid::new(4, 4);
+        input.place_glider(0, 0);
+        // Model that always answers correctly (true Life itself) should get
+        // 100% on every non-empty case.
+        let model = input.step(&rule);
+        let cases = per_case_recall(&input, &model, &rule);
+        let total: usize = cases.iter().map(|(_, c)| c.count).sum();
+        assert_eq!(total, 16); // every cell classified exactly once
+        for (case, c) in cases {
+            if c.count > 0 {
+                assert_eq!(c.fraction(), 1.0, "{:?} should be perfect against true Life", case);
+            }
+        }
+
+        // A model that answers dead everywhere gets birth cases wrong (it
+        // fails to birth) and stay-dead cases right (it already answers 0),
+        // matching TC's "birth first" hypothesis.
+        let all_dead = Grid::new(4, 4);
+        let cases = per_case_recall(&input, &all_dead, &rule);
+        for (case, c) in cases {
+            match case {
+                LifeCase::Birth => assert_eq!(c.fraction(), 0.0),
+                LifeCase::StayDead | LifeCase::DeathLonely | LifeCase::DeathCrowded => {
+                    if c.count > 0 {
+                        assert_eq!(c.fraction(), 1.0);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }
