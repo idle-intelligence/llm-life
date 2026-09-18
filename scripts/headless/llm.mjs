@@ -26,6 +26,7 @@ const GENS = parseInt(arg('generations', '1'), 10);
 // forward per chunk of 64 cells). The page resizes its grids with the mode.
 const MODE = arg('mode', 'llm');
 const SEED = arg('seed', 'random');
+const GRID = parseInt(arg('grid', '64'), 10);
 const TIMEOUT_LOAD = parseInt(arg('timeout-load', String(15 * 60 * 1000)), 10);
 const TIMEOUT_STEP = parseInt(arg('timeout-step', String(15 * 60 * 1000)), 10);
 
@@ -48,11 +49,12 @@ const info = await page.evaluate(
 );
 console.log(`loaded in ${((Date.now() - t0) / 1000).toFixed(1)}s, ${info.packedTokens} tokens/forward pass`);
 
-await page.evaluate(([mode, seed]) => {
+await page.evaluate(([mode, seed, grid]) => {
   window.__app.setMode(mode);
+  if (mode !== 'llm-a') window.__app.setGrid(grid);
   if (seed === 'glider') window.__app.glider();
   else window.__app.randomize(1, 0.28);
-}, [MODE, SEED]);
+}, [MODE, SEED, GRID]);
 const grid = await page.evaluate(() => ({ w: window.__app.width, h: window.__app.height }));
 console.log(`mode ${MODE}, seed ${SEED}, grid ${grid.w}x${grid.h}`);
 
@@ -62,6 +64,7 @@ for (let g = 1; g <= GENS; g++) {
     return {
       seconds: window.__app.secondsPerGeneration(),
       accuracy: window.__app.accuracy(),
+      iou: window.__app.iou(),
       live: window.__app.liveCount(),
       trueLive: window.__app.trueLiveCount(),
       chunks: window.__app.chunks(),
@@ -70,7 +73,7 @@ for (let g = 1; g <= GENS; g++) {
     };
   }, { timeout: TIMEOUT_STEP });
   console.log(
-    `gen ${r.gen}: ${r.seconds.toFixed(1)}s  agreement=${(r.accuracy * 100).toFixed(2)}%` +
+    `gen ${r.gen}: ${r.seconds.toFixed(1)}s  agreement=${(r.accuracy * 100).toFixed(2)}%  iou=${r.iou.toFixed(4)}` +
     `  model_live=${r.live}  true_live=${r.trueLive}  chunks=${r.chunks}  tokens=${r.tokens}`,
   );
 }
