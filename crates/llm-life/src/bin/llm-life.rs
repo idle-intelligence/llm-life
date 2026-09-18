@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use life::{Grid, Rule};
 use llm_life::pgm::{read_pgm, write_binary_pgm, write_pgm};
-use llm_life::score::{median_threshold_grid, otsu_threshold_grid, score, zscore_threshold_grid};
+use llm_life::score::{median_threshold_grid, otsu_threshold_grid, per_case_recall, score, zscore_threshold_grid};
 use llm_life::variant_a;
 use llm_life::variant_b::{argmax_grid, fewshot_rules_prefix, p_alive, pack, rules_prefix};
 use llm_wasm::gguf::Q4ModelLoader;
@@ -116,6 +116,12 @@ enum Command {
         density: f64,
         #[arg(long)]
         fewshot: bool,
+        /// After each variant-B row, print a per-component breakdown of one
+        /// extra forward (`LLM_PROFILE` in llm-wasm). Every component is
+        /// bracketed by a GPU sync, so the rows do not sum to the timed
+        /// wall clock above them — they say where the work is.
+        #[arg(long)]
+        profile: bool,
     },
     /// Re-score an already-written `<tag>-<seed>-gen1-{palive,true}.pgm`
     /// pair at the Otsu and z-score (k=2) thresholds, label-free, no rerun.
@@ -202,8 +208,13 @@ impl Runner {
         let start = Instant::now();
         let mut cache = self.model.new_cache(t);
         let hidden = self.model.forward_hidden_spec(&packed.tokens, &mut cache, &spec)?;
-        let logits = self.model.lm_head_sliced(hidden, &self.head);
-        let logits = llm_wasm::model::logits_to_vec(logits)?;
+        let dev = self.model.device().clone();
+        let logits = llm_wasm::profile::scope("lm_head_sliced", &dev, || {
+            self.model.lm_head_sliced(hidden, &self.head)
+        });
+        let logits = llm_wasm::profile::scope("logits_readback", &dev, || {
+            llm_wasm::model::logits_to_vec(logits)
+        })?;
         let secs = start.elapsed().as_secs_f64();
 
         let n = grid.width() * grid.height();
@@ -519,6 +530,24 @@ fn run_pictures(
     Ok(())
 }
 
+/// Print llm-wasm's accumulated per-component profile as a markdown table.
+fn print_profile(label: &str, t: usize) {
+    let mut rows = llm_wasm::profile::take();
+    let total: f64 = rows.iter().map(|(_, s, _)| s).sum();
+    rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    println!("\nProfile, {label} (T = {t}), one forward, GPU-synced per component:\n");
+    println!("| component | calls | total s | % | ms/call |");
+    println!("|---|---|---|---|---|");
+    for (label, secs, calls) in &rows {
+        println!(
+            "| {label} | {calls} | {secs:.3} | {:.1} | {:.2} |",
+            100.0 * secs / total,
+            1000.0 * secs / *calls as f64
+        );
+    }
+    println!("| **sum** | | **{total:.3}** | | |\n");
+}
+
 /// Median of a small sample — the reported statistic for every bench row.
 fn median(mut v: Vec<f64>) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -540,8 +569,16 @@ fn bench_forward(
     reps: usize,
     density: f64,
     fewshot: bool,
+    profile: bool,
     device: &WgpuDevice,
 ) -> Result<()> {
+    if profile {
+        std::env::set_var("LLM_PROFILE", "1");
+        anyhow::ensure!(
+            llm_wasm::profile::enabled(),
+            "--profile set but llm-wasm's profiler is off"
+        );
+    }
     {
         let runner = Runner::new(gguf, tokenizer, rule, fewshot, device)?;
         println!("\n## Variant B — one full forward (prefill + sliced-head readback)\n");
@@ -561,6 +598,11 @@ fn bench_forward(
                 size * size,
                 m / t as f64
             );
+            if profile {
+                llm_wasm::profile::reset();
+                runner.step(&grid)?;
+                print_profile(&format!("{size}x{size}"), t);
+            }
         }
     }
 
@@ -674,22 +716,51 @@ fn main() -> Result<()> {
             reps,
             density,
             fewshot,
+            profile,
         } => bench_forward(
-            &gguf, &tokenizer, &rule, &sizes, &chunks, reps, density, fewshot, &device,
+            &gguf, &tokenizer, &rule, &sizes, &chunks, reps, density, fewshot, profile, &device,
         ),
         Command::Rescore { dir, tag, seed } => rescore(&dir, &tag, &seed),
     }
 }
 
 /// Re-score a picture already on disk (no GPU, no rerun): read its
-/// `palive`/`true` PGMs and print accuracy, live recall and model live count
-/// at the Otsu and z-score (k=2) thresholds, alongside the median for
-/// comparison.
+/// `palive`/`true`/`argmax` PGMs and print accuracy, IoU, Hamming, F1 and the
+/// per-case recall table, plus (for comparison) live recall at the Otsu and
+/// z-score (k=2) label-free thresholds and the median.
+///
+/// The seed grid is not on disk — only its output is (`*-true.pgm`) — so it
+/// is regenerated with `seed_grid` exactly as `run_pictures` built it
+/// (density 0.28, the CLI default, since no picture run used a different
+/// one), and asserted to reproduce the true PGM: if that assertion fails the
+/// picture was made with different parameters and every downstream number
+/// here would be wrong.
 fn rescore(dir: &Path, tag: &str, seed: &str) -> Result<()> {
+    let rule = Rule::life();
     let (p, w, h) = read_pgm(&dir.join(format!("{tag}-{seed}-gen1-palive.pgm")), 6)?;
     let (true_cells, tw, th) = read_pgm(&dir.join(format!("{tag}-{seed}-gen1-true.pgm")), 6)?;
-    anyhow::ensure!((w, h) == (tw, th), "palive/true dimension mismatch");
+    let (argmax_cells, aw, ah) = read_pgm(&dir.join(format!("{tag}-{seed}-gen1-argmax.pgm")), 6)?;
+    anyhow::ensure!((w, h) == (tw, th) && (w, h) == (aw, ah), "pgm dimension mismatch");
     let truth = Grid::from_cells(w, h, true_cells.iter().map(|&v| (v > 0.5) as u8).collect());
+    let model = Grid::from_cells(w, h, argmax_cells.iter().map(|&v| (v > 0.5) as u8).collect());
+
+    let input = seed_grid(seed, w, 0.28)?;
+    anyhow::ensure!(
+        input.step(&rule) == truth,
+        "{tag} {seed}: regenerated seed's Life step does not match the true PGM on disk \
+         (picture run used different parameters — rescore's assumptions are wrong)"
+    );
+
+    let s = score(&truth, &model, &p, 1);
+    println!(
+        "{tag} {seed}: acc={:.4} iou={:.4} hamming={} f1={:.4} precision={:.4} recall={:.4} true_live={} model_live={}",
+        s.accuracy, s.iou, s.wrong_cells, s.f1, s.precision, s.recall, s.true_live, s.model_live,
+    );
+
+    println!("  per-case recall (from the input grid, B3/S23):");
+    for (case, c) in per_case_recall(&input, &model, &rule) {
+        println!("    {:<20} n={:<5} correct={:<5} frac={:.4}", case.label(), c.count, c.correct, c.fraction());
+    }
 
     let otsu = otsu_threshold_grid(&p, w, h);
     let z2 = zscore_threshold_grid(&p, w, h, 2.0);
@@ -698,8 +769,7 @@ fn rescore(dir: &Path, tag: &str, seed: &str) -> Result<()> {
     let s_z2 = score(&truth, &z2, &p, 1);
     let s_med = score(&truth, &med, &p, 1);
     println!(
-        "{tag} {seed}: true_live={} | otsu acc={:.4} recall={:.4} live={} | z2 acc={:.4} recall={:.4} live={} | median acc={:.4} recall={:.4} live={}",
-        s_otsu.true_live,
+        "  otsu acc={:.4} recall={:.4} live={} | z2 acc={:.4} recall={:.4} live={} | median acc={:.4} recall={:.4} live={}",
         s_otsu.accuracy, s_otsu.live_recall, s_otsu.model_live,
         s_z2.accuracy, s_z2.live_recall, s_z2.model_live,
         s_med.accuracy, s_med.live_recall, s_med.model_live,
