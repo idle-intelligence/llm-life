@@ -71,7 +71,6 @@ async function handle(id, type, payload, reply) {
       const chunks = await fetchChunks(payload.ggufUrl, (f) =>
         self.postMessage({ type: 'progress', stage: 'download', fraction: f }));
       for (const c of chunks) engine.appendModelShard(c);
-      self.postMessage({ type: 'progress', stage: 'gpu', fraction: 0 });
       const tokenizerJson = await (await fetch(payload.tokenizerUrl)).text();
       await engine.load(tokenizerJson, payload.rulestring);
       reply(true, { packedTokens: engine.packedTokens() });
@@ -125,6 +124,16 @@ async function handle(id, type, payload, reply) {
         tokens: payload.variant === 'a' ? engine.tokensPerGenerationA() : engine.packedTokens(),
         seconds: (performance.now() - t0) / 1000,
       });
+    } else if (type === 'gridInfo') {
+      // Queried when the page changes grid size in LLM mode, to report the
+      // new forward's token cost. Runs through the same serialized queue as
+      // 'step', so it naturally waits for any in-flight generation.
+      if (!engine) { reply(true, { tokens: null }); return; }
+      if (!engineGrid || engineGrid.width !== payload.width || engineGrid.height !== payload.height) {
+        engine.setGrid(payload.width, payload.height);
+        engineGrid = { width: payload.width, height: payload.height };
+      }
+      reply(true, { tokens: engine.packedTokens() });
     } else {
       throw new Error(`unknown message ${type}`);
     }

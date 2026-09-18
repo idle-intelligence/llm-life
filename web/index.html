@@ -415,7 +415,7 @@ let lastChunks = null, lastTokens = null;
 // (request sent, awaiting the worker's reply). A grid-size change requested
 // while it's true is deferred to `pendingGridSize` and applied once that
 // generation lands, instead of resizing `app`/`truth` out from under it.
-let generating = false, pendingGridSize = null;
+let generating = false, pendingGridSize = null, pendingReset = null;
 // LLM-mode binarization: label-free, no ground truth involved. Otsu is the
 // default; z-score is reachable only through `window.__app.setThreshold`,
 // never a UI control (CLAUDE.md "Demo": no settings panels).
@@ -560,6 +560,47 @@ function setGridSize(n) {
   resync();
 }
 
+// One fresh seed state, shared by the model grid, the true-Life grid and the
+// engine's next input. `requestReset` is what every entry point (buttons and
+// window.__app) calls: if a generation is in flight, the reset is deferred —
+// `llmStepOnce` discards that generation's stale result and applies the
+// reset once it lands, instead of painting over it.
+function applyReset(type, opts = {}) {
+  if (type === 'clear') {
+    app.clear();
+    truth.clear();
+    log('seed: cleared');
+  } else if (type === 'random') {
+    const density = opts.density ?? 0.28;
+    app.randomize(BigInt(opts.seed), density);
+    log(`seed: random ${W}x${H} (density ${density.toFixed(2)})`);
+  } else if (type === 'glider') {
+    app.clear();
+    app.place_glider(2, 2);
+    log('seed: glider');
+  }
+  resync();
+}
+
+function requestReset(type, opts) {
+  setPlaying(false);
+  if (generating) { pendingReset = { type, opts }; return; }
+  applyReset(type, opts);
+}
+
+// Grid size (LLM mode only): logs the token cost of the new size once the
+// worker confirms it, or a bare size line if the model isn't loaded / the
+// engine call fails.
+async function logGridInfo(n) {
+  try {
+    const info = await ask('gridInfo', { width: n, height: n });
+    if (info && info.tokens != null) log(`grid: ${n}×${n} · ${info.tokens} tokens/forward · no reload needed`);
+    else log(`grid: ${n}×${n}`);
+  } catch (e) {
+    log(`grid: ${n}×${n}`);
+  }
+}
+
 const LLM_MODEL = {
   ggufUrl: './models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf',
   tokenizerUrl: './models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json',
@@ -592,9 +633,9 @@ log(`ready — ${W}×${H}, rule ${app.rulestring()}, ${GENS_PER_SEC} generations
 
 els.play.onclick = () => setPlaying(!playing);
 els.step.onclick = () => { setPlaying(false); stepOnce(); };
-els.clear.onclick = () => { setPlaying(false); app.clear(); truth.clear(); resync(); };
-els.random.onclick = () => { setPlaying(false); app.randomize(BigInt(Date.now()), 0.28); resync(); };
-els.glider.onclick = () => { setPlaying(false); app.clear(); app.place_glider(2, 2); resync(); };
+els.clear.onclick = () => requestReset('clear');
+els.random.onclick = () => requestReset('random', { seed: Date.now(), density: 0.28 });
+els.glider.onclick = () => requestReset('glider');
 
 document.getElementById('c-model').addEventListener('click', (e) => {
   const r = e.target.getBoundingClientRect();
@@ -610,6 +651,7 @@ document.getElementById('c-model').addEventListener('click', (e) => {
 // ---------------------------------------------------------------------------
 let worker = null, nextId = 1, pending = new Map(), llmReady = false, loading = null;
 let genPhase = 'running';
+let lastProgressStage = null;
 
 function ask(type, payload) {
   return new Promise((resolve, reject) => {
@@ -625,8 +667,17 @@ function ensureWorker() {
   worker.onmessage = (e) => {
     const { id, ok, result, type, stage, fraction } = e.data;
     if (type === 'progress') {
-      if (fraction !== undefined) { log(`${stage}: ${(fraction * 100).toFixed(0)}%`); }
-      else { genPhase = stage; }
+      if (fraction !== undefined) {
+        const line = `${stage}: ${(fraction * 100).toFixed(0)}%`;
+        // Replace the running percentage in place instead of appending a new
+        // line per chunk — only a stage change (e.g. download -> forward)
+        // pushes a fresh line.
+        if (lastProgressStage === stage) logReplace(line);
+        else { log(line); lastProgressStage = stage; }
+      } else {
+        genPhase = stage;
+        lastProgressStage = null;
+      }
       return;
     }
     const p = pending.get(id);
@@ -640,12 +691,13 @@ async function loadLlm(spec) {
   if (!loading) {
     setStatus('loading', 'Loading model…');
     log('loading model into the worker…');
+    lastProgressStage = null;
     loading = ask('load', { ...spec, width: W, height: H, rulestring: app.rulestring() })
       .then((info) => {
         llmReady = true;
         const name = spec.ggufUrl.split('/').pop().replace(/\.gguf$/, '');
         setStatus('ready', 'Ready');
-        log(`model loaded: ${name} · grid ${W}x${H}`);
+        log(`model loaded: ${name}`);
         return info;
       })
       .catch((e) => { loading = null; setStatus('error', 'Load failed'); log('load failed: ' + e.message); throw e; });
@@ -680,11 +732,24 @@ async function llmStepOnce() {
     // the next step/play works without a reload.
     clearInterval(ticker);
     generating = false;
+    if (pendingReset) { const r = pendingReset; pendingReset = null; applyReset(r.type, r.opts); }
     setStatus('error', 'Generation failed');
     logReplace(`generation ${genLabel}: failed — ${e.message}`);
     throw e;
   }
   clearInterval(ticker);
+  generating = false;
+  if (pendingReset) {
+    // A Clear/Random/Glider requested mid-generation: the result that just
+    // landed was computed from the pre-reset grid, so it is discarded rather
+    // than painted — the reset applies instead.
+    const reset = pendingReset;
+    pendingReset = null;
+    applyReset(reset.type, reset.opts);
+    setStatus('ready', 'Ready');
+    logReplace(`generation ${genLabel}: discarded — reset applied`);
+    return;
+  }
   lastSec = (performance.now() - t0) / 1000;
   lastP = r.pAlive;
   lastThresholdValue = r.thresholdValue;
@@ -698,7 +763,6 @@ async function llmStepOnce() {
   app.set_cells(Uint8Array.from(r.binarized));
   truth.step(1);
   generation++;
-  generating = false;
   // A grid-size change requested mid-generation (`window.__app.setGrid`)
   // was deferred; apply it now that this generation's result has already
   // landed on the old-sized `app`/`truth`.
@@ -706,6 +770,7 @@ async function llmStepOnce() {
     const n = pendingGridSize;
     pendingGridSize = null;
     setGridSize(n);
+    if (mode === 'llm') logGridInfo(n);
   }
   render();
   setStatus('ready', 'Ready');
@@ -738,8 +803,14 @@ window.__app = {
       // Mid-generation, resizing `app`/`truth` now would apply the in-flight
       // result (sized for the old grid) to a mismatched grid. Defer instead —
       // `llmStepOnce` applies it once that generation lands.
-      if (generating) pendingGridSize = n;
-      else { setGridSize(n); resync(); }
+      if (generating) {
+        pendingGridSize = n;
+        log(`grid change queued until generation ${generation + 1} finishes`);
+      } else {
+        setGridSize(n);
+        resync();
+        if (mode === 'llm') logGridInfo(n);
+      }
     }
     return llmGridSize;
   },
@@ -770,9 +841,9 @@ window.__app = {
   },
   setOverlay: (on) => { els.overlay.checked = on; render(); },
   toggle: (x, y) => { app.toggle(x, y); resync(); },
-  clear: () => { setPlaying(false); app.clear(); truth.clear(); resync(); },
-  glider: () => { setPlaying(false); app.clear(); app.place_glider(2, 2); resync(); },
-  randomize: (seed, density) => { setPlaying(false); app.randomize(BigInt(seed), density ?? 0.28); resync(); },
+  clear: () => requestReset('clear'),
+  glider: () => requestReset('glider'),
+  randomize: (seed, density) => requestReset('random', { seed, density: density ?? 0.28 }),
   step: async (n) => { for (let i = 0; i < (n ?? 1); i++) await stepOnce(); return generation; },
   secondsPerGeneration: () => lastSec,
   play: (on) => { setPlaying(on ?? !playing); return playing; },
