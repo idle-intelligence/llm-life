@@ -11,7 +11,8 @@ drift from true Life is the model's character rendered as an image.
 
 ```
 crates/life/        classical B/S cellular automaton (the ground truth), + wasm wrapper
-crates/llm-life/    variant B packing, stencil mask, scoring, PGM output
+crates/llm-life/    variant A packing (per-cell prompts, block-diagonal mask),
+                    variant B packing (stencil mask), scoring, PGM output
                     src/bin/llm-life.rs   native driver ("picture")
                     src/web.rs            wasm-bindgen LifeEngine for the tab
 web/                the demo page (STATUS / INPUT / OUTPUT / PERFORMANCE)
@@ -41,6 +42,12 @@ cargo run --release -p llm-life -- picture \
   --gguf ~/Code/idle-intelligence/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf \
   --tokenizer ~/Code/idle-intelligence/models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json \
   --size 64 --generations 10
+
+# variant A (packed per-cell prompts, chunked against the resident prefix)
+cargo run --release -p llm-life -- picture-a \
+  --gguf ~/Code/idle-intelligence/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf \
+  --tokenizer ~/Code/idle-intelligence/models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json \
+  --size 64 --generations 10 --chunk-cells 128
 ```
 
 Models live under `~/Code/idle-intelligence/models/`; weights are never

@@ -1,14 +1,18 @@
 # Pictures
 
-Output of `llm-life picture` (variant B, native). Four PGMs per seed at
-generation 1, plus `first-picture.md` with the per-generation table.
+Output of `llm-life picture` (variant B) and `llm-life picture-a` (variant A),
+both native. Four PGMs per seed at generation 1, plus a `<tag>-picture.md`
+with the per-generation table.
 
 | file | what it is |
 |---|---|
-| `b-<seed>-gen1-palive.pgm` | the model's p(alive) per cell, as gray — the interesting pixel |
-| `b-<seed>-gen1-argmax.pgm` | p(alive) thresholded at 0.5 — what the model "says" |
-| `b-<seed>-gen1-true.pgm` | true Life's next generation from the same input |
-| `b-<seed>-gen1-diff.pgm` | cells where argmax and true Life disagree |
+| `<tag>-<seed>-gen1-palive.pgm` | the model's p(alive) per cell, as gray — the interesting pixel |
+| `<tag>-<seed>-gen1-argmax.pgm` | p(alive) thresholded — what the model "says" |
+| `<tag>-<seed>-gen1-true.pgm` | true Life's next generation from the same input |
+| `<tag>-<seed>-gen1-diff.pgm` | cells where the thresholded grid and true Life disagree |
+
+`<tag>` is `b` for variant B, `a` for variant A, and `a-<attempt>` for the
+attempts at making `1` reachable (below).
 
 PGM (binary P5, 8-bit gray, black = alive) because it needs no dependency and
 every viewer and every Python script reads it. `zoom` is baked in so a 64x64

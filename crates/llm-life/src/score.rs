@@ -50,3 +50,19 @@ pub fn score(truth: &Grid, model: &Grid, p_alive: &[f32], generation: usize) -> 
         model_live: model.live_count(),
     }
 }
+
+/// Threshold p(alive) at the grid's **median** instead of 0.5.
+///
+/// The base/instruct models put every cell on the same side of 0.5 (they
+/// answer `0` everywhere), so a fixed threshold reads out nothing even when
+/// the model orders the cells correctly. The median is the cheapest
+/// calibration that keeps the ordering and is equivalent to thresholding the
+/// logit difference `1`-`0`, since the two-way softmax is monotone in it.
+/// It hands the model the live fraction for free, so a live recall measured
+/// this way is an upper bound on what the model knows, not an accuracy claim.
+pub fn median_threshold_grid(p: &[f32], width: usize, height: usize) -> Grid {
+    let mut sorted: Vec<f32> = p.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let t = sorted[sorted.len() / 2];
+    Grid::from_cells(width, height, p.iter().map(|&v| (v > t) as u8).collect())
+}

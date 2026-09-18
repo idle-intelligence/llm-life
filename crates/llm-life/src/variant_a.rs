@@ -47,13 +47,16 @@ pub fn fewshot_examples() -> String {
     let mut s = String::from("Examples:\n");
     for (nb, me, next) in cases {
         s.push_str(&cell_prompt(&nb, me));
-        s.push_str(&format!(" {next}\n"));
+        s.push_str(&format!("{next}\n"));
     }
     s
 }
 
-/// One cell's prompt, without the trailing newline: the model answers the
-/// token right after the final colon, so that colon is the read-out position.
+/// One cell's prompt. It ends with a **trailing space**, deliberately: Qwen's
+/// pre-tokenizer splits digits off and leaves the leading space as its own
+/// token, so `"Next:"` would be followed by `" "` and only then by the digit.
+/// Ending the prompt on the space puts the bare `0`/`1` token at the very
+/// next position, which is the position whose logits we read.
 pub fn cell_prompt(neighbors: &[u8], self_state: u8) -> String {
     let mut s = String::from("Neighbors:");
     for &n in neighbors {
@@ -62,7 +65,7 @@ pub fn cell_prompt(neighbors: &[u8], self_state: u8) -> String {
     }
     s.push_str(" / Self: ");
     s.push(if self_state != 0 { '1' } else { '0' });
-    s.push_str(" / Next:");
+    s.push_str(" / Next: ");
     s
 }
 

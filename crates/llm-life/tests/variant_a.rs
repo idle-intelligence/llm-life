@@ -68,7 +68,7 @@ fn p_alive_is_read_at_the_answer_rows_in_cell_order() {
 fn the_prompt_states_the_eight_neighbors_then_self() {
     assert_eq!(
         cell_prompt(&[1, 0, 1, 0, 0, 1, 1, 0], 1),
-        "Neighbors: 1 0 1 0 0 1 1 0 / Self: 1 / Next:"
+        "Neighbors: 1 0 1 0 0 1 1 0 / Self: 1 / Next: "
     );
 }
 
@@ -80,6 +80,6 @@ fn every_cell_gets_a_prompt_holding_its_own_neighborhood() {
     let prompts = cell_prompts(&g);
     assert_eq!(prompts.len(), 16);
     // Cell (1,1) is alive and has one live neighbor, (2,1).
-    assert!(prompts[5].ends_with("/ Self: 1 / Next:"));
+    assert!(prompts[5].ends_with("/ Self: 1 / Next: "));
     assert_eq!(prompts[5].matches(" 1").count(), 2);
 }
