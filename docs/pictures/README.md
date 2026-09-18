@@ -81,3 +81,44 @@ ranking is anti-correlated with the rule, and the median threshold (which
 fixes any pure threshold error) still only reaches 0.42–0.45 accuracy on the
 random seeds. Nothing here is Life; it is the model's prior over digit
 continuations, rendered per cell.
+
+### Making `1` reachable — three attempts (64x64, seed 1, generation 1)
+
+| attempt | accuracy | live recall | acc (median) | live recall (median) | confidence gap | model live / 4096 | s/gen |
+|---|---|---|---|---|---|---|---|
+| A, rules only | 0.2998 | 0.560 | 0.4524 | 0.423 | -0.0945 | 3022 | 569 |
+| (a) A + 6-example few-shot prefix | **0.6252** | **0.574** | 0.5906 | **0.643** | **+0.0400** | 1727 | 849 |
+| (b) base (non-instruct) Qwen2.5-0.5B Q4_0 | — | — | — | — | — | — | — |
+| (c) median threshold instead of 0.5 | see the "(median)" columns — it is computed for every row | | | | | | |
+
+True live count on that grid is 1294.
+
+**(a) few-shot is what worked.** Six worked neighborhood→next examples covering
+birth, survival (2 and 3 neighbors), overcrowding, loneliness and a dead cell
+with 2 neighbors — 255 prefix tokens instead of 79. Accuracy doubles
+(0.30 → 0.63), the model's live count drops from 3022 to 1727 against a true
+1294, and the **confidence gap turns positive for the first time in variant A**
+(-0.094 → +0.040): p(alive) is now higher on the cells true Life says are
+alive. The ranking, not just the threshold, moved. Variant B's gap on the same
+seed was +0.023 with live recall 0.000, so few-shot variant A is the first
+configuration in this repo that both orders cells correctly *and* answers `1`.
+
+**(b) blocked, not skipped.** Base Q4_0 GGUFs of Qwen2.5-0.5B do exist —
+`QuantFactory/Qwen2.5-0.5B-GGUF` and `RichardErkhov/Qwen_-_Qwen2.5-0.5B-gguf`
+were both downloaded — but neither loads:
+
+```
+Error: Expected Q4_0 for 'token_embd.weight', got Q8_0
+```
+
+llama.cpp keeps the token embedding at Q8_0 in a "Q4_0" build of a model this
+small; the official `Qwen/Qwen2.5-0.5B-Instruct-GGUF` q4_0 happens to be the
+exception (Q4_0 embedding, Q8_0 `output.weight`, which is what the first worker
+already handled). Loading a base model needs Q8_0 *embedding* support in
+llm-web's `Q4ModelLoader` — a real engine change, not header parsing — and that
+was not attempted tonight.
+
+**(c) median threshold is not enough on its own.** It is reported for every row
+above. On rules-only variant A it lifts accuracy 0.30 → 0.45 and no further,
+because the underlying ranking is anti-correlated; once few-shot fixes the
+ranking, the median and 0.5 agree to within 0.04.
