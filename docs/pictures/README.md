@@ -235,3 +235,83 @@ unlike variant A, where it was the ranking that moved.
 Files: `b-fewshot-{glider,1,2}-gen1-*.pgm`, `b-fewshot-picture.md`, and the
 control `b-rules-picture.md` (whose PGMs are byte-identical to `b-*.pgm` and
 were not duplicated).
+
+## Set-based scoring: IoU, Hamming, F1 (rescored from disk, no rerun)
+
+Accuracy alone can look great while the alive set is nowhere near true Life:
+the glider's "0.9980 accuracy, 13 alive vs 5 true" row above is *worse* than
+it sounds, because 8 of those cells are false positives on a 5-cell object.
+IoU (Jaccard of the alive sets), Hamming (count of wrong cells — the mutation
+count per generation) and F1 (precision/recall of the alive class) are added
+here, from `llm-life rescore` (`crates/llm-life/src/score.rs`), against the
+`argmax` PGM already on disk (p(alive) >= 0.5, what the model actually says,
+not a label-free threshold). For every row below, `rescore` regenerated the
+seed grid with `seed_grid` (density 0.28, the CLI default) and asserted its
+Life step equals the `*-true.pgm` on disk before scoring anything — all nine
+assertions passed, so every number below is scored against the exact input
+the picture run used.
+
+| config | seed | accuracy | IoU | Hamming | precision | recall | F1 | true live | model live |
+|---|---|---|---|---|---|---|---|---|---|
+| B rules-only | glider | 0.9988 | 0.0000 | 5 | 0.0000 | 0.0000 | 0.0000 | 5 | 0 |
+| B rules-only | 1 | 0.6841 | 0.0000 | 1294 | 0.0000 | 0.0000 | 0.0000 | 1294 | 0 |
+| B rules-only | 2 | 0.6814 | 0.0000 | 1305 | 0.0000 | 0.0000 | 0.0000 | 1305 | 0 |
+| B few-shot | glider | 0.9988 | 0.0000 | 5 | 0.0000 | 0.0000 | 0.0000 | 5 | 0 |
+| B few-shot | 1 | 0.6768 | 0.0000 | 1324 | 0.0000 | 0.0000 | 0.0000 | 1294 | 30 |
+| B few-shot | 2 | 0.6704 | 0.0000 | 1350 | 0.0000 | 0.0000 | 0.0000 | 1305 | 45 |
+| A few-shot | glider | 0.9985 | 0.3333 | 6 | 0.4286 | 0.6000 | 0.5000 | 5 | 7 |
+| A few-shot | 1 | 0.6252 | 0.3262 | 1535 | 0.4302 | 0.5742 | 0.4919 | 1294 | 1727 |
+| A few-shot | 2 | 0.6172 | 0.3236 | 1568 | 0.4254 | 0.5747 | 0.4889 | 1305 | 1763 |
+
+(`score.rs`'s convention: precision is 1.0 only when both alive sets are
+empty; with model_live=0 and true_live>0, as in every B rules-only row and
+the two B few-shot glider rows, precision is 0.0000 — there are no true
+positives and the model answered no positives at all, so the ratio is
+defined as 0, not skipped.)
+
+At `p(alive) >= 0.5` every variant B row answers `0` everywhere or almost
+everywhere (0–45 of 4096 cells), so IoU and F1 are 0.0000 across the board —
+the confidence-gap story from the tables above is invisible at this threshold
+and only recoverable with Otsu/z-score (see those columns above). Variant A
+few-shot is the only configuration with a non-zero IoU at the model's own
+threshold: 0.32–0.33 on the random seeds, 0.33 on the glider. The glider's
+IoU (0.33) is a much harsher number than its accuracy (0.9985) or the earlier
+Otsu accuracy (0.9961) suggested — it says the model's alive set overlaps
+true Life's by exactly a third, which is the number TC asked for.
+
+### Per-case recall (glider and seed 1), B3/S23
+
+Six neighborhood classes, computed from the *input* grid (not the output):
+`birth` = dead with exactly 3 neighbours, `survive-2`/`survive-3` = alive
+with 2 or 3, `death-lonely` = alive with <2, `death-crowded` = alive with >3,
+`stay-dead` = dead with any other count. `n` is the class's cell count on
+that grid (fixed by the input, same for every config); `frac` is the
+fraction of that class the config's argmax got right.
+
+| case | glider n | B rules-only frac | B few-shot frac | A few-shot frac | seed 1 n | B rules-only frac | B few-shot frac | A few-shot frac |
+|---|---|---|---|---|---|---|---|---|
+| birth (dead, =3) | 2 | 0.0000 | 0.0000 | 1.0000 | 709 | 0.0000 | 0.0000 | 0.8166 |
+| survive-2 | 1 | 0.0000 | 0.0000 | 0.0000 | 354 | 0.0000 | 0.0000 | 0.1525 |
+| survive-3 | 2 | 0.0000 | 0.0000 | 0.5000 | 231 | 0.0000 | 0.0000 | 0.4762 |
+| death-lonely (<2) | 2 | 1.0000 | 1.0000 | 1.0000 | 376 | 1.0000 | 1.0000 | 1.0000 |
+| death-crowded (>3) | 0 | 1.0000\* | 1.0000\* | 1.0000\* | 142 | 1.0000 | 0.7887 | 0.4437 |
+| stay-dead | 4089 | 1.0000 | 1.0000 | 0.9990 | 2284 | 1.0000 | 1.0000 | 0.6038 |
+
+\* the glider has no cell with >3 live neighbours, so `n=0` and `frac` is the
+empty-class convention (1.0, nothing to get wrong), not a measured result.
+
+**Birth fails first, exactly as hypothesized — for variant B.** Both B
+configs get birth (and survive-2/survive-3) at 0.0000 on every seed: an
+instruct model answering `0` almost everywhere cannot birth a cell, full
+stop, while it looks perfect on `death-lonely` and `stay-dead` only because
+those classes are what "answer 0" already gets right for free — the same
+illusion the accuracy number gives at the grid level. Variant A few-shot
+inverts this: birth is its *best* class (0.82–1.00), because the few-shot
+prefix's worked examples explicitly teach `dead + 3 -> 1`. Its weakest class
+is instead `survive-2` (0.15–0.20) — a live cell with exactly 2 neighbours,
+which the six examples cover only once and which is easily confused with
+`survive-3`/`death-crowded` since all three involve an already-alive cell.
+So TC's hypothesis holds for variant B's rule-only regime, but
+few-shot moves the failure mode from "can't birth" to "can't tell 2 neighbors
+from 3 on an already-alive cell" — a harder, more specific confusion than a
+blanket bias toward `0`.
