@@ -56,7 +56,13 @@ self.onmessage = async (e) => {
       reply(true, { packedTokens: engine.packedTokens() });
     } else if (type === 'step') {
       const t0 = performance.now();
+      // engine.step() (crates/llm-life/src/web.rs) is a single async call that
+      // packs the grid, tokenizes, runs the forward pass and reads the logits
+      // back with no phase hooks — so 'forward' here covers all three; we
+      // can't report them separately without restructuring the engine.
+      self.postMessage({ type: 'progress', stage: 'forward' });
       const p = await engine.step(new Uint8Array(payload.cells));
+      self.postMessage({ type: 'progress', stage: 'threshold' });
       const pArr = Float32Array.from(p);
       // Label-free binarization — same code (crate::score) as the native
       // `rescore` tool and docs/pictures/README.md, not a JS reimplementation.
@@ -64,6 +70,7 @@ self.onmessage = async (e) => {
         ? zscoreThreshold(pArr, payload.k ?? 2.0)
         : otsuThreshold(pArr);
       const binarized = Array.from(p, (v) => (v > thresholdValue ? 1 : 0));
+      self.postMessage({ type: 'progress', stage: 'done' });
       reply(true, {
         pAlive: Array.from(p),
         binarized,
