@@ -11,14 +11,21 @@ use burn::tensor::{Tensor, TensorData};
 use std::io::{Read, Write};
 use std::path::Path;
 
-const MAGIC: &[u8; 8] = b"LLMLIFE1";
+const MAGIC: &[u8; 8] = b"LLMLIFE2";
 
-pub fn save<B: Backend>(path: &Path, params: &[Tensor<B, 2>]) -> Result<()> {
+/// The `LoraSpec` a file was written with, so a reader can rebuild the same
+/// adapter set instead of guessing the rank and whether gate/up were adapted
+/// (a wrong guess would either mis-count the matrices or hand a matmul the
+/// wrong shape halfway through a 24-layer forward).
+pub fn save<B: Backend>(path: &Path, spec: &super::LoraSpec, params: &[Tensor<B, 2>]) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
     f.write_all(MAGIC)?;
+    f.write_all(&(spec.rank as u32).to_le_bytes())?;
+    f.write_all(&spec.alpha.to_le_bytes())?;
+    f.write_all(&[spec.mlp as u8])?;
     f.write_all(&(params.len() as u32).to_le_bytes())?;
     for t in params {
         let [r, c] = t.dims();
@@ -32,12 +39,20 @@ pub fn save<B: Backend>(path: &Path, params: &[Tensor<B, 2>]) -> Result<()> {
     Ok(())
 }
 
-pub fn load<B: Backend>(path: &Path, device: &B::Device) -> Result<Vec<Tensor<B, 2>>> {
+pub fn load<B: Backend>(
+    path: &Path,
+    device: &B::Device,
+) -> Result<(super::LoraSpec, Vec<Tensor<B, 2>>)> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)?.read_to_end(&mut bytes)?;
-    ensure!(bytes.len() >= 12 && &bytes[..8] == MAGIC, "not a LoRA file: {}", path.display());
-    let n = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
-    let mut off = 12;
+    ensure!(bytes.len() >= 21 && &bytes[..8] == MAGIC, "not a LoRA file: {}", path.display());
+    let spec = super::LoraSpec {
+        rank: u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize,
+        alpha: f32::from_le_bytes(bytes[12..16].try_into().unwrap()),
+        mlp: bytes[16] != 0,
+    };
+    let n = u32::from_le_bytes(bytes[17..21].try_into().unwrap()) as usize;
+    let mut off = 21;
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
         if off + 8 > bytes.len() {
@@ -55,5 +70,5 @@ pub fn load<B: Backend>(path: &Path, device: &B::Device) -> Result<Vec<Tensor<B,
         off += len * 4;
         out.push(Tensor::from_data(TensorData::new(data, [r, c]), device));
     }
-    Ok(out)
+    Ok((spec, out))
 }

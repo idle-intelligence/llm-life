@@ -251,7 +251,7 @@ pub fn run(args: TrainArgs) -> Result<()> {
         _ => evaluate(&model, &p, &eval_grids, &rule, &device)?,
     };
 
-    lora_io::save(&args.out, &params)?;
+    lora_io::save(&args.out, &args.lora, &params)?;
     println!("wrote {}", args.out.display());
 
     if let Some(doc) = &args.run_doc {

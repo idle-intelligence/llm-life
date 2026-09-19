@@ -305,11 +305,15 @@ impl TrainRunner {
         device: &WgpuDevice,
     ) -> Result<Self> {
         let p = llm_life::train::run::prompt(tokenizer, rule)?;
-        let spec = lora.map(|_| LoraSpec::default());
+        // The file carries the `LoraSpec` it was trained with, so the
+        // adapter set is rebuilt exactly, not guessed.
+        let loaded = lora
+            .map(|path| lora_io::load::<burn::backend::Wgpu>(path, device))
+            .transpose()?;
+        let spec: Option<LoraSpec> = loaded.as_ref().map(|(s, _)| *s);
         let mut model: TrainModel<burn::backend::Wgpu> =
             load_train_model(gguf, &[p.dead, p.alive], spec, device)?;
-        if let Some(path) = lora {
-            let params = lora_io::load(path, device)?;
+        if let Some((_, params)) = loaded {
             anyhow::ensure!(
                 params.len() == model.lora_params().len(),
                 "LoRA file has {} matrices, this model wants {}",
