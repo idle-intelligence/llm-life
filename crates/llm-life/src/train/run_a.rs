@@ -279,6 +279,14 @@ pub fn evaluate_a(
     })
 }
 
+/// Number of cases an `EvalReportA` actually covers (`eval_cases`'s size for
+/// the before-training/periodic evals, 512 for the final one) — the correct
+/// denominator for `accuracy`, which the doc used to report against a
+/// hardcoded 512 even when the periodic evals were shrunk to `--eval-cases`.
+fn eval_n(r: &EvalReportA) -> usize {
+    r.cases.iter().map(|&(_, n, _)| n).sum()
+}
+
 fn case_table(r: &EvalReportA) -> String {
     let mut s = String::from("| case | n | correct | frac |\n|---|---|---|---|\n");
     for (c, n, ok) in &r.cases {
@@ -454,9 +462,10 @@ pub fn run(args: RunAArgs) -> Result<()> {
                 best = Some((e.accuracy, params.clone()));
             }
             let full = e.accuracy >= 1.0;
+            let n = eval_n(&e);
             evals.push((step, e));
             if full {
-                println!("512/512 correct at step {step}, stopping");
+                println!("{n}/{n} correct (held-out eval set) at step {step}, stopping");
                 stopped_full = true;
                 break;
             }
@@ -495,17 +504,18 @@ pub fn run(args: RunAArgs) -> Result<()> {
             args.lora.rank,
             args.lora.alpha,
             if args.lora.mlp { " + gate/up" } else { "" },
-            if stopped_full { " (512/512, early stop)" } else { "" },
+            if stopped_full { " (held-out eval set 100% correct, early stop)" } else { "" },
             args.batch,
             args.lr,
             args.seed,
             start.elapsed().as_secs_f64(),
         );
         s.push_str(&format!(
-            "## Base (step 0)\n\nloss {:.4}, accuracy {:.4} ({}/512)\n\n{}\n",
+            "## Base (step 0)\n\nloss {:.4}, accuracy {:.4} ({}/{})\n\n{}\n",
             before.loss,
             before.accuracy,
-            (before.accuracy * 512.0).round() as usize,
+            (before.accuracy * eval_n(&before) as f64).round() as usize,
+            eval_n(&before),
             case_table(&before)
         ));
         s.push_str("## Loss\n\n| step | loss | s |\n|---|---|---|\n");
@@ -515,19 +525,23 @@ pub fn run(args: RunAArgs) -> Result<()> {
         s.push_str("\n## Held-out (every eval-every steps)\n\n");
         for (i, e) in &evals {
             s.push_str(&format!(
-                "### step {i}\n\nloss {:.4}, accuracy {:.4} ({}/512), IoU (3 real grids) {:.4}\n\n{}\n",
+                "### step {i}\n\nloss {:.4}, accuracy {:.4} ({}/{}), IoU ({} real grid{}) {:.4}\n\n{}\n",
                 e.loss,
                 e.accuracy,
-                (e.accuracy * 512.0).round() as usize,
+                (e.accuracy * eval_n(e) as f64).round() as usize,
+                eval_n(e),
+                args.eval_grids,
+                if args.eval_grids == 1 { "" } else { "s" },
                 e.iou,
                 case_table(e)
             ));
         }
         s.push_str(&format!(
-            "## Best-by-accuracy checkpoint (saved to `{}`)\n\naccuracy {:.4} ({}/512), IoU {:.4}\n\n{}\n",
+            "## Best-by-accuracy checkpoint (saved to `{}`)\n\naccuracy {:.4} ({}/{}), IoU {:.4}\n\n{}\n",
             args.out.display(),
             best_eval.accuracy,
-            (best_eval.accuracy * 512.0).round() as usize,
+            (best_eval.accuracy * eval_n(&best_eval) as f64).round() as usize,
+            eval_n(&best_eval),
             best_eval.iou,
             case_table(&best_eval)
         ));

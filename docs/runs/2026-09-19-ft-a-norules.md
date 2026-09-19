@@ -4,13 +4,22 @@ machine: Linux 6.18.45-1-MANJARO x86_64
 model: /box/models/qwen2.5-0.5b-instruct-q4_0.gguf
 adapter: a-norules (no rule text in the prefix)
 LoRA: rank 8, alpha 16, q/k/v/o
-steps: 60 (512/512, early stop), batch 64, lr 0.00003, seed 1
+steps: 60 (held-out eval set 100% correct, early stop), batch 64, lr 0.00003, seed 1
 trainable parameters: 1081344
 wall clock: 2808.2s
 
 ## Base (step 0)
 
-loss 0.8660, accuracy 0.3594 (184/512)
+loss 0.8660, accuracy 0.3594 (46/128)
+
+Note (fixed post-hoc, 2026-09-20): this run predates the fix to the doc
+generator's denominator, which hardcoded `/512` even though the
+before-training and periodic evals below use `--eval-cases 128` (default).
+The base/step-20/40/60 lines here have been corrected by hand to the true
+`/128` denominator and grid count, and so has the "(512/512, early stop)"
+header above (it was the held-out 128-case set that hit 100%, not the full
+512, which the final check below shows at 99.61%). The per-case tables and
+the final "Best-by-accuracy checkpoint" section were always correct.
 
 | case | n | correct | frac |
 |---|---|---|---|
@@ -90,7 +99,7 @@ loss 0.8660, accuracy 0.3594 (184/512)
 
 ### step 20
 
-loss 0.4832, accuracy 0.6250 (320/512), IoU (3 real grids) 0.1765
+loss 0.4832, accuracy 0.6250 (80/128), IoU (1 real grid) 0.1765
 
 | case | n | correct | frac |
 |---|---|---|---|
@@ -103,7 +112,7 @@ loss 0.4832, accuracy 0.6250 (320/512), IoU (3 real grids) 0.1765
 
 ### step 40
 
-loss 0.1054, accuracy 0.9766 (500/512), IoU (3 real grids) 0.6667
+loss 0.1054, accuracy 0.9766 (125/128), IoU (1 real grid) 0.6667
 
 | case | n | correct | frac |
 |---|---|---|---|
@@ -116,7 +125,7 @@ loss 0.1054, accuracy 0.9766 (500/512), IoU (3 real grids) 0.6667
 
 ### step 60
 
-loss 0.0129, accuracy 1.0000 (512/512), IoU (3 real grids) 1.0000
+loss 0.0129, accuracy 1.0000 (128/128), IoU (1 real grid) 1.0000
 
 | case | n | correct | frac |
 |---|---|---|---|
