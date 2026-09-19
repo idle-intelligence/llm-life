@@ -287,6 +287,70 @@ recover here, and the fine-tune (below) is the only lever left.
 
 Files: `b-base-{glider,1,2}-gen1-*.pgm`, `b-base-picture.md`.
 
+## Fine-tuned (smoke) — the first variant-B row with a non-zero IoU
+
+`artifacts/lora-b-smoke.bin` (rank-8 LoRA on q/k/v/o, 1.08M trainable
+parameters, 60 steps at 16x16 — see `docs/runs/2026-09-19-ft-1.md`) applied at
+inference through the f32 training forward (`picture --lora`). Merging the
+adapter back into the Q4_0 weights would have to re-quantize them, and a
+rank-8 delta after 60 steps is smaller than Q4_0's step size, so the eval runs
+the adapter where it was trained.
+
+**The adapter was trained at 16x16 and is scored here at 64x64.** That is not
+a transfer claim that needs hedging: a cell attends to the 68-token prefix and
+its own 9-cell neighbourhood and to nothing else, so the softmax is over 77
+keys at any grid size, and every grid token shares one RoPE position. The grid
+size is not visible to the model.
+
+One seed only — the run was stopped after the glider to give the GPU back
+(CLAUDE.md, one GPU job at a time); seeds 1 and 2 were **not run**. Timing
+provisional.
+
+| config | seed | accuracy | IoU | Hamming | precision | recall | F1 | confidence gap | true live | model live | s/gen |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| B base | glider | 0.9988 | 0.0000 | 5 | 0.0000 | 0.0000 | 0.0000 | +0.1265 | 5 | 0 | 17.4 |
+| **B fine-tuned (smoke)** | glider | **0.9990** | **0.4286** | **4** | **0.6000** | **0.6000** | **0.6000** | **+0.4495** | 5 | **5** | 100.8 |
+
+### Per-case recall, glider, base vs fine-tuned
+
+| case | n | base frac | fine-tuned frac |
+|---|---|---|---|
+| birth (dead, =3) | 2 | 0.0000 | 0.0000 |
+| survive-2 | 1 | 0.0000 | **1.0000** |
+| survive-3 | 2 | 0.0000 | **1.0000** |
+| death-lonely (<2) | 2 | 1.0000 | 0.0000 |
+| death-crowded (>3) | 0 | 1.0000\* | 1.0000\* |
+| stay-dead | 4089 | 1.0000 | 1.0000 |
+
+\* empty-class convention, not a measured result.
+
+**It answers `1`, and it answers it five times on a five-cell target.** Every
+other variant-B row in this document has `model live = 0` and IoU 0.0000 at
+the model's own threshold; this one puts exactly 5 cells alive against a true
+5 and gets 3 of them right (precision = recall = F1 = 0.6000, IoU 0.4286,
+Hamming 4 against the base's 5). The confidence gap more than triples,
++0.1265 to +0.4495: the separation is no longer something only a label-free
+threshold could find.
+
+What it learned is **survival, not birth**. `survive-2` and `survive-3` go
+0.0000 -> 1.0000; `birth` stays at 0.0000, and `death-lonely` *regresses*
+1.0000 -> 0.0000 — the two cells with fewer than 2 neighbours are kept alive.
+So the adapter has learned "an already-live cell stays live" and has not yet
+learned either half of the neighbour count. That is the exact mirror of
+few-shot variant A, whose best class is `birth` (0.82-1.00) and whose worst is
+`survive-2` (0.15): the worked examples taught A the birth rule explicitly,
+and gradient descent on true Life taught B the survival rule first.
+
+**This is the step-60 adapter, which is not the best one.** At step 40 the
+held-out per-case recall was 1.0000 on birth, survive-2, death-lonely,
+death-crowded and stay-dead at once, with IoU 0.9717 — see
+`docs/runs/2026-09-19-ft-1.md`. The run oscillates at lr 1e-4 with one
+256-cell grid per step, and what was saved is the swing, not the peak. A
+rerun at a lower learning rate was started and killed at step 75 before it
+checkpointed.
+
+Files: `b-ft-glider-gen1-*.pgm`.
+
 ## Set-based scoring: IoU, Hamming, F1 (rescored from disk, no rerun)
 
 Accuracy alone can look great while the alive set is nowhere near true Life:
