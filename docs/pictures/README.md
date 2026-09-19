@@ -236,6 +236,57 @@ Files: `b-fewshot-{glider,1,2}-gen1-*.pgm`, `b-fewshot-picture.md`, and the
 control `b-rules-picture.md` (whose PGMs are byte-identical to `b-*.pgm` and
 were not duplicated).
 
+## Base (non-instruct) Qwen2.5-0.5B — attempt (b) of "making `1` reachable", unblocked
+
+`QuantFactory/Qwen2.5-0.5B-GGUF` (`Qwen2.5-0.5B.Q4_0.gguf`) now loads: it keeps
+`token_embd.weight` at Q8_0 in its "Q4_0" build, which llm-web's loader
+rejected outright ("Expected Q4_0 for 'token_embd.weight', got Q8_0"). The
+loader dequantizes Q8_0 embedding rows exactly on the CPU path — the one
+llm-life's sliced head reads — and re-quantizes to Q4_0 only for the GPU tied
+full-width head, which llm-life never uses.
+
+One run, 3 seeds, generation 1 only, 64x64, teacher-forced, rules-only prefix.
+Timings **provisional**: the GPU was shared.
+
+| config | seed | accuracy | live recall | acc (median) | live recall (median) | confidence gap | IoU | Hamming | F1 | true live | model live | s/gen |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| B base | glider | 0.9988 | 0.0000 | 0.6389 | 1.0000 | +0.1265 | 0.0000 | 5 | 0.0000 | 5 | 0 | 17.4 |
+| B base | 1 | 0.6841 | 0.0000 | 0.7092 | 0.8308 | +0.0450 | 0.0000 | 1294 | 0.0000 | 1294 | 0 | 16.2 |
+| B base | 2 | 0.6814 | 0.0000 | 0.7026 | 0.8176 | +0.0473 | 0.0000 | 1305 | 0.0000 | 1305 | 0 | 16.5 |
+
+### Per-case recall, base vs instruct (B3/S23, from the input grid)
+
+| case | glider n | base frac | instruct frac | seed 1 n | base frac | instruct frac | seed 2 n | base frac | instruct frac |
+|---|---|---|---|---|---|---|---|---|---|
+| birth (dead, =3) | 2 | 0.0000 | 0.0000 | 709 | 0.0000 | 0.0000 | 660 | 0.0000 | — |
+| survive-2 | 1 | 0.0000 | 0.0000 | 354 | 0.0000 | 0.0000 | 338 | 0.0000 | — |
+| survive-3 | 2 | 0.0000 | 0.0000 | 231 | 0.0000 | 0.0000 | 307 | 0.0000 | — |
+| death-lonely (<2) | 2 | 1.0000 | 1.0000 | 376 | 1.0000 | 1.0000 | 313 | 1.0000 | — |
+| death-crowded (>3) | 0 | 1.0000\* | 1.0000\* | 142 | 1.0000 | 1.0000 | 191 | 1.0000 | — |
+| stay-dead | 4089 | 1.0000 | 1.0000 | 2284 | 1.0000 | 1.0000 | 2287 | 1.0000 | — |
+
+\* empty-class convention, not a measured result. The instruct columns are the
+rules-only rows from the per-case table further down; seed 2 was not scored
+per-case for the instruct model.
+
+**Dropping the instruct tuning changes nothing at the model's own threshold.**
+The base model answers `0` on all 4096 cells of all three seeds, exactly as
+the instruct model does, so accuracy, IoU, Hamming and F1 are identical to
+four decimals and birth/survival are still 0.0000. The hypothesis behind
+attempt (b) — that RLHF's "be safe, say the boring thing" was what pinned the
+answer to `0` — is **not supported**: the pull toward `0` is in the
+pretrained model, not in the instruct tuning.
+
+The one place they differ is the *ranking*, and the base model's is **worse**:
+at the grid-median threshold its live recall on the random seeds is 0.83/0.82
+against the instruct model's 1.0000, and its Otsu live recall is 0.45/0.49
+against 0.91/0.66. The confidence gap is essentially unchanged (+0.127/+0.045/
++0.047 against +0.127/+0.046/+0.044). So the instruct model orders cells at
+least as well and sometimes better; there is no base-model advantage to
+recover here, and the fine-tune (below) is the only lever left.
+
+Files: `b-base-{glider,1,2}-gen1-*.pgm`, `b-base-picture.md`.
+
 ## Set-based scoring: IoU, Hamming, F1 (rescored from disk, no rerun)
 
 Accuracy alone can look great while the alive set is nowhere near true Life:
