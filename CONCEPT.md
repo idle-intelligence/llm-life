@@ -182,3 +182,12 @@ Same 64×64 board, one generation, native and wasm, seconds (or ns/cell) per run
 Engine work for the batched pass = a true batch dimension in llm-web's prefill (batched attention kernel index + KV layout; the matmul is already a GEMM) — the same batch axis t0-web needs for 1000 signals.
 
 Grid-size axis (owner): measure ns/cell at 64², 256², 1024², 4096² for the loop and the lookup, native and wasm. Prediction: equal in L1 (64²); the lookup pulls ahead at scale when it stops being per-cell — rolling 9-bit index (one read per cell), then 12-bit tables over 3×4 windows (two cells per hit), then 16-bit strip tables on bit-packed rows (several cells per load, 8× less traffic). The gap is memory bandwidth, not arithmetic. HashLife is the far end of the same axis (memoizing regions in space and time) and belongs in the write-up.
+
+## 14. The demo narrates the computation (owner, 2026-09-19 late)
+
+Each rung of the ladder is a mode in the tab, same board and seed, and the STATUS log shows HOW it computed, not just the result:
+- **LLM, one call per pixel**: one line per cell — `cell (0,1): neighbours 0 1 0 0 1 0 0 0 · self 1 → p(alive) 0.62 → 1 · 48 ms` — with running count and total.
+- **LLM, batched**: same questions, mechanism visible — `prefix 79 tokens, KV resident (once)` · `batch 4096 × 10 tokens` · per layer `GEMM 40960×896, weights read once` · `attention: 80 keys/cell` · `readback` · `total 9.4 s` — and identical answers to the per-pixel mode (assert it).
+- **BERT of Life**: `4096 cells → one batch → 12 ms` (+ rule fired per cell if the second head exists).
+- **lookup / CPU**: `4096 cells → 3 µs`, ns/cell.
+PERFORMANCE keeps one row per rung; the ladder is readable as a table after running each mode. The per-pixel and batched logs ship first.
