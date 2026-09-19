@@ -149,7 +149,7 @@ pub fn evaluate_a(
     // a backward this eval never runs) does not blow the M2's shared
     // memory. Variant B's per-step forward at a comparable T (~335 tokens,
     // 16x16 grid) is the size this was picked to stay near.
-    const CHUNK: usize = 32;
+    const CHUNK: usize = 48;
     let mut loss_sum = 0.0;
     let mut correct = 0usize;
     let mut case_totals: Vec<(LifeCase, usize, usize)> = LifeCase::ALL.iter().map(|&c| (c, 0, 0)).collect();
