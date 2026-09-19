@@ -180,3 +180,5 @@ Same 64×64 board, one generation, native and wasm, seconds (or ns/cell) per run
 | LLM, whole board as text, thinking | one big model, remote (3080) | minutes; tokens per correct cell |
 
 Engine work for the batched pass = a true batch dimension in llm-web's prefill (batched attention kernel index + KV layout; the matmul is already a GEMM) — the same batch axis t0-web needs for 1000 signals.
+
+Grid-size axis (owner): measure ns/cell at 64², 256², 1024², 4096² for the loop and the lookup, native and wasm. Prediction: equal in L1 (64²); the lookup pulls ahead at scale when it stops being per-cell — rolling 9-bit index (one read per cell), then 12-bit tables over 3×4 windows (two cells per hit), then 16-bit strip tables on bit-packed rows (several cells per load, 8× less traffic). The gap is memory bandwidth, not arithmetic. HashLife is the far end of the same axis (memoizing regions in space and time) and belongs in the write-up.
