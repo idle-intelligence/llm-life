@@ -164,6 +164,19 @@ Order: fine-tune A → A in the tab with the adapter (the naive one-pixel-per-LL
 ## 12. "One pass", precisely (owner, 2026-09-19 late)
 
 Two readings, both to do:
-- **Numerical**: every cell is the same computation on the same input shape (8 neighbour bits + self after a shared prefix). (a) Batch it: 4096 identical sequences against one resident prefix = one forward with the block-diagonal sparse mask (~40k tokens), or one GEMM per layer with a true batch dimension in the engine. (b) **Memoize it**: only 2^9 = 512 distinct inputs exist; a generation costs one forward per unique neighbourhood present (show it in the tab: "unique neighbourhoods: 137 · LLM calls: 137"). The LLM's Life behaviour is a printable 512-row table.
+- **Numerical**: every cell is the same computation on the same input shape (8 neighbour bits + self after a shared prefix). (a) Batch it: 4096 identical sequences against one resident prefix = one forward with the block-diagonal sparse mask (~40k tokens), or one GEMM per layer with a true batch dimension in the engine. (b) NOT memoization (owner: the point is the honest cost of the stupid mode, not the cheapest way up the ladder); the 512-row table is a separate rung ("lookup"), and the LLM's behaviour can still be printed as such a table for the write-up.
 - **Vector space**: no tokens. Input = the 3×3 patch as 9 numbers → centre; or the whole grid → the whole grid. A learned CA = jacobi2000's stencil model with one binary channel and a sigmoid/cross-entropy head. Two scales of the same experiment: the smallest model that fits the 512 cases (BERT of Life without text) vs a deliberately oversized model that must discover locality from grid pairs. Then **3D Life** is a 3×3×3 stencil with nothing else changed — the cheapest 3D generalization test for jacobi2000. Life becomes jacobi2000's first discrete dataset.
 - Also still worth doing: the whole board as text to one thinking LLM (§11 pole 1).
+
+## 13. The compute ladder (owner, 2026-09-19 late) — measure, don't optimise
+
+Same 64×64 board, one generation, native and wasm, seconds (or ns/cell) per rung:
+| rung | what | expected |
+|---|---|---|
+| CPU | plain Rust Life step | ns/cell |
+| lookup | 9-bit index into a 512-entry table | ns/cell, memory-bound — no faster than the loop |
+| BERT of Life | small encoder per cell, batched | ms/board |
+| LLM, stupid mode | one 0.5B call per cell, all 4096 as ONE batched pass (shared prefix KV + batch 4096 × 10 suffix tokens → one GEMM per layer, weights read once; attention ~80 keys per cell) | ~28 TFLOP/generation ≈ 10 s M2, ~1 s 3080 (today: 9–16 min in 64-cell chunks) |
+| LLM, whole board as text, thinking | one big model, remote (3080) | minutes; tokens per correct cell |
+
+Engine work for the batched pass = a true batch dimension in llm-web's prefill (batched attention kernel index + KV layout; the matmul is already a GEMM) — the same batch axis t0-web needs for 1000 signals.
