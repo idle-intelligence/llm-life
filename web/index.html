@@ -226,7 +226,7 @@
 <header>
     <p class="org">idle intelligence</p>
     <h1>llm-life</h1>
-    <p class="tagline">A language model as the update rule of Conway's Game of Life. Classical mode is a for-loop; LLM mode asks the model what each cell does next and paints its confidence.</p>
+    <p class="tagline">A language model as the update rule of Conway's Game of Life. Classical mode is a for-loop; LLM of Life mode asks the model what each cell does next and paints its confidence.</p>
     <p class="repo">
         <a href="https://github.com/idle-intelligence/llm-life">github.com/idle-intelligence/llm-life</a>
     </p>
@@ -260,15 +260,15 @@
         <button id="random">Random</button>
         <button id="glider">Glider</button>
     </div>
-    <p class="info" id="mode-note">Click a cell in the model grid to toggle it.</p>
-    <label class="overlay"><input type="checkbox" id="overlay-palive" /> show p(alive) overlay on the model panel (LLM mode only)</label>
+    <p class="info" id="mode-note">Click a cell in the LLM of Life grid to toggle it.</p>
+    <label class="overlay"><input type="checkbox" id="overlay-palive" /> show p(alive) overlay on the LLM of Life panel (LLM mode only)</label>
 </section>
 
 <section>
     <h2>OUTPUT</h2>
     <div class="grids">
-        <div class="panel"><canvas id="c-model" width="64" height="64"></canvas><div class="caption">model</div></div>
-        <div class="panel"><canvas id="c-true" width="64" height="64"></canvas><div class="caption">true Life</div></div>
+        <div class="panel"><canvas id="c-model" width="64" height="64"></canvas><div class="caption">LLM of Life</div></div>
+        <div class="panel"><canvas id="c-true" width="64" height="64"></canvas><div class="caption">Game of Life</div></div>
         <div class="panel"><canvas id="c-diff" width="64" height="64"></canvas><div class="caption">diff</div></div>
     </div>
 </section>
@@ -294,11 +294,11 @@
         </div>
         <div class="metric">
             <div class="metric-value" id="p-live">0</div>
-            <div class="metric-label">model live</div>
+            <div class="metric-label">LLM live</div>
         </div>
         <div class="metric">
             <div class="metric-value" id="p-true-live">0</div>
-            <div class="metric-label">true live</div>
+            <div class="metric-label">Game of Life live</div>
         </div>
         <div class="metric">
             <div class="metric-value" id="p-acc">100.00%</div>
@@ -321,7 +321,7 @@
             <div class="metric-label">generation</div>
         </div>
     </div>
-    <p class="info">All timings provisional: shared GPU. LLM mode binarizes p(alive) with a label-free threshold (default: Otsu 1979) before painting the model panel and feeding it forward as the next generation's input — z-score (mean + k·std) is selectable via <code>window.__app.setThreshold('zscore', k)</code>, no UI setting. Variant B is one forward over the whole 64&times;64 grid; variant A is 16&times;16, one forward per chunk of 64 cells against a few-shot prefix resident in the KV cache.</p>
+    <p class="info">All timings provisional: shared GPU. LLM mode binarizes p(alive) with a label-free threshold (default: Otsu 1979) before painting the LLM of Life panel and feeding it forward as the next generation's input — z-score (mean + k·std) is selectable via <code>window.__app.setThreshold('zscore', k)</code>, no UI setting. Variant B is one forward over the whole 64&times;64 grid; variant A is 16&times;16, one forward per chunk of 64 cells against a few-shot prefix resident in the KV cache.</p>
 </section>
 
 <footer>
@@ -774,10 +774,10 @@ async function llmStepOnce() {
   }
   render();
   setStatus('ready', 'Ready');
-  logReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (true ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)} · IoU ${lastIou.toFixed(2)} · wrong ${lastWrong}`);
+  logReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (game of life ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)} · IoU ${lastIou.toFixed(2)} · wrong ${lastWrong}`);
 }
 
-els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell. Click a cell in the model grid to toggle it.';
+els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell. Click a cell in the LLM of Life grid to toggle it.';
 
 window.__app = {
   ready: true,
