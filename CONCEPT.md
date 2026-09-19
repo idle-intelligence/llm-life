@@ -151,3 +151,12 @@ Builds on `../llm-web` (Burn 0.20 + custom WGSL, Qwen2 arch, GGUF, tokenizer, pr
 - A transformer is message passing on whatever graph the mask defines. Language = chain, ViT/Swin = grid/windows, ESM/AlphaFold = residue graph, TabPFN = row/column stencil, Neural CA = conv-as-rule. This is a transformer on a grid graph.
 - Novelty: a model pretrained on a *different* graph (chain) is forced onto a grid at inference; the rule is in context (in-context learning on a graph); held-out rules test reading vs memorizing; it runs in a tab.
 - Prior-art policy (decided 2026-09-17): don't search before building; search before writing up. A is almost certainly done somewhere as a blog post; B + fine-tune + browser is the specific combination.
+
+## 11. Reframing (owner, 2026-09-19 evening) — three poles, one write-up
+
+The project illustrates three fundamentally different ways to compute the same thing:
+1. **Scaling laws / overpowered thinking** — ONE big LLM, the whole board as text, the four rules, unlimited thinking, writes the next board. Variant E, revived: run on the 3080 box's local Qwen3.6-35B (llama-server, reasoning budget) against the same seeds; measure wrong cells per generation and tokens per correct cell. The tab shows the remote output.
+2. **Find the physics** — variant B: attention shaped like the problem (stencil), one small pass per generation; measured in s/generation and per-case rule recall after fine-tuning.
+3. **Brute force with the right data** — variant A: one LLM call per pixel with the 512-entry rule table learned (fine-tune A FIRST: "neighbors are 1 0 1 0 1 1 0 0, I am 1 →" should reach 100%); two adapters, rules in the prompt vs rules learned; and **BERT of Life** (backlog): a generated dataset of every neighborhood, a small encoder classifying 0/1 and which rule fired (underpopulation / survival / overpopulation / reproduction). "At its core, it's a data problem."
+
+Order: fine-tune A → A in the tab with the adapter (the naive one-pixel-per-LLM must run) → thinking-model run on the 3080 → B retrain with a sane schedule (lr 3e-5, best-by-IoU checkpoint; run 1's collapse at step 60 was training dynamics, not B's locality) → BERT of Life.
