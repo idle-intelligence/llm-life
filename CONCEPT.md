@@ -160,3 +160,10 @@ The project illustrates three fundamentally different ways to compute the same t
 3. **Brute force with the right data** — variant A: one LLM call per pixel with the 512-entry rule table learned (fine-tune A FIRST: "neighbors are 1 0 1 0 1 1 0 0, I am 1 →" should reach 100%); two adapters, rules in the prompt vs rules learned; and **BERT of Life** (backlog): a generated dataset of every neighborhood, a small encoder classifying 0/1 and which rule fired (underpopulation / survival / overpopulation / reproduction). "At its core, it's a data problem."
 
 Order: fine-tune A → A in the tab with the adapter (the naive one-pixel-per-LLM must run) → thinking-model run on the 3080 → B retrain with a sane schedule (lr 3e-5, best-by-IoU checkpoint; run 1's collapse at step 60 was training dynamics, not B's locality) → BERT of Life.
+
+## 12. "One pass", precisely (owner, 2026-09-19 late)
+
+Two readings, both to do:
+- **Numerical**: every cell is the same computation on the same input shape (8 neighbour bits + self after a shared prefix). (a) Batch it: 4096 identical sequences against one resident prefix = one forward with the block-diagonal sparse mask (~40k tokens), or one GEMM per layer with a true batch dimension in the engine. (b) **Memoize it**: only 2^9 = 512 distinct inputs exist; a generation costs one forward per unique neighbourhood present (show it in the tab: "unique neighbourhoods: 137 · LLM calls: 137"). The LLM's Life behaviour is a printable 512-row table.
+- **Vector space**: no tokens. Input = the 3×3 patch as 9 numbers → centre; or the whole grid → the whole grid. A learned CA = jacobi2000's stencil model with one binary channel and a sigmoid/cross-entropy head. Two scales of the same experiment: the smallest model that fits the 512 cases (BERT of Life without text) vs a deliberately oversized model that must discover locality from grid pairs. Then **3D Life** is a 3×3×3 stencil with nothing else changed — the cheapest 3D generalization test for jacobi2000. Life becomes jacobi2000's first discrete dataset.
+- Also still worth doing: the whole board as text to one thinking LLM (§11 pole 1).
