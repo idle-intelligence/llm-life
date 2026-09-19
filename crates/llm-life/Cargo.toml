@@ -30,7 +30,11 @@ life = { path = "../life" }
 llm-wasm = { path = "../../../llm-web/.claude/worktrees/llm-life/crates/llm-wasm", default-features = false, features = ["wgpu"] }
 # Types only (WgpuDevice, Tensor) — the wgpu backend feature is unified in
 # from llm-wasm, which owns the backend choice.
-burn = { version = "0.20", default-features = false, features = ["std"] }
+# `autodiff` is enabled here, in the consumer crate (CLAUDE.md "Code"):
+# llm-web's manifests are frozen and its `burn` has only `std` + the wgpu
+# backend, so `burn::backend::Autodiff` would not exist. Cargo unifies the
+# feature into the one `burn` both crates share; nothing in llm-web changes.
+burn = { version = "0.20", default-features = false, features = ["std", "autodiff"] }
 anyhow = { workspace = true }
 wasm-bindgen = { workspace = true, optional = true }
 # Required by #[wasm_bindgen] on async methods.

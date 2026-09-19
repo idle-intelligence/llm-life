@@ -6,6 +6,8 @@
 
 pub mod pgm;
 pub mod score;
+#[cfg(feature = "native")]
+pub mod train;
 pub mod variant_a;
 pub mod variant_b;
 

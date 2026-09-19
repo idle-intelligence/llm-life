@@ -14,6 +14,10 @@ use llm_life::variant_a;
 use llm_life::variant_b::{
     argmax_grid, fewshot_rules_prefix, p_alive, pack_sparse, rules_prefix, MAX_STENCIL_KEYS,
 };
+use llm_life::train::load::{load_train_model, LoraSpec};
+use llm_life::train::lora_io;
+use llm_life::train::model::TrainModel;
+use llm_life::train::run::{TrainArgs};
 use llm_wasm::gguf::Q4ModelLoader;
 use llm_wasm::kv::KvCache;
 use llm_wasm::model::{ForwardSpec, LlmModel, SparseMask};
@@ -63,6 +67,15 @@ enum Command {
         /// Filename prefix for this run's pictures and summary.
         #[arg(long, default_value = "b")]
         tag: String,
+        /// Run the forward through the f32 training model instead of the
+        /// Q4 engine, applying this LoRA file. Slower and heavier; it is
+        /// how a fine-tune is scored with the same pipeline as the base.
+        #[arg(long)]
+        lora: Option<PathBuf>,
+        /// The same f32 forward with no adapter — the control that says how
+        /// much of a fine-tuned row is the LoRA and how much is f32 weights.
+        #[arg(long)]
+        f32_forward: bool,
     },
     /// Run variant A (packed per-cell prompts) for N generations and write
     /// pictures + a text summary.
@@ -124,6 +137,40 @@ enum Command {
         /// wall clock above them — they say where the work is.
         #[arg(long)]
         profile: bool,
+    },
+    /// Fine-tune variant B with LoRA on true Life (CONCEPT.md §5).
+    Train {
+        #[arg(long)]
+        gguf: PathBuf,
+        #[arg(long)]
+        tokenizer: PathBuf,
+        #[arg(long, default_value = "32")]
+        size: usize,
+        #[arg(long, default_value = "200")]
+        steps: usize,
+        #[arg(long, default_value = "1e-4")]
+        lr: f64,
+        #[arg(long, default_value = "8")]
+        rank: usize,
+        #[arg(long, default_value = "16")]
+        alpha: f32,
+        /// Adapt gate/up as well as q/k/v/o.
+        #[arg(long)]
+        lora_mlp: bool,
+        #[arg(long, default_value = "1")]
+        seed: u64,
+        #[arg(long, default_value = "25")]
+        eval_every: usize,
+        #[arg(long, default_value = "5")]
+        eval_grids: usize,
+        #[arg(long, default_value = "artifacts/lora-b.bin")]
+        out: PathBuf,
+        /// Research log for this run (machine, commit, command, tables).
+        #[arg(long)]
+        run_doc: Option<PathBuf>,
+        /// Wall-clock budget in seconds — the GPU is shared.
+        #[arg(long, default_value = "1500")]
+        max_secs: f64,
     },
     /// Re-score an already-written `<tag>-<seed>-gen1-{palive,true}.pgm`
     /// pair at the Otsu and z-score (k=2) thresholds, label-free, no rerun.
@@ -228,6 +275,91 @@ impl Runner {
 
         let n = grid.width() * grid.height();
         Ok((p_alive(&logits, packed.grid_start, n), secs))
+    }
+}
+
+/// Variant B through the f32 training forward (`TrainModel`) instead of the
+/// Q4 engine, optionally with a LoRA applied.
+///
+/// This is how a fine-tune is scored with the same pipeline as the base
+/// model: merging a LoRA back into Q4_0 weights would have to re-quantize
+/// them, and a rank-8 delta after a short run is comfortably smaller than
+/// Q4_0's step size — the merge would erase most of what was learned. So the
+/// eval runs the adapter where it was trained, in f32, and `--f32-forward`
+/// with no `--lora` is the control that separates "the LoRA did something"
+/// from "f32 weights did something".
+struct TrainRunner {
+    model: TrainModel<burn::backend::Wgpu>,
+    prefix: Vec<u32>,
+    dead: u32,
+    alive: u32,
+    lora: Option<PathBuf>,
+}
+
+impl TrainRunner {
+    fn new(
+        gguf: &Path,
+        tokenizer: &Path,
+        rule: &Rule,
+        lora: Option<&Path>,
+        device: &WgpuDevice,
+    ) -> Result<Self> {
+        let p = llm_life::train::run::prompt(tokenizer, rule)?;
+        let spec = lora.map(|_| LoraSpec::default());
+        let mut model: TrainModel<burn::backend::Wgpu> =
+            load_train_model(gguf, &[p.dead, p.alive], spec, device)?;
+        if let Some(path) = lora {
+            let params = lora_io::load(path, device)?;
+            anyhow::ensure!(
+                params.len() == model.lora_params().len(),
+                "LoRA file has {} matrices, this model wants {}",
+                params.len(),
+                model.lora_params().len()
+            );
+            model.set_lora_params(params);
+        }
+        println!(
+            "f32 forward: {} layers, hidden {}, lora {}",
+            model.config.num_layers,
+            model.config.hidden_size,
+            lora.map(|p| p.display().to_string()).unwrap_or_else(|| "none".into())
+        );
+        Ok(TrainRunner {
+            model,
+            prefix: p.prefix,
+            dead: p.dead,
+            alive: p.alive,
+            lora: lora.map(|p| p.to_path_buf()),
+        })
+    }
+}
+
+impl Stepper for TrainRunner {
+    fn step(&self, grid: &Grid) -> Result<(Vec<f32>, f64)> {
+        use burn::tensor::{Bool, TensorData};
+        let packed = llm_life::variant_b::pack(grid, &self.prefix, self.dead, self.alive);
+        let t = packed.tokens.len();
+        let masked_out: Vec<bool> = packed.allowed.iter().map(|&a| !a).collect();
+        let mask: burn::tensor::Tensor<burn::backend::Wgpu, 2, Bool> =
+            burn::tensor::Tensor::from_data(TensorData::new(masked_out, [t, t]), self.model.device());
+        let start = Instant::now();
+        let logits = self.model.forward(&packed.tokens, &packed.positions, &mask)?;
+        let v = logits.into_data().into_vec::<f32>().unwrap();
+        let secs = start.elapsed().as_secs_f64();
+        let n = grid.width() * grid.height();
+        Ok((p_alive(&v, packed.grid_start, n), secs))
+    }
+
+    fn header(&self) -> String {
+        format!(
+            "positions: bag (all grid tokens share one position id)\n\
+             mask: prefix (causal) + self + 8 neighbors (dense)\n\
+             head: sliced to the two answer tokens\n\
+             forward: f32 training model (pure Burn ops), lora {}\n\
+             prefix: {} tokens (rules only)\n",
+            self.lora.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "none".into()),
+            self.prefix.len(),
+        )
     }
 }
 
@@ -672,21 +804,24 @@ fn main() -> Result<()> {
             freerun,
             fewshot,
             tag,
+            lora,
+            f32_forward,
         } => {
-            let runner = Runner::new(&gguf, &tokenizer, &rule, fewshot, &device)?;
-            run_pictures(
-                &runner,
-                "Variant B — stencil mask, native",
-                &tag,
-                &gguf,
-                &rule,
-                size,
-                generations,
-                &seeds,
-                density,
-                &out,
-                freerun,
-            )
+            let title = "Variant B — stencil mask, native";
+            if lora.is_some() || f32_forward {
+                anyhow::ensure!(!fewshot, "--fewshot is not wired into the f32 forward");
+                let runner = TrainRunner::new(&gguf, &tokenizer, &rule, lora.as_deref(), &device)?;
+                run_pictures(
+                    &runner, title, &tag, &gguf, &rule, size, generations, &seeds, density, &out,
+                    freerun,
+                )
+            } else {
+                let runner = Runner::new(&gguf, &tokenizer, &rule, fewshot, &device)?;
+                run_pictures(
+                    &runner, title, &tag, &gguf, &rule, size, generations, &seeds, density, &out,
+                    freerun,
+                )
+            }
         }
         Command::PictureA {
             gguf,
@@ -729,6 +864,39 @@ fn main() -> Result<()> {
         } => bench_forward(
             &gguf, &tokenizer, &rule, &sizes, &chunks, reps, density, fewshot, profile, &device,
         ),
+        Command::Train {
+            gguf,
+            tokenizer,
+            size,
+            steps,
+            lr,
+            rank,
+            alpha,
+            lora_mlp,
+            seed,
+            eval_every,
+            eval_grids,
+            out,
+            run_doc,
+            max_secs,
+        } => llm_life::train::run::run(TrainArgs {
+            gguf,
+            tokenizer,
+            size,
+            steps,
+            lr,
+            lora: LoraSpec {
+                rank,
+                alpha,
+                mlp: lora_mlp,
+            },
+            seed,
+            eval_every,
+            eval_grids,
+            out,
+            run_doc,
+            max_secs,
+        }),
         Command::Rescore { dir, tag, seed } => rescore(&dir, &tag, &seed),
     }
 }
