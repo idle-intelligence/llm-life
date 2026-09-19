@@ -31,6 +31,14 @@ pub fn rules_prefix(rule: &Rule) -> String {
     )
 }
 
+/// The `a-norules` adapter's prefix: no rule text at all, only the answer
+/// format. Whatever the model gets right under this prefix, it learned from
+/// the fine-tune's cross-entropy, not from reading the rule back out of the
+/// prompt.
+pub fn norules_prefix() -> String {
+    "For each cell, answer with one digit: its next state.\n".to_string()
+}
+
 /// Six worked examples covering birth, survival and both deaths, appended to
 /// the prefix by `--fewshot`. The instruct model answers `0` almost
 /// everywhere from the rules alone (docs/OVERNIGHT-REPORT.md); this is the
@@ -160,6 +168,23 @@ pub fn cell_prompts(grid: &Grid) -> Vec<String> {
             cell_prompt(&nb, grid.cells()[c])
         })
         .collect()
+}
+
+/// p(alive) for every cell of a grid-sized chunk (one chunk covering all `n`
+/// cells, as the training eval builds), in cell order — the training-side
+/// twin of `variant_b::p_alive`.
+pub fn p_alive_grid_a(logits: &[f32], chunk: &Chunk, n: usize) -> Vec<f32> {
+    let mut out = vec![0.0f32; n];
+    for (cell, p) in p_alive_chunk(logits, chunk) {
+        out[cell] = p;
+    }
+    out
+}
+
+/// Threshold p(alive) at 0.5 — the argmax grid. Same convention as
+/// `variant_b::argmax_grid`.
+pub fn argmax_grid_a(p: &[f32], width: usize, height: usize) -> Grid {
+    Grid::from_cells(width, height, p.iter().map(|&v| (v >= 0.5) as u8).collect())
 }
 
 /// p(alive) for the cells of one chunk, from that chunk's `[T, 2]` sliced

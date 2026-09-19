@@ -18,6 +18,7 @@ use llm_life::train::load::{load_train_model, LoraSpec};
 use llm_life::train::lora_io;
 use llm_life::train::model::TrainModel;
 use llm_life::train::run::{TrainArgs};
+use llm_life::train::run_a::RunAArgs;
 use llm_wasm::gguf::Q4ModelLoader;
 use llm_wasm::kv::KvCache;
 use llm_wasm::model::{ForwardSpec, LlmModel, SparseMask};
@@ -170,6 +171,39 @@ enum Command {
         run_doc: Option<PathBuf>,
         /// Wall-clock budget in seconds — the GPU is shared.
         #[arg(long, default_value = "1500")]
+        max_secs: f64,
+    },
+    /// Fine-tune variant A with LoRA on the exhaustive 512-case lookup
+    /// (CONCEPT.md §11).
+    TrainA {
+        #[arg(long)]
+        gguf: PathBuf,
+        #[arg(long)]
+        tokenizer: PathBuf,
+        /// `a-norules`: the prefix states only the answer format, no rule text.
+        #[arg(long)]
+        norules: bool,
+        #[arg(long, default_value = "400")]
+        steps: usize,
+        #[arg(long, default_value = "64")]
+        batch: usize,
+        #[arg(long, default_value = "3e-5")]
+        lr: f64,
+        #[arg(long, default_value = "8")]
+        rank: usize,
+        #[arg(long, default_value = "16")]
+        alpha: f32,
+        #[arg(long)]
+        lora_mlp: bool,
+        #[arg(long, default_value = "1")]
+        seed: u64,
+        #[arg(long, default_value = "20")]
+        eval_every: usize,
+        #[arg(long, default_value = "artifacts/lora-a.bin")]
+        out: PathBuf,
+        #[arg(long)]
+        run_doc: Option<PathBuf>,
+        #[arg(long, default_value = "900")]
         max_secs: f64,
     },
     /// Re-score an already-written `<tag>-<seed>-gen1-{palive,true}.pgm`
@@ -897,6 +931,39 @@ fn main() -> Result<()> {
             seed,
             eval_every,
             eval_grids,
+            out,
+            run_doc,
+            max_secs,
+        }),
+        Command::TrainA {
+            gguf,
+            tokenizer,
+            norules,
+            steps,
+            batch,
+            lr,
+            rank,
+            alpha,
+            lora_mlp,
+            seed,
+            eval_every,
+            out,
+            run_doc,
+            max_secs,
+        } => llm_life::train::run_a::run(RunAArgs {
+            gguf,
+            tokenizer,
+            norules,
+            steps,
+            batch,
+            lr,
+            lora: LoraSpec {
+                rank,
+                alpha,
+                mlp: lora_mlp,
+            },
+            seed,
+            eval_every,
             out,
             run_doc,
             max_secs,

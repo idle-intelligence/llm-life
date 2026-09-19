@@ -12,6 +12,7 @@ pub mod lora_io;
 pub mod model;
 pub mod optim;
 pub mod run;
+pub mod run_a;
 pub mod weights;
 
 pub use load::{load_train_model, LoraSpec};
