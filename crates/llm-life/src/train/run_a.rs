@@ -15,6 +15,7 @@ use burn::backend::{Autodiff, Wgpu};
 use burn::tensor::{Bool, Tensor, TensorData};
 use life::{Grid, Rule};
 use llm_wasm::tokenizer::Tokenizer;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -39,6 +40,8 @@ pub struct RunAArgs {
     pub lora: LoraSpec,
     pub seed: u64,
     pub eval_every: usize,
+    pub eval_cases: usize,
+    pub eval_grids: usize,
     pub out: PathBuf,
     pub run_doc: Option<PathBuf>,
     pub max_secs: f64,
@@ -131,10 +134,18 @@ pub struct EvalReportA {
     pub accuracy: f64,
     pub cases: Vec<(LifeCase, usize, usize)>,
     pub iou: f64,
+    /// True if the wall-clock budget ran out mid-eval; `loss`/`accuracy`/
+    /// `iou` are then averages over whatever was actually processed, not
+    /// the full `cases`/`real_grids` requested.
+    pub partial: bool,
 }
 
-/// Evaluate every one of the 512 cases (chunked to keep the mask a sane
-/// size) plus IoU on `real_grids` (never drawn from the training RNG).
+/// Evaluate `cases` (chunked at `chunk_size`, padded up to a full chunk on
+/// the ragged remainder so every forward in the run shares one shape and
+/// cubecl's matmul autotune fires exactly once) plus IoU on `real_grids`
+/// (never drawn from the training RNG). Checks `max_secs` against `start`
+/// between chunks and returns a partial report if the budget runs out.
+#[allow(clippy::too_many_arguments)]
 pub fn evaluate_a(
     model: &TrainModel<AB>,
     p: &PromptA,
@@ -143,18 +154,26 @@ pub fn evaluate_a(
     real_grids: &[Grid],
     rule: &Rule,
     device: &WgpuDevice,
+    chunk_size: usize,
+    start: &Instant,
+    max_secs: f64,
 ) -> Result<EvalReportA> {
-    // Small enough that the autodiff graph over T = prefix + CHUNK*~20
-    // tokens (every intermediate activation of all 24 layers, kept live for
-    // a backward this eval never runs) does not blow the M2's shared
-    // memory. Variant B's per-step forward at a comparable T (~335 tokens,
-    // 16x16 grid) is the size this was picked to stay near.
-    const CHUNK: usize = 48;
     let mut loss_sum = 0.0;
     let mut correct = 0usize;
+    let mut done = 0usize;
     let mut case_totals: Vec<(LifeCase, usize, usize)> = LifeCase::ALL.iter().map(|&c| (c, 0, 0)).collect();
+    let mut partial = false;
 
-    for slice in cases.chunks(CHUNK) {
+    'cases: for chunk_start in (0..cases.len()).step_by(chunk_size) {
+        if start.elapsed().as_secs_f64() > max_secs {
+            partial = true;
+            break 'cases;
+        }
+        let real_len = chunk_size.min(cases.len() - chunk_start);
+        let mut slice: Vec<([u8; 8], u8, u8)> = cases[chunk_start..chunk_start + real_len].to_vec();
+        while slice.len() < chunk_size {
+            slice.push(slice[0]);
+        }
         let ids: Vec<usize> = (0..slice.len()).collect();
         let chunk = variant_a::pack_chunk(
             &ids,
@@ -170,7 +189,7 @@ pub fn evaluate_a(
             .collect();
         let targets: Vec<u8> = slice.iter().map(|&(_, _, t)| t).collect();
         let l = cell_cross_entropy(logits.clone(), &rows, &targets, device);
-        loss_sum += l.clone().into_data().into_vec::<f32>().unwrap()[0] as f64 * slice.len() as f64;
+        loss_sum += l.clone().into_data().into_vec::<f32>().unwrap()[0] as f64 * real_len as f64;
         // Burn's autodiff backend retains every forward's graph nodes until
         // a `backward()` walks and consumes them (`train_oracle.rs` never
         // hit this: it forwards once). An eval loop of dozens of forwards
@@ -182,7 +201,7 @@ pub fn evaluate_a(
 
         let data = logits.into_data().into_vec::<f32>().unwrap();
         let pa = variant_a::p_alive_chunk(&data[p.prefix.len() * 2..], &chunk);
-        for (i, &(cell, prob)) in pa.iter().enumerate() {
+        for (i, &(cell, prob)) in pa.iter().enumerate().take(real_len) {
             debug_assert_eq!(cell, i);
             let pred = (prob > 0.5) as u8;
             let (nb, self_state, target) = slice[i];
@@ -197,47 +216,66 @@ pub fn evaluate_a(
                 case_totals[idx].2 += 1;
             }
         }
+        done += real_len;
     }
 
     let mut iou_sum = 0.0;
-    for g in real_grids {
-        let n = g.width() * g.height();
-        let mut pa = vec![0.0f32; n];
-        let all_ids: Vec<usize> = (0..n).collect();
-        for cell_slice in all_ids.chunks(CHUNK) {
-            let ids: Vec<usize> = (0..cell_slice.len()).collect();
-            let chunk = variant_a::pack_chunk(
-                &ids,
-                |i| {
-                    let c = cell_slice[i];
-                    let nb: Vec<u8> = g.neighbor_indices(c).iter().map(|&j| g.cells()[j]).collect();
-                    let arr: [u8; 8] = nb.try_into().unwrap();
-                    tokenize_case(tok, &arr, g.cells()[c]).unwrap()
-                },
-                p.prefix.len(),
-            );
-            let (tokens, positions, mask) = full_sequence(&p.prefix, &chunk, device);
-            let logits = model.forward(&tokens, &positions, &mask)?;
-            let data = logits.clone().into_data().into_vec::<f32>().unwrap();
-            drop(logits.sum().backward()); // flush the autodiff tape, see above
-            for (i, prob) in p_alive_grid_a(&data[p.prefix.len() * 2..], &chunk, cell_slice.len())
-                .into_iter()
-                .enumerate()
-            {
-                pa[cell_slice[i]] = prob;
+    let mut grids_done = 0usize;
+    if !partial {
+        'grids: for g in real_grids {
+            let n = g.width() * g.height();
+            let mut pa = vec![0.0f32; n];
+            let all_ids: Vec<usize> = (0..n).collect();
+            for cell_start in (0..n).step_by(chunk_size) {
+                if start.elapsed().as_secs_f64() > max_secs {
+                    partial = true;
+                    break 'grids;
+                }
+                let real_len = chunk_size.min(n - cell_start);
+                let mut cell_slice: Vec<usize> = all_ids[cell_start..cell_start + real_len].to_vec();
+                while cell_slice.len() < chunk_size {
+                    cell_slice.push(cell_slice[0]);
+                }
+                let ids: Vec<usize> = (0..cell_slice.len()).collect();
+                let chunk = variant_a::pack_chunk(
+                    &ids,
+                    |i| {
+                        let c = cell_slice[i];
+                        let nb: Vec<u8> = g.neighbor_indices(c).iter().map(|&j| g.cells()[j]).collect();
+                        let arr: [u8; 8] = nb.try_into().unwrap();
+                        tokenize_case(tok, &arr, g.cells()[c]).unwrap()
+                    },
+                    p.prefix.len(),
+                );
+                let (tokens, positions, mask) = full_sequence(&p.prefix, &chunk, device);
+                let logits = model.forward(&tokens, &positions, &mask)?;
+                let data = logits.clone().into_data().into_vec::<f32>().unwrap();
+                drop(logits.sum().backward()); // flush the autodiff tape, see above
+                for (i, prob) in p_alive_grid_a(&data[p.prefix.len() * 2..], &chunk, cell_slice.len())
+                    .into_iter()
+                    .enumerate()
+                    .take(real_len)
+                {
+                    pa[cell_slice[i]] = prob;
+                }
             }
+            if partial {
+                break 'grids;
+            }
+            let model_grid = argmax_grid_a(&pa, g.width(), g.height());
+            let truth = g.step(rule);
+            let s = score(&truth, &model_grid, &pa, 1);
+            iou_sum += s.iou;
+            grids_done += 1;
         }
-        let model_grid = argmax_grid_a(&pa, g.width(), g.height());
-        let truth = g.step(rule);
-        let s = score(&truth, &model_grid, &pa, 1);
-        iou_sum += s.iou;
     }
 
     Ok(EvalReportA {
-        loss: loss_sum / cases.len() as f64,
-        accuracy: correct as f64 / cases.len() as f64,
+        loss: loss_sum / done.max(1) as f64,
+        accuracy: correct as f64 / done.max(1) as f64,
         cases: case_totals,
-        iou: iou_sum / real_grids.len().max(1) as f64,
+        iou: iou_sum / grids_done.max(1) as f64,
+        partial,
     })
 }
 
@@ -294,16 +332,35 @@ pub fn run(args: RunAArgs) -> Result<()> {
 
     let cases = all_cases(&rule);
     let grids = real_grids(16);
+    let eval_cases: Vec<_> = cases[..args.eval_cases.min(cases.len())].to_vec();
+    let eval_grids: Vec<Grid> = grids[..args.eval_grids.min(grids.len())].to_vec();
 
-    let before = evaluate_a(&model, &p, &tok, &cases, &grids, &rule, &device)?;
+    let start = Instant::now();
+    let before = evaluate_a(
+        &model,
+        &p,
+        &tok,
+        &eval_cases,
+        &eval_grids,
+        &rule,
+        &device,
+        args.batch,
+        &start,
+        args.max_secs,
+    )?;
     println!(
         "step 0 (base): loss {:.4} acc {:.4} ({}/{}) iou {:.4}",
         before.loss,
         before.accuracy,
-        (before.accuracy * cases.len() as f64).round() as usize,
-        cases.len(),
+        (before.accuracy * eval_cases.len() as f64).round() as usize,
+        eval_cases.len(),
         before.iou
     );
+    std::io::stdout().flush()?;
+    if before.partial {
+        println!("step 0 eval hit the wall-clock budget before finishing, stopping");
+        return Ok(());
+    }
 
     let mut opt = AdamW::<AB>::new(&params, args.lr);
     let mut rng = Rng::new(args.seed);
@@ -311,7 +368,6 @@ pub fn run(args: RunAArgs) -> Result<()> {
     let mut cursor = cases.len(); // forces a shuffle before step 1
     let mut log: Vec<(usize, f64, f64)> = Vec::new();
     let mut evals: Vec<(usize, EvalReportA)> = Vec::new();
-    let start = Instant::now();
     let mut step = 0usize;
     let mut best: Option<(f64, Vec<Tensor<AB, 2>>)> = None;
     let mut stopped_full = false;
@@ -319,6 +375,7 @@ pub fn run(args: RunAArgs) -> Result<()> {
     while step < args.steps {
         if start.elapsed().as_secs_f64() > args.max_secs {
             println!("wall-clock budget reached at step {step}");
+            std::io::stdout().flush()?;
             break;
         }
         step += 1;
@@ -358,18 +415,40 @@ pub fn run(args: RunAArgs) -> Result<()> {
 
         let secs = start.elapsed().as_secs_f64();
         log.push((step, loss_v, secs));
-        println!("step {step:4} loss {loss_v:.4}  {:.1}s", secs);
+        if step == 1 {
+            println!("step {step:4} loss {loss_v:.4}  {:.1}s (includes autotune)", secs);
+        } else {
+            println!("step {step:4} loss {loss_v:.4}  {:.1}s", secs);
+        }
+        std::io::stdout().flush()?;
 
         if args.eval_every > 0 && step.is_multiple_of(args.eval_every) {
-            let e = evaluate_a(&model, &p, &tok, &cases, &grids, &rule, &device)?;
+            let e = evaluate_a(
+                &model,
+                &p,
+                &tok,
+                &eval_cases,
+                &eval_grids,
+                &rule,
+                &device,
+                args.batch,
+                &start,
+                args.max_secs,
+            )?;
             println!(
                 "  held-out: loss {:.4} acc {:.4} ({}/{}) iou {:.4}",
                 e.loss,
                 e.accuracy,
-                (e.accuracy * cases.len() as f64).round() as usize,
-                cases.len(),
+                (e.accuracy * eval_cases.len() as f64).round() as usize,
+                eval_cases.len(),
                 e.iou
             );
+            std::io::stdout().flush()?;
+            if e.partial {
+                println!("held-out eval hit the wall-clock budget before finishing, stopping");
+                evals.push((step, e));
+                break;
+            }
             let is_best = best.as_ref().map(|(a, _)| e.accuracy > *a).unwrap_or(true);
             if is_best {
                 best = Some((e.accuracy, params.clone()));
@@ -390,7 +469,16 @@ pub fn run(args: RunAArgs) -> Result<()> {
 
     if let Some(doc) = &args.run_doc {
         model.set_lora_params(best_params);
-        let best_eval = evaluate_a(&model, &p, &tok, &cases, &grids, &rule, &device)?;
+        // Fresh budget window: this is the deliverable full-512+3-grid
+        // report, not bounded by however much of `--max-secs` the training
+        // loop already spent.
+        let final_start = Instant::now();
+        let best_eval = evaluate_a(
+            &model, &p, &tok, &cases, &grids, &rule, &device, args.batch, &final_start, args.max_secs,
+        )?;
+        if best_eval.partial {
+            println!("final eval hit the wall-clock budget before finishing (partial)");
+        }
         let mut s = format!(
             "# Variant A LoRA fine-tune — {}\n\n\
              machine: {}\n\

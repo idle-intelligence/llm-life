@@ -199,6 +199,14 @@ enum Command {
         seed: u64,
         #[arg(long, default_value = "20")]
         eval_every: usize,
+        /// Number of the 512 cases used for the before-training and
+        /// periodic evals (the final eval always uses all 512).
+        #[arg(long, default_value = "128")]
+        eval_cases: usize,
+        /// Number of real grids (of 3) used for the before-training and
+        /// periodic evals (the final eval always uses all 3).
+        #[arg(long, default_value = "1")]
+        eval_grids: usize,
         #[arg(long, default_value = "artifacts/lora-a.bin")]
         out: PathBuf,
         #[arg(long)]
@@ -947,6 +955,8 @@ fn main() -> Result<()> {
             lora_mlp,
             seed,
             eval_every,
+            eval_cases,
+            eval_grids,
             out,
             run_doc,
             max_secs,
@@ -964,6 +974,8 @@ fn main() -> Result<()> {
             },
             seed,
             eval_every,
+            eval_cases,
+            eval_grids,
             out,
             run_doc,
             max_secs,
