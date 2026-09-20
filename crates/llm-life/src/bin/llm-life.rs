@@ -277,6 +277,48 @@ enum Command {
         #[arg(long, default_value = "5")]
         reps: usize,
     },
+    /// Train the vector-space variants (CONCEPT.md §12): (i) attention over
+    /// the 9 neighbourhood numbers (plus the MLP baseline, reused from
+    /// `bert::model::MlpOfLife`) and (ii) the whole-grid stencil-masked
+    /// transformer. Writes checkpoints under `--out` and one run doc with
+    /// both tables.
+    TrainVec {
+        #[arg(long, default_value = "artifacts/vector")]
+        out: PathBuf,
+        #[arg(long, default_value = "docs/runs/2026-09-20-vector.md")]
+        run_doc: PathBuf,
+        #[arg(long, default_value = "600")]
+        steps: usize,
+        #[arg(long, default_value = "1e-2")]
+        lr: f64,
+        #[arg(long, default_value = "1200")]
+        stencil_steps: usize,
+        #[arg(long, default_value = "3e-3")]
+        stencil_lr: f64,
+        #[arg(long, default_value = "1")]
+        seed: u64,
+    },
+    /// s/generation for a vector-space checkpoint through the native wgpu
+    /// backend, at 16x16/32x32/64x64 (stencil) — the same convention as
+    /// `BenchBert`.
+    BenchVec {
+        #[arg(long)]
+        checkpoint: PathBuf,
+        /// `attn` (9-number attention model, always 16x16 per-cell) or
+        /// `stencil` (whole-grid model, generalises across grid size).
+        #[arg(long)]
+        kind: String,
+        #[arg(long, default_value = "16")]
+        d_model: usize,
+        #[arg(long, default_value = "1")]
+        n_layers: usize,
+        #[arg(long, default_value = "1")]
+        n_heads: usize,
+        #[arg(long, value_delimiter = ',', default_value = "16,32,64")]
+        sizes: Vec<usize>,
+        #[arg(long, default_value = "5")]
+        reps: usize,
+    },
     /// Re-score an already-written `<tag>-<seed>-gen1-{palive,true}.pgm`
     /// pair at the Otsu and z-score (k=2) thresholds, label-free, no rerun.
     Rescore {
@@ -1187,6 +1229,24 @@ fn main() -> Result<()> {
             sizes,
             reps,
         } => bench_bert_cpu(&checkpoint, d_model, n_layers, n_heads, &sizes, reps),
+        Command::TrainVec {
+            out,
+            run_doc,
+            steps,
+            lr,
+            stencil_steps,
+            stencil_lr,
+            seed,
+        } => train_vec_sweep(&out, &run_doc, steps, lr, stencil_steps, stencil_lr, seed),
+        Command::BenchVec {
+            checkpoint,
+            kind,
+            d_model,
+            n_layers,
+            n_heads,
+            sizes,
+            reps,
+        } => bench_vec_native(&checkpoint, &kind, d_model, n_layers, n_heads, &sizes, reps, &device),
         Command::Rescore { dir, tag, seed } => rescore(&dir, &tag, &seed),
     }
 }
@@ -1360,6 +1420,260 @@ fn train_bert_sweep(out: &Path, run_doc: &Path, steps: usize, lr: f64, seed: u64
          steps budget: {steps}, lr {lr}, seed {seed}\n\
          wall clock: {:.1}s\n\n\
          ## Table\n\n{table}\n",
+        machine(),
+        start.elapsed().as_secs_f64(),
+    );
+    if let Some(dir) = run_doc.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(run_doc, doc)?;
+    println!("\nwrote {}", run_doc.display());
+    Ok(())
+}
+
+/// s/generation for a vector-space checkpoint through native wgpu.
+/// `attn` always runs at 16x16 (one forward per cell, batched as one
+/// tensor); `stencil` runs at every size in `sizes` (one forward for the
+/// whole grid), which is the generalisation number CONCEPT.md §12 asks for.
+fn bench_vec_native(
+    checkpoint: &Path,
+    kind: &str,
+    d_model: usize,
+    n_layers: usize,
+    n_heads: usize,
+    sizes: &[usize],
+    reps: usize,
+    device: &WgpuDevice,
+) -> Result<()> {
+    use burn::backend::Wgpu;
+    use burn::module::Module;
+    use burn::record::{BinBytesRecorder, FullPrecisionSettings, Recorder};
+    use burn::tensor::{Tensor, TensorData};
+    use llm_life::bert::data::grid_cases;
+    use llm_life::vector::model::{stencil_mask, AttnConfig, StencilConfig};
+
+    let rule = Rule::life();
+    let bytes = std::fs::read(checkpoint).context("read checkpoint")?;
+    let recorder = BinBytesRecorder::<FullPrecisionSettings>::new();
+
+    match kind {
+        "attn" => {
+            let cfg = AttnConfig::new(d_model);
+            let model = cfg.init::<Wgpu>(device);
+            let record = recorder.load(bytes, device)?;
+            let model = model.load_record(record);
+
+            let grid = Grid::random(16, 16, 1, 0.28);
+            let cases = grid_cases(&grid, &rule);
+            let n = cases.len();
+            let mut xs = Vec::with_capacity(n * 9);
+            for (c, _) in &cases {
+                xs.extend(c.iter().map(|&b| b as f32));
+            }
+            let t: Tensor<Wgpu, 2> = Tensor::from_data(TensorData::new(xs, [n, 9]), device);
+            let _ = model.forward(t.clone()).into_data();
+            println!("| grid | cells | median s/gen | ms/cell |");
+            println!("|---|---|---|---|");
+            let mut times = Vec::with_capacity(reps);
+            for _ in 0..reps {
+                let start = Instant::now();
+                let logits = model.forward(t.clone());
+                let _ = logits.into_data();
+                times.push(start.elapsed().as_secs_f64());
+            }
+            times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let m = times[times.len() / 2];
+            println!("| 16x16 | {n} | {m:.6} | {:.4} |", 1000.0 * m / n as f64);
+        }
+        "stencil" => {
+            let cfg = StencilConfig::new(d_model, n_layers, n_heads);
+            let model = cfg.init::<Wgpu>(device);
+            let record = recorder.load(bytes, device)?;
+            let model = model.load_record(record);
+
+            println!("| grid | cells | median s/gen | ms/cell |");
+            println!("|---|---|---|---|");
+            for &size in sizes {
+                let n = size * size;
+                let grid = Grid::random(size, size, 1, 0.28);
+                let cells: Vec<f32> = grid.cells().iter().map(|&c| c as f32).collect();
+                let x: Tensor<Wgpu, 2> = Tensor::from_data(TensorData::new(cells, [1, n]), device);
+                let mask: Tensor<Wgpu, 2> = stencil_mask(size, size, device);
+                let _ = model.forward(x.clone(), mask.clone()).into_data();
+                let mut times = Vec::with_capacity(reps);
+                for _ in 0..reps {
+                    let start = Instant::now();
+                    let logits = model.forward(x.clone(), mask.clone());
+                    let _ = logits.into_data();
+                    times.push(start.elapsed().as_secs_f64());
+                }
+                times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                let m = times[times.len() / 2];
+                println!("| {size}x{size} | {n} | {m:.6} | {:.4} |", 1000.0 * m / n as f64);
+            }
+        }
+        other => anyhow::bail!("unknown --kind {other} (expected attn or stencil)"),
+    }
+    Ok(())
+}
+
+/// Sweep the vector-space variants (CONCEPT.md §12) and write one run doc
+/// with both tables: (i) MLP + attention on the 9-number neighbourhood
+/// (reusing `bert::train::train_mlp` and `bert::data::split_512`'s 512-case
+/// convention) and (ii) the whole-grid stencil transformer, generalising
+/// from a 16x16 training grid to a 32x32 rollout with the same weights.
+fn train_vec_sweep(
+    out: &Path,
+    run_doc: &Path,
+    steps: usize,
+    lr: f64,
+    stencil_steps: usize,
+    stencil_lr: f64,
+    _seed: u64,
+) -> Result<()> {
+    use llm_life::bert::train::train_mlp;
+    use llm_life::vector::train::{train_attn, train_stencil};
+
+    let start = Instant::now();
+
+    let fmt_iou = |v: &[f64]| -> String {
+        v.iter().map(|x| format!("{x:.3}")).collect::<Vec<_>>().join(",")
+    };
+    let fmt_field = |s: &[llm_life::score::GenScore], f: fn(&llm_life::score::GenScore) -> f64| -> String {
+        [&s[0..5], &s[5..10], &s[10..15]]
+            .iter()
+            .map(|seed_scores| seed_scores.iter().map(|g| format!("{:.3}", f(g))).collect::<Vec<_>>().join(","))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+
+    let mut table_i = String::from(
+        "| model | params | steps to 512/512 | held-out acc (64 cases) | IoU 16\u{b2} gen 1..5 (seed 1) | IoU 16\u{b2} gen 1..5 (seed 2) | IoU 16\u{b2} gen 1..5 (seed 3) | alive recall gen 1..5 (seed 1/2/3) | dead recall gen 1..5 (seed 1/2/3) |\n\
+         |---|---|---|---|---|---|---|---|---|\n",
+    );
+    for h in [8usize, 16, 32] {
+        println!("=== (i) MLP h={h} ===");
+        let (p, s, acc, scores) = train_mlp(h, steps, lr, &out.join(format!("mlp-{h}.bin")))?;
+        let iou: Vec<f64> = scores.iter().map(|s| s.iou).collect();
+        table_i.push_str(&format!(
+            "| MLP (9->{h}->2) | {p} | {} | {acc:.4} | {} | {} | {} | {} | {} |\n",
+            s.map(|s| s.to_string()).unwrap_or_else(|| format!(">{steps}")),
+            fmt_iou(&iou[0..5]), fmt_iou(&iou[5..10]), fmt_iou(&iou[10..15]),
+            fmt_field(&scores, |g| g.alive_recall), fmt_field(&scores, |g| g.dead_recall)
+        ));
+    }
+    for d in [8usize, 16, 32] {
+        println!("=== (i) attention d={d} ===");
+        let r = train_attn(d, steps, lr, &out.join(format!("attn-{d}.bin")))?;
+        let iou: Vec<f64> = r.scores.iter().map(|s| s.iou).collect();
+        table_i.push_str(&format!(
+            "| Attn (9 numbers, d={d}) | {} | {} | {:.4} | {} | {} | {} | {} | {} |\n",
+            r.params,
+            r.steps_to_512.map(|s| s.to_string()).unwrap_or_else(|| format!(">{steps}")),
+            r.held_out_acc,
+            fmt_iou(&iou[0..5]), fmt_iou(&iou[5..10]), fmt_iou(&iou[10..15]),
+            fmt_field(&r.scores, |g| g.alive_recall), fmt_field(&r.scores, |g| g.dead_recall)
+        ));
+    }
+
+    let mut table_ii = String::from(
+        "| model | params | steps to train IoU>=0.999 | train IoU | IoU 16\u{b2} gen 1..5 (seed 1/2/3) | IoU 32\u{b2} gen 1..5 (seed 1/2/3) | alive recall 32\u{b2} (seed 1/2/3) | dead recall 32\u{b2} (seed 1/2/3) |\n\
+         |---|---|---|---|---|---|---|---|\n",
+    );
+    for (d, l, h) in [(16usize, 1usize, 1usize), (32, 2, 2)] {
+        println!("=== (ii) stencil d={d} L={l} H={h} ===");
+        let r = train_stencil(d, l, h, stencil_steps, stencil_lr, &out.join(format!("stencil-d{d}-L{l}.bin")))?;
+        let iou16: Vec<f64> = r.scores_16.iter().map(|s| s.iou).collect();
+        let iou32: Vec<f64> = r.scores_32.iter().map(|s| s.iou).collect();
+        let iou16_s = format!("{} | {} | {}", fmt_iou(&iou16[0..5]), fmt_iou(&iou16[5..10]), fmt_iou(&iou16[10..15]));
+        let iou32_s = format!("{} | {} | {}", fmt_iou(&iou32[0..5]), fmt_iou(&iou32[5..10]), fmt_iou(&iou32[10..15]));
+        table_ii.push_str(&format!(
+            "| Stencil d={d} L={l} H={h} | {} | {} | {:.4} | {iou16_s} | {iou32_s} | {} | {} |\n",
+            r.params,
+            r.steps_to_converge.map(|s| s.to_string()).unwrap_or_else(|| format!(">{stencil_steps}")),
+            r.train_iou,
+            fmt_field(&r.scores_32, |g| g.alive_recall), fmt_field(&r.scores_32, |g| g.dead_recall)
+        ));
+    }
+
+    let named_cases = [
+        ("lonely cell dies (0 neighbours)", [0u8, 0, 0, 0, 0, 0, 0, 0], 1u8, 0u8),
+        ("underpopulation (1 neighbour)", [1, 0, 0, 0, 0, 0, 0, 0], 1, 0),
+        ("survival on 2", [1, 1, 0, 0, 0, 0, 0, 0], 1, 1),
+        ("survival on 3", [1, 1, 1, 0, 0, 0, 0, 0], 1, 1),
+        ("birth on 3", [1, 1, 1, 0, 0, 0, 0, 0], 0, 1),
+        ("overcrowding (4 neighbours)", [1, 1, 1, 1, 0, 0, 0, 0], 1, 0),
+    ];
+    let mut cases_table = String::from("| case (000/0X0/000 style, B3/S23) | neighbours (NW,N,NE,W,E,SW,S,SE) | self | -> next |\n|---|---|---|---|\n");
+    for (label, nb, self_state, next) in named_cases {
+        cases_table.push_str(&format!(
+            "| {label} | {} | {self_state} | {next} |\n",
+            nb.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(" ")
+        ));
+    }
+
+    let doc = format!(
+        "# Vector-space variants (CONCEPT.md \u{a7}12/\u{a7}13/\u{a7}14)\n\n\
+         machine: {}\n\
+         wall clock: {:.1}s\n\n\
+         (i) \"3x3 -> centre, as numbers\": no tokens, the 9 neighbourhood values\n\
+         (8 neighbours + self, `bert::data`'s order) enter as floats. MLP is\n\
+         `bert::model::MlpOfLife` (9->h->2), reused as-is (see\n\
+         `vector::model` doc comment for why this is already \"an MLP\n\
+         (9->h->1)\" up to the 2-class head every other model here shares).\n\
+         Attention is `vector::model::AttnOfLife`: 9 scalar tokens through a\n\
+         `Linear(1,d)`, learned absolute positions (fixed length, safe here),\n\
+         one self-attention block, centre-token readout. Trained on the same\n\
+         512-case split as BERT of Life (`bert::data::split_512`, 64 held out),\n\
+         same IoU rollout convention (16x16, 5 generations, seeds 1-3,\n\
+         teacher-forced).\n\
+         steps budget: {steps}, lr {lr}\n\n\
+         ## (i) table\n\n{table_i}\n\
+         ### named cases (B3/S23)\n\n{cases_table}\n\
+         (ii) \"grid -> grid, one channel\": jacobi2000's stencil-masked\n\
+         attention (`jacobi2000::model::Block`, `jacobi2000::mask::Mask::Stencil`,\n\
+         read-only reference, idea copied not the crate) with one scalar\n\
+         channel instead of jacobi2000's multi-channel PDE state — this is\n\
+         jacobi2000 with one channel, said explicitly. `vector::model::StencilOfLife`:\n\
+         cells enter as floats through a `Linear(1,d)`, **no** positional\n\
+         embedding (a learned absolute position would break generalisation\n\
+         the moment the grid size changes), 1-2 stencil-masked attention\n\
+         blocks (`vector::model::stencil_mask` — additive, 0 for self+8\n\
+         `life::Grid::neighbor_indices` neighbours, -inf elsewhere, same\n\
+         toroidal boundary `life::Grid::step` uses), BCE-with-logits per cell.\n\
+         Trained on a density sweep (0.10-0.50, 9 densities x 8 seeds) of\n\
+         random 16x16 grids against the true next state; evaluated as an IoU\n\
+         rollout at 16x16 (in-distribution) **and 32x32** with the identical\n\
+         trained weights (only the mask tensor rebuilt for the new size) —\n\
+         the CONCEPT.md \u{a7}12 generalisation claim.\n\
+         steps budget: {stencil_steps}, lr {stencil_lr}\n\n\
+         ## (ii) table\n\n{table_ii}\n\
+         ## (iii) 3D Life (note, no code)\n\n\
+         Extending this to 3D Life changes exactly one thing structurally:\n\
+         the neighbourhood grows from the 8 Moore neighbours of a 3x3 patch to\n\
+         the 26 neighbours of a 3x3x3 cube (27 cells including self). Every\n\
+         piece of this rung's machinery carries over unchanged in kind: (i)'s\n\
+         attention model becomes a 27-token sequence through the same\n\
+         `Linear(1,d)` + learned positions + one attention block; (ii)'s\n\
+         stencil mask becomes a 3D-Moore mask (`life::Grid::neighbor_indices`\n\
+         generalised to a `width*height*depth` index space, still exactly 26\n\
+         allowed keys per query, still toroidal, still no positional\n\
+         embedding so it still generalises across box size). What does *not*\n\
+         carry over is the zero-parameter floor: a 9-bit index (2^9=512\n\
+         entries) into a lookup table is free in 2D, but 3D Life's neighbourhood\n\
+         is 27 bits, and 2^27 = 134,217,728 entries — the table itself becomes\n\
+         a ~134M-row array (order gigabytes at even one byte per entry,\n\
+         before any real B/S ruleset like B5766 needs more than 1 bit of\n\
+         state per cell). The \"brute force lookup\" rung of the compute ladder\n\
+         (docs/LADDER.md) simply disappears in 3D: it is no longer a\n\
+         reasonable thing to build, memory-bound or not. This is exactly the\n\
+         point CONCEPT.md \u{a7}12 makes about this project's rungs: the learned\n\
+         models ((i)/(ii)) generalise to this case with no architectural\n\
+         change and a parameter count in the hundreds to low thousands, while\n\
+         \"the classical answer\" (an explicit table) stops being available at\n\
+         all. 3D Life becomes jacobi2000's first discrete dataset precisely\n\
+         because jacobi2000's stencil machinery (a local mask over an\n\
+         N-dimensional grid) does not care whether N is 2 or 3.\n",
         machine(),
         start.elapsed().as_secs_f64(),
     );

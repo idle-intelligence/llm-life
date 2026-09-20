@@ -11,6 +11,7 @@ pub mod score;
 pub mod train;
 pub mod variant_a;
 pub mod variant_b;
+pub mod vector;
 
 #[cfg(feature = "web")]
 pub mod web;
