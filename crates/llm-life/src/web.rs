@@ -685,8 +685,8 @@ impl VecStencilEngine {
     }
 
     /// Change the grid size the engine runs at. Unlike every other engine in
-    /// this file, this is not just bookkeeping: the stencil mask
-    /// (`vector::model::stencil_mask`) is rebuilt for the new size — the
+    /// this file, this is not just bookkeeping: the stencil neighbour table
+    /// (`vector::model::stencil_neighbors`) is rebuilt for the new size — the
     /// CONCEPT.md §12 generalisation the model itself needs no retraining
     /// for, since it carries no positional embedding.
     #[wasm_bindgen(js_name = setGrid)]
@@ -732,8 +732,8 @@ impl VecStencilEngine {
         let n = cells.len();
         let xs: Vec<f32> = cells.iter().map(|&c| c as f32).collect();
         let x: Tensor<Wgpu, 2> = Tensor::from_data(burn::tensor::TensorData::new(xs, [1, n]), &self.device);
-        let mask = crate::vector::model::stencil_mask(self.width, self.height, &self.device);
-        let logits = model.forward(x, mask);
+        let neighbors = crate::vector::model::stencil_neighbors(self.width, self.height, &self.device);
+        let logits = model.forward(x, neighbors);
         let probs = burn::tensor::activation::sigmoid(logits);
         let data = probs
             .into_data_async()

@@ -13,7 +13,7 @@ use life::Rule;
 use std::path::PathBuf;
 
 use super::data::density_sweep_batch;
-use super::model::{stencil_mask, AttnConfig, AttnOfLife, Mlp2Config, Mlp2OfLife, StencilConfig, StencilOfLife};
+use super::model::{stencil_neighbors, AttnConfig, AttnOfLife, Mlp2Config, Mlp2OfLife, StencilConfig, StencilOfLife};
 use crate::bert::data::{all_cases, split_512, Case};
 use crate::bert::model::{MlpConfig, MlpOfLife};
 use crate::score::{score, GenScore};
@@ -366,13 +366,13 @@ pub fn train_stencil(
     let train_x: Tensor<AB, 2> = Tensor::from_data(TensorData::new(xs, [batch, n]), &device);
     let train_y: Tensor<AB, 2, Int> =
         Tensor::from_data(TensorData::new(ys.iter().map(|&b| b as i32).collect::<Vec<_>>(), [batch, n]), &device);
-    let mask_train: Tensor<AB, 2> = stencil_mask(16, 16, &device);
+    let neighbors_train: Tensor<AB, 1, Int> = stencil_neighbors(16, 16, &device);
     let bce: BinaryCrossEntropyLoss<AB> = BinaryCrossEntropyLossConfig::new().with_logits(true).init(&device);
 
     let mut opt = AdamConfig::new().init();
     let mut steps_to_converge = None;
     for step in 1..=steps {
-        let logits = model.forward(train_x.clone(), mask_train.clone());
+        let logits = model.forward(train_x.clone(), neighbors_train.clone());
         let loss = bce.forward(logits, train_y.clone());
         let grads = loss.backward();
         let grads = GradientsParams::from_grads(grads, &model);
@@ -380,8 +380,8 @@ pub fn train_stencil(
 
         if steps_to_converge.is_none() && step.is_multiple_of(20) {
             let valid = model.valid();
-            let mask_v: Tensor<IB, 2> = stencil_mask(16, 16, &device);
-            let logits = valid.forward(train_x.clone().inner(), mask_v);
+            let neighbors_v: Tensor<IB, 1, Int> = stencil_neighbors(16, 16, &device);
+            let logits = valid.forward(train_x.clone().inner(), neighbors_v);
             let pred = logits.clone().greater_elem(0.0);
             let target = train_y.clone().inner().equal_elem(1);
             let hit = pred.clone().bool_and(target.clone()).float().sum().into_scalar();
@@ -395,8 +395,8 @@ pub fn train_stencil(
     }
 
     let valid = model.valid();
-    let mask_v: Tensor<IB, 2> = stencil_mask(16, 16, &device);
-    let logits = valid.forward(train_x.inner(), mask_v);
+    let neighbors_v: Tensor<IB, 1, Int> = stencil_neighbors(16, 16, &device);
+    let logits = valid.forward(train_x.inner(), neighbors_v);
     let pred = logits.clone().greater_elem(0.0);
     let target: Tensor<IB, 2, Int> = train_y.inner();
     let target_bool = target.equal_elem(1);
@@ -412,8 +412,8 @@ pub fn train_stencil(
         let n = cases.len();
         let xs: Vec<f32> = cases.iter().map(|(c, _)| c[8] as f32).collect();
         let x: Tensor<IB, 2> = Tensor::from_data(TensorData::new(xs, [1, n]), &device);
-        let mask: Tensor<IB, 2> = stencil_mask(width, height, &device);
-        let logits = valid.forward(x, mask);
+        let neighbors: Tensor<IB, 1, Int> = stencil_neighbors(width, height, &device);
+        let logits = valid.forward(x, neighbors);
         let probs = burn::tensor::activation::sigmoid(logits);
         probs.into_data().into_vec::<f32>().unwrap()
     };

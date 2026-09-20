@@ -1540,6 +1540,7 @@ fn train_bert_sweep(out: &Path, run_doc: &Path, steps: usize, lr: f64, seed: u64
 /// `attn` always runs at 16x16 (one forward per cell, batched as one
 /// tensor); `stencil` runs at every size in `sizes` (one forward for the
 /// whole grid), which is the generalisation number CONCEPT.md §12 asks for.
+#[allow(clippy::too_many_arguments)]
 fn bench_vec_native(
     checkpoint: &Path,
     kind: &str,
@@ -1555,7 +1556,7 @@ fn bench_vec_native(
     use burn::record::{BinBytesRecorder, FullPrecisionSettings, Recorder};
     use burn::tensor::{Tensor, TensorData};
     use llm_life::bert::data::grid_cases;
-    use llm_life::vector::model::{stencil_mask, AttnConfig, StencilConfig};
+    use llm_life::vector::model::{stencil_neighbors, AttnConfig, StencilConfig};
 
     let rule = Rule::life();
     let bytes = std::fs::read(checkpoint).context("read checkpoint")?;
@@ -1603,12 +1604,12 @@ fn bench_vec_native(
                 let grid = Grid::random(size, size, 1, 0.28);
                 let cells: Vec<f32> = grid.cells().iter().map(|&c| c as f32).collect();
                 let x: Tensor<Wgpu, 2> = Tensor::from_data(TensorData::new(cells, [1, n]), device);
-                let mask: Tensor<Wgpu, 2> = stencil_mask(size, size, device);
-                let _ = model.forward(x.clone(), mask.clone()).into_data();
+                let neighbors: Tensor<Wgpu, 1, burn::tensor::Int> = stencil_neighbors(size, size, device);
+                let _ = model.forward(x.clone(), neighbors.clone()).into_data();
                 let mut times = Vec::with_capacity(reps);
                 for _ in 0..reps {
                     let start = Instant::now();
-                    let logits = model.forward(x.clone(), mask.clone());
+                    let logits = model.forward(x.clone(), neighbors.clone());
                     let _ = logits.into_data();
                     times.push(start.elapsed().as_secs_f64());
                 }
@@ -1743,9 +1744,10 @@ fn train_vec_sweep(
          cells enter as floats through a `Linear(1,d)`, **no** positional\n\
          embedding (a learned absolute position would break generalisation\n\
          the moment the grid size changes), 1-2 stencil-masked attention\n\
-         blocks (`vector::model::stencil_mask` — additive, 0 for self+8\n\
-         `life::Grid::neighbor_indices` neighbours, -inf elsewhere, same\n\
-         toroidal boundary `life::Grid::step` uses), BCE-with-logits per cell.\n\
+         blocks (`vector::model::stencil_neighbors` — a flat [n*9] gather\n\
+         table, self+8 `life::Grid::neighbor_indices` neighbours, O(9n) not\n\
+         O(n^2), same toroidal boundary `life::Grid::step` uses),\n\
+         BCE-with-logits per cell.\n\
          Trained on a density sweep (0.10-0.50, 9 densities x 8 seeds) of\n\
          random 16x16 grids against the true next state; evaluated as an IoU\n\
          rollout at 16x16 (in-distribution) **and 32x32** with the identical\n\

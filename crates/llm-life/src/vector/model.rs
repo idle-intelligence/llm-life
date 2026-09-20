@@ -27,7 +27,7 @@ use burn::module::{Module, Param};
 use burn::nn::{Gelu, LayerNorm, LayerNormConfig, Linear, LinearConfig};
 use burn::prelude::Backend;
 use burn::tensor::activation::softmax;
-use burn::tensor::Tensor;
+use burn::tensor::{Int, Tensor};
 use life::Grid;
 
 fn linear_params<B: Backend>(l: &Linear<B>) -> usize {
@@ -171,25 +171,41 @@ impl<B: Backend> StencilBlock<B> {
         }
     }
 
-    /// `mask`: additive `[1, 1, n, n]`, broadcast over batch and heads.
-    fn forward(&self, x: Tensor<B, 3>, mask: Tensor<B, 4>, heads: usize) -> Tensor<B, 3> {
+    /// `neighbors`: `[n * 9]` int indices into the sequence dim (flattened
+    /// `stencil_neighbors` — row `i`'s 9 taps at `neighbors[i*9..i*9+9]`),
+    /// the same for every batch element and every head.
+    fn forward(&self, x: Tensor<B, 3>, neighbors: Tensor<B, 1, Int>, heads: usize) -> Tensor<B, 3> {
         let h = self.norm1.forward(x.clone());
-        let a = self.attention(h, mask, heads);
+        let a = self.attention(h, neighbors, heads);
         let x = x + self.proj.forward(a);
         let h = self.norm2.forward(x.clone());
         x + self.ff2.forward(self.act.forward(self.ff1.forward(h)))
     }
 
-    fn attention(&self, x: Tensor<B, 3>, mask: Tensor<B, 4>, heads: usize) -> Tensor<B, 3> {
+    /// O(9n), not O(n^2): every query only ever attends to its 9
+    /// `life::Grid::neighbor_indices` taps (self + 8 neighbours, all always
+    /// in-bounds on the toroidal grid — no masking needed, just a gather),
+    /// so there is never a dense `[n, n]` score tensor to materialise.
+    fn attention(&self, x: Tensor<B, 3>, neighbors: Tensor<B, 1, Int>, heads: usize) -> Tensor<B, 3> {
         let [b, t, d] = x.dims();
         let hd = d / heads;
+        let n = t;
         let split = |y: Tensor<B, 3>| y.reshape([b, t, heads, hd]).permute([0, 2, 1, 3]);
         let q = split(self.q.forward(x.clone()));
         let k = split(self.k.forward(x.clone()));
         let v = split(self.v.forward(x));
-        let scores = q.matmul(k.permute([0, 1, 3, 2])) / (hd as f32).sqrt() + mask;
-        let w = softmax(scores, 3);
-        w.matmul(v).permute([0, 2, 1, 3]).reshape([b, t, d])
+
+        // gather each query's 9 taps out of k/v along the sequence dim
+        let gather = |y: Tensor<B, 4>| -> Tensor<B, 5> {
+            y.select(2, neighbors.clone()).reshape([b, heads, n, 9, hd])
+        };
+        let k_nb = gather(k);
+        let v_nb = gather(v);
+        let q = q.reshape([b, heads, n, 1, hd]);
+
+        let scores = (q * k_nb).sum_dim(4).reshape([b, heads, n, 9]) / (hd as f32).sqrt();
+        let w = softmax(scores, 3).reshape([b, heads, n, 9, 1]);
+        (w * v_nb).sum_dim(3).reshape([b, heads, n, hd]).permute([0, 2, 1, 3]).reshape([b, t, d])
     }
 
     fn num_params(&self) -> usize {
@@ -237,15 +253,14 @@ pub struct StencilOfLife<B: Backend> {
 
 impl<B: Backend> StencilOfLife<B> {
     /// `cells`: `[batch, width*height]` f32, 0.0/1.0, row-major
-    /// (`life::Grid::cells` order). `mask`: additive `[n, n]` from
-    /// `stencil_mask`, built for the same `width, height` as `cells`.
+    /// (`life::Grid::cells` order). `neighbors`: `[n * 9]` int indices from
+    /// `stencil_neighbors`, built for the same `width, height` as `cells`.
     /// Returns `[batch, width*height]` logits (BCE-with-logits target).
-    pub fn forward(&self, cells: Tensor<B, 2>, mask: Tensor<B, 2>) -> Tensor<B, 2> {
+    pub fn forward(&self, cells: Tensor<B, 2>, neighbors: Tensor<B, 1, Int>) -> Tensor<B, 2> {
         let [b, n] = cells.dims();
         let mut x = self.embed.forward(cells.reshape([b, n, 1]));
-        let m = mask.reshape([1, 1, n, n]);
         for blk in &self.blocks {
-            x = blk.forward(x, m.clone(), self.n_heads);
+            x = blk.forward(x, neighbors.clone(), self.n_heads);
         }
         self.head.forward(x).reshape([b, n])
     }
@@ -255,23 +270,24 @@ impl<B: Backend> StencilOfLife<B> {
     }
 }
 
-/// The additive stencil mask (CONCEPT.md §12 / jacobi2000's
+/// The stencil neighbour table (CONCEPT.md §12 / jacobi2000's
 /// `Mask::Stencil { radius: 1, dilation: 1 }`, specialised to the exact 8
 /// `life::Grid::neighbor_indices` neighbours instead of a Chebyshev ball, so
-/// it is precisely the neighbourhood `life::Grid::step` reads — 0 where a
-/// query token may attend a key, `-inf` elsewhere. Depends only on
-/// `width, height`, not on any cell values, so the same mask serves every
+/// it is precisely the neighbourhood `life::Grid::step` reads). Flat
+/// `[n * 9]` int indices — row `i`'s 9 taps (its 8 neighbours, then itself
+/// last) at `[i*9..i*9+9]` — never a dense `[n, n]` mask: every query has
+/// exactly 9 valid keys (the grid is toroidal, so all 9 are always
+/// in-bounds), so this is O(9n) memory instead of O(n^2). Depends only on
+/// `width, height`, not on any cell values, so the same table serves every
 /// grid of that size and a model trained at one size needs a freshly built
-/// mask (not retrained weights) to run at another.
-pub fn stencil_mask<B: Backend>(width: usize, height: usize, device: &B::Device) -> Tensor<B, 2> {
+/// table (not retrained weights) to run at another.
+pub fn stencil_neighbors<B: Backend>(width: usize, height: usize, device: &B::Device) -> Tensor<B, 1, Int> {
     let g = Grid::new(width, height);
     let n = width * height;
-    let mut data = vec![f32::NEG_INFINITY; n * n];
+    let mut data = Vec::with_capacity(n * 9);
     for i in 0..n {
-        data[i * n + i] = 0.0;
-        for j in g.neighbor_indices(i) {
-            data[i * n + j] = 0.0;
-        }
+        data.extend(g.neighbor_indices(i).iter().map(|&j| j as i32));
+        data.push(i as i32);
     }
-    Tensor::<B, 1>::from_floats(data.as_slice(), device).reshape([n, n])
+    Tensor::<B, 1, Int>::from_data(burn::tensor::TensorData::new(data, [n * 9]), device)
 }
