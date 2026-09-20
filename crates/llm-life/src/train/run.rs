@@ -92,6 +92,8 @@ pub struct EvalReport {
     pub loss: f64,
     pub accuracy: f64,
     pub iou: f64,
+    pub alive_recall: f64,
+    pub dead_recall: f64,
     pub cases: Vec<(LifeCase, usize, usize)>,
 }
 
@@ -116,6 +118,8 @@ pub fn evaluate(
     let mut loss_sum = 0.0;
     let mut acc_sum = 0.0;
     let mut iou_sum = 0.0;
+    let mut alive_recall_sum = 0.0;
+    let mut dead_recall_sum = 0.0;
     for g in grids {
         let packed = pack(g, &p.prefix, p.dead, p.alive);
         let t = packed.tokens.len();
@@ -133,6 +137,8 @@ pub fn evaluate(
         let s = score(&truth, &model_grid, &pa, 1);
         acc_sum += s.accuracy;
         iou_sum += s.iou;
+        alive_recall_sum += s.alive_recall;
+        dead_recall_sum += s.dead_recall;
         for (i, (_, count)) in per_case_recall(g, &model_grid, rule).iter().enumerate() {
             totals[i].1 += count.count;
             totals[i].2 += count.correct;
@@ -143,6 +149,8 @@ pub fn evaluate(
         loss: loss_sum / k,
         accuracy: acc_sum / k,
         iou: iou_sum / k,
+        alive_recall: alive_recall_sum / k,
+        dead_recall: dead_recall_sum / k,
         cases: totals,
     })
 }
@@ -197,8 +205,8 @@ pub fn run(args: TrainArgs) -> Result<()> {
     let eval_grids = held_out(args.size, args.eval_grids);
     let before = evaluate(&model, &p, &eval_grids, &rule, &device)?;
     println!(
-        "step 0 (base): held-out loss {:.4} acc {:.4} iou {:.4}",
-        before.loss, before.accuracy, before.iou
+        "step 0 (base): held-out loss {:.4} acc {:.4} iou {:.4} alive_recall {:.4} dead_recall {:.4}",
+        before.loss, before.accuracy, before.iou, before.alive_recall, before.dead_recall
     );
     for (c, f) in before.case_fracs() {
         println!("  {:<16} {f:.4}", c.label());
@@ -238,7 +246,10 @@ pub fn run(args: TrainArgs) -> Result<()> {
 
         if args.eval_every > 0 && step.is_multiple_of(args.eval_every) {
             let e = evaluate(&model, &p, &eval_grids, &rule, &device)?;
-            println!("  held-out loss {:.4} acc {:.4} iou {:.4}", e.loss, e.accuracy, e.iou);
+            println!(
+                "  held-out loss {:.4} acc {:.4} iou {:.4} alive_recall {:.4} dead_recall {:.4}",
+                e.loss, e.accuracy, e.iou, e.alive_recall, e.dead_recall
+            );
             for (c, f) in e.case_fracs() {
                 println!("    {:<16} {f:.4}", c.label());
             }
@@ -283,15 +294,19 @@ pub fn run(args: TrainArgs) -> Result<()> {
             s.push_str(&format!("| {i} | {l:.4} | {secs:.1} |\n"));
         }
         s.push_str(&format!(
-            "\n## Held-out per-case recall ({} grids, never drawn from the training RNG)\n\n             ### before (base model, LoRA at zero)\n\n             loss {:.4}, accuracy {:.4}, IoU {:.4}\n\n{}\n             ### after ({step} steps)\n\n             loss {:.4}, accuracy {:.4}, IoU {:.4}\n\n{}",
+            "\n## Held-out per-case recall ({} grids, never drawn from the training RNG)\n\n             ### before (base model, LoRA at zero)\n\n             loss {:.4}, accuracy {:.4}, IoU {:.4}, alive recall {:.4}, dead recall {:.4}\n\n{}\n             ### after ({step} steps)\n\n             loss {:.4}, accuracy {:.4}, IoU {:.4}, alive recall {:.4}, dead recall {:.4}\n\n{}",
             eval_grids.len(),
             before.loss,
             before.accuracy,
             before.iou,
+            before.alive_recall,
+            before.dead_recall,
             case_table(&before),
             after.loss,
             after.accuracy,
             after.iou,
+            after.alive_recall,
+            after.dead_recall,
             case_table(&after),
         ));
         if let Some(dir) = doc.parent() {

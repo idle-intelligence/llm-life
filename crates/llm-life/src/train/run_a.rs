@@ -142,9 +142,16 @@ pub struct EvalReportA {
     pub accuracy: f64,
     pub cases: Vec<(LifeCase, usize, usize)>,
     pub iou: f64,
+    /// Mean alive recall (live_recall) over `real_grids`, same convention as
+    /// `iou`.
+    pub alive_recall: f64,
+    /// Mean dead recall (specificity) over `real_grids` — the number that
+    /// catches the model over-predicting alive when alive_recall alone looks
+    /// fine (CONCEPT.md complaint: "13 alive instead of 5 still reads 99.8%").
+    pub dead_recall: f64,
     /// True if the wall-clock budget ran out mid-eval; `loss`/`accuracy`/
-    /// `iou` are then averages over whatever was actually processed, not
-    /// the full `cases`/`real_grids` requested.
+    /// `iou`/`alive_recall`/`dead_recall` are then averages over whatever was
+    /// actually processed, not the full `cases`/`real_grids` requested.
     pub partial: bool,
 }
 
@@ -228,6 +235,8 @@ pub fn evaluate_a(
     }
 
     let mut iou_sum = 0.0;
+    let mut alive_recall_sum = 0.0;
+    let mut dead_recall_sum = 0.0;
     let mut grids_done = 0usize;
     if !partial {
         'grids: for g in real_grids {
@@ -274,6 +283,8 @@ pub fn evaluate_a(
             let truth = g.step(rule);
             let s = score(&truth, &model_grid, &pa, 1);
             iou_sum += s.iou;
+            alive_recall_sum += s.alive_recall;
+            dead_recall_sum += s.dead_recall;
             grids_done += 1;
         }
     }
@@ -283,6 +294,8 @@ pub fn evaluate_a(
         accuracy: correct as f64 / done.max(1) as f64,
         cases: case_totals,
         iou: iou_sum / grids_done.max(1) as f64,
+        alive_recall: alive_recall_sum / grids_done.max(1) as f64,
+        dead_recall: dead_recall_sum / grids_done.max(1) as f64,
         partial,
     })
 }
@@ -365,12 +378,14 @@ pub fn run(args: RunAArgs) -> Result<()> {
         args.max_secs,
     )?;
     println!(
-        "step 0 (base): loss {:.4} acc {:.4} ({}/{}) iou {:.4}",
+        "step 0 (base): loss {:.4} acc {:.4} ({}/{}) iou {:.4} alive_recall {:.4} dead_recall {:.4}",
         before.loss,
         before.accuracy,
         (before.accuracy * eval_cases.len() as f64).round() as usize,
         eval_cases.len(),
-        before.iou
+        before.iou,
+        before.alive_recall,
+        before.dead_recall
     );
     std::io::stdout().flush()?;
     if before.partial {
@@ -452,12 +467,14 @@ pub fn run(args: RunAArgs) -> Result<()> {
                 args.max_secs,
             )?;
             println!(
-                "  held-out: loss {:.4} acc {:.4} ({}/{}) iou {:.4}",
+                "  held-out: loss {:.4} acc {:.4} ({}/{}) iou {:.4} alive_recall {:.4} dead_recall {:.4}",
                 e.loss,
                 e.accuracy,
                 (e.accuracy * eval_cases.len() as f64).round() as usize,
                 eval_cases.len(),
-                e.iou
+                e.iou,
+                e.alive_recall,
+                e.dead_recall
             );
             std::io::stdout().flush()?;
             if e.partial {
@@ -533,7 +550,7 @@ pub fn run(args: RunAArgs) -> Result<()> {
         s.push_str("\n## Held-out (every eval-every steps)\n\n");
         for (i, e) in &evals {
             s.push_str(&format!(
-                "### step {i}\n\nloss {:.4}, accuracy {:.4} ({}/{}), IoU ({} real grid{}) {:.4}\n\n{}\n",
+                "### step {i}\n\nloss {:.4}, accuracy {:.4} ({}/{}), IoU ({} real grid{}) {:.4}, alive recall {:.4}, dead recall {:.4}\n\n{}\n",
                 e.loss,
                 e.accuracy,
                 (e.accuracy * eval_n(e) as f64).round() as usize,
@@ -541,16 +558,20 @@ pub fn run(args: RunAArgs) -> Result<()> {
                 args.eval_grids,
                 if args.eval_grids == 1 { "" } else { "s" },
                 e.iou,
+                e.alive_recall,
+                e.dead_recall,
                 case_table(e)
             ));
         }
         s.push_str(&format!(
-            "## Best-by-accuracy checkpoint (saved to `{}`)\n\naccuracy {:.4} ({}/{}), IoU {:.4}\n\n{}\n",
+            "## Best-by-accuracy checkpoint (saved to `{}`)\n\naccuracy {:.4} ({}/{}), IoU {:.4}, alive recall {:.4}, dead recall {:.4}\n\n{}\n",
             args.out.display(),
             best_eval.accuracy,
             (best_eval.accuracy * eval_n(&best_eval) as f64).round() as usize,
             eval_n(&best_eval),
             best_eval.iou,
+            best_eval.alive_recall,
+            best_eval.dead_recall,
             case_table(&best_eval)
         ));
         if let Some(dir) = doc.parent() {
