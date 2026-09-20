@@ -101,16 +101,16 @@
         50% { opacity: 0.4; }
     }
 
-    #statusLog {
+    #runLog {
         font-family: 'IBM Plex Mono', monospace;
         font-size: 13px;
         color: var(--muted);
         border: 1px solid var(--border);
         padding: 12px;
-        margin-top: 12px;
         white-space: pre-wrap;
         line-height: 1.6;
-        min-height: 8.6em;
+        height: 8.6em;
+        overflow: hidden;
     }
 
     .controls {
@@ -256,7 +256,11 @@
         <span class="status-dot loading" id="statusDot"></span>
         <span id="statusText">booting…</span>
     </div>
-    <div id="statusLog"></div>
+</section>
+
+<section>
+    <h2>RUN</h2>
+    <div id="runLog"></div>
 </section>
 
 <section>
@@ -300,7 +304,7 @@
         <div class="panel"><canvas id="c-diff" width="64" height="64"></canvas><div class="caption">diff</div></div>
     </div>
     <div id="narrationWrap" style="display:none; margin-top:16px;">
-        <div class="metric-label" style="margin-bottom:6px;">narration (variant A)</div>
+        <div class="metric-label" style="margin-bottom:6px;">NARRATION</div>
         <div id="narrationLog" style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--muted); border:1px solid var(--border); padding:10px; white-space:pre; line-height:1.6; height:9.6em; overflow:hidden;"></div>
         <div id="narrationCounter" class="info" style="margin-top:6px;"></div>
     </div>
@@ -446,7 +450,7 @@ const GENS_PER_SEC = 4;   // deliberately slow: you are meant to watch it
 const els = {
   statusDot: document.getElementById('statusDot'),
   statusText: document.getElementById('statusText'),
-  statusLog: document.getElementById('statusLog'),
+  runLog: document.getElementById('runLog'),
   play: document.getElementById('play'),
   step: document.getElementById('step'),
   clear: document.getElementById('clear'),
@@ -496,23 +500,30 @@ function setStatus(state, text) {
   els.statusText.textContent = text;
 }
 
-let statusLines = [];
-function renderStatus() {
-  els.statusLog.textContent = statusLines.join('\n');
+// RUN panel: fixed height, last ~8 lines of run events (generation timings,
+// ladder measurements), replaced in place — no scroll, no unbounded growth.
+let runLines = [];
+function renderRun() {
+  els.runLog.textContent = runLines.join('\n');
 }
-function log(msg) {
-  statusLines.unshift(msg);
-  if (statusLines.length > 8) statusLines.length = 8;
-  renderStatus();
-  console.log('[llm-life]', msg);
+function logRun(msg) {
+  runLines.unshift(msg);
+  if (runLines.length > 8) runLines.length = 8;
+  renderRun();
+  console.debug('[llm-life]', msg);
 }
 // Replace the current top line instead of pushing a new one — used for the
-// ticking "running…" line so it doesn't spam the scrolling log.
-function logReplace(msg) {
-  if (statusLines.length === 0) statusLines.unshift(msg);
-  else statusLines[0] = msg;
-  renderStatus();
-  console.log('[llm-life]', msg);
+// ticking "running…" line so it doesn't spam the panel.
+function logRunReplace(msg) {
+  if (runLines.length === 0) runLines.unshift(msg);
+  else runLines[0] = msg;
+  renderRun();
+  console.debug('[llm-life]', msg);
+}
+// Debug-only detail (model/adapter/checkpoint loading, seed edits, grid info)
+// that never mattered to a visitor — console only, no panel.
+function debugLog(msg) {
+  console.debug('[llm-life]', msg);
 }
 
 // `model` holds whatever the current mode produced; `truth` always runs the
@@ -755,7 +766,7 @@ async function stepOnce() {
       : mode === 'vec-mlp' ? vecMlpReady
       : mode === 'vec-stencil' ? vecStencilReady
       : llmReady;
-    if (!ready) { log('mode: no model loaded'); return; }
+    if (!ready) { debugLog('mode: no model loaded'); return; }
     return llmStepOnce();
   }
   const t0 = performance.now();
@@ -839,15 +850,15 @@ function applyReset(type, opts = {}) {
   if (type === 'clear') {
     app.clear();
     truth.clear();
-    log('seed: cleared');
+    debugLog('seed: cleared');
   } else if (type === 'random') {
     const density = opts.density ?? 0.28;
     app.randomize(BigInt(opts.seed), density);
-    log(`seed: random ${W}x${H} (density ${density.toFixed(2)})`);
+    debugLog(`seed: random ${W}x${H} (density ${density.toFixed(2)})`);
   } else if (type === 'glider') {
     app.clear();
     app.place_glider(2, 2);
-    log('seed: glider');
+    debugLog('seed: glider');
   }
   resync();
 }
@@ -864,10 +875,10 @@ function requestReset(type, opts) {
 async function logGridInfo(n) {
   try {
     const info = await ask('gridInfo', { width: n, height: n });
-    if (info && info.tokens != null) log(`grid: ${n}×${n} · ${info.tokens} tokens/forward · no reload needed`);
-    else log(`grid: ${n}×${n}`);
+    if (info && info.tokens != null) debugLog(`grid: ${n}×${n} · ${info.tokens} tokens/forward · no reload needed`);
+    else debugLog(`grid: ${n}×${n}`);
   } catch (e) {
-    log(`grid: ${n}×${n}`);
+    debugLog(`grid: ${n}×${n}`);
   }
 }
 
@@ -991,7 +1002,7 @@ app.place_glider(2, 2);
 resync();
 updateGridButtons();
 setStatus('ready', 'Ready');
-log(`ready — ${W}×${H}, rule ${app.rulestring()}, ${GENS_PER_SEC} generations/s`);
+debugLog(`ready — ${W}×${H}, rule ${app.rulestring()}, ${GENS_PER_SEC} generations/s`);
 nativeLadderData = await fetchNativeLadderData();
 
 els.play.onclick = () => setPlaying(!playing);
@@ -1050,12 +1061,10 @@ function ensureWorker() {
     }
     if (type === 'progress') {
       if (fraction !== undefined) {
-        const line = `${stage}: ${(fraction * 100).toFixed(0)}%`;
-        // Replace the running percentage in place instead of appending a new
-        // line per chunk — only a stage change (e.g. download -> forward)
-        // pushes a fresh line.
-        if (lastProgressStage === stage) logReplace(line);
-        else { log(line); lastProgressStage = stage; }
+        // Replaced in place — this is the one-sentence STATUS line, not a
+        // log: "downloading 43%" etc.
+        setStatus('loading', `${stage} ${(fraction * 100).toFixed(0)}%`);
+        lastProgressStage = stage;
       } else {
         genPhase = stage;
         lastProgressStage = null;
@@ -1072,25 +1081,25 @@ async function loadLlm(spec) {
   ensureWorker();
   if (!loading) {
     setStatus('loading', 'Loading model…');
-    log('loading model into the worker…');
+    debugLog('loading model into the worker…');
     lastProgressStage = null;
     loading = ask('load', { ...spec, width: W, height: H, rulestring: app.rulestring() })
       .then((info) => {
         llmReady = true;
         const name = spec.ggufUrl.split('/').pop().replace(/\.gguf$/, '');
         setStatus('ready', 'Ready');
-        log(`model loaded: ${name}`);
+        debugLog(`model loaded: ${name}`);
         cellTokensCount = info.cellTokens ?? cellTokensCount;
         if (info.adapter) {
           const label = info.adapter.name.replace(/^lora-/, '').replace(/-\d+$/, '');
-          log(`adapter loaded: ${ADAPTER_DESC[label] ?? label} (${(info.adapter.bytes / 1e6).toFixed(1)} MB)`);
+          debugLog(`adapter loaded: ${ADAPTER_DESC[label] ?? label} (${(info.adapter.bytes / 1e6).toFixed(1)} MB)`);
           adapterName = label;
           els.adapterBtn.textContent = `adapter: ${ADAPTER_SHORT[adapterName] ?? adapterName}`;
         }
         els.adapterBtn.disabled = mode !== 'llm-a';
         return info;
       })
-      .catch((e) => { loading = null; setStatus('error', 'Load failed'); log('load failed: ' + e.message); throw e; });
+      .catch((e) => { loading = null; setStatus('error', 'Load failed'); debugLog('load failed: ' + e.message); throw e; });
   }
   return loading;
 }
@@ -1099,16 +1108,16 @@ async function loadBert(spec) {
   ensureWorker();
   if (!bertLoading) {
     setStatus('loading', 'Loading BERT of Life…');
-    log('loading BERT of Life checkpoint into the worker…');
+    debugLog('loading BERT of Life checkpoint into the worker…');
     bertLoading = ask('loadBert', { ...spec, width: W, height: H })
       .then((info) => {
         bertReady = true;
         bertNumLayers = info.numLayers;
         setStatus('ready', 'Ready');
-        log(`BERT of Life loaded: d_model=${info.dModel} layers=${info.numLayers}`);
+        debugLog(`BERT of Life loaded: d_model=${info.dModel} layers=${info.numLayers}`);
         return info;
       })
-      .catch((e) => { bertLoading = null; setStatus('error', 'Load failed'); log('load failed: ' + e.message); throw e; });
+      .catch((e) => { bertLoading = null; setStatus('error', 'Load failed'); debugLog('load failed: ' + e.message); throw e; });
   }
   return bertLoading;
 }
@@ -1117,15 +1126,15 @@ async function loadVecMlp(spec) {
   ensureWorker();
   if (!vecMlpLoading) {
     setStatus('loading', 'Loading vector MLP…');
-    log('loading 9-numbers MLP checkpoint into the worker…');
+    debugLog('loading 9-numbers MLP checkpoint into the worker…');
     vecMlpLoading = ask('loadVecMlp', { ...spec, width: W, height: H })
       .then((info) => {
         vecMlpReady = true;
         setStatus('ready', 'Ready');
-        log(`vector MLP loaded: hidden=${info.hidden}`);
+        debugLog(`vector MLP loaded: hidden=${info.hidden}`);
         return info;
       })
-      .catch((e) => { vecMlpLoading = null; setStatus('error', 'Load failed'); log('load failed: ' + e.message); throw e; });
+      .catch((e) => { vecMlpLoading = null; setStatus('error', 'Load failed'); debugLog('load failed: ' + e.message); throw e; });
   }
   return vecMlpLoading;
 }
@@ -1134,15 +1143,15 @@ async function loadVecStencil(spec) {
   ensureWorker();
   if (!vecStencilLoading) {
     setStatus('loading', 'Loading stencil model…');
-    log('loading grid-to-grid stencil checkpoint into the worker…');
+    debugLog('loading grid-to-grid stencil checkpoint into the worker…');
     vecStencilLoading = ask('loadVecStencil', { ...spec, width: W, height: H })
       .then((info) => {
         vecStencilReady = true;
         setStatus('ready', 'Ready');
-        log(`stencil model loaded: d_model=${info.dModel} layers=${info.numLayers}`);
+        debugLog(`stencil model loaded: d_model=${info.dModel} layers=${info.numLayers}`);
         return info;
       })
-      .catch((e) => { vecStencilLoading = null; setStatus('error', 'Load failed'); log('load failed: ' + e.message); throw e; });
+      .catch((e) => { vecStencilLoading = null; setStatus('error', 'Load failed'); debugLog('load failed: ' + e.message); throw e; });
   }
   return vecStencilLoading;
 }
@@ -1162,7 +1171,7 @@ async function setAdapter(name) {
   const info = await ask('loadAdapter', { adapterUrl: ADAPTER_URL[name] });
   adapterName = name;
   els.adapterBtn.textContent = `adapter: ${ADAPTER_SHORT[adapterName] ?? adapterName}`;
-  log(`adapter loaded: ${ADAPTER_DESC[adapterName] ?? adapterName} (${(info.bytes / 1e6).toFixed(1)} MB)`);
+  debugLog(`adapter loaded: ${ADAPTER_DESC[adapterName] ?? adapterName} (${(info.bytes / 1e6).toFixed(1)} MB)`);
   return adapterName;
 }
 
@@ -1176,10 +1185,10 @@ async function llmStepOnce() {
     gridCellsForStep = Array.from(app.cells());
     resetNarrationForGen();
   }
-  log(`generation ${genLabel}: ${genPhase}… 0.0 s`);
+  logRun(`generation ${genLabel}: ${genPhase}… 0.0 s`);
   const ticker = setInterval(() => {
     const elapsed = (performance.now() - t0) / 1000;
-    logReplace(`generation ${genLabel}: ${genPhase}… ${elapsed.toFixed(1)} s`);
+    logRunReplace(`generation ${genLabel}: ${genPhase}… ${elapsed.toFixed(1)} s`);
   }, 250);
   let r;
   try {
@@ -1200,7 +1209,7 @@ async function llmStepOnce() {
     generating = false;
     if (pendingReset) { const r = pendingReset; pendingReset = null; applyReset(r.type, r.opts); }
     setStatus('error', 'Generation failed');
-    logReplace(`generation ${genLabel}: failed — ${e.message}`);
+    logRunReplace(`generation ${genLabel}: failed — ${e.message}`);
     throw e;
   }
   clearInterval(ticker);
@@ -1213,7 +1222,7 @@ async function llmStepOnce() {
     pendingReset = null;
     applyReset(reset.type, reset.opts);
     setStatus('ready', 'Ready');
-    logReplace(`generation ${genLabel}: discarded — reset applied`);
+    logRunReplace(`generation ${genLabel}: discarded — reset applied`);
     return;
   }
   lastSec = (performance.now() - t0) / 1000;
@@ -1242,7 +1251,7 @@ async function llmStepOnce() {
   }
   render();
   setStatus('ready', 'Ready');
-  logReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (game of life ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)} · IoU ${lastIou.toFixed(3)} · alive recall ${lastAliveRecall.toFixed(3)} · dead recall ${lastDeadRecall.toFixed(3)} · wrong ${lastWrong}`);
+  logRunReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (game of life ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)} · IoU ${lastIou.toFixed(3)} · alive recall ${lastAliveRecall.toFixed(3)} · dead recall ${lastDeadRecall.toFixed(3)} · wrong ${lastWrong}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1398,11 +1407,12 @@ async function measureLocalModelRung(modeKey, rowKey, label) {
     setStatus('loading', `loading ${label} for the ladder…`);
     await spec.load();
   }
-  setStatus('generating', `measuring ${label}…`);
   for (const n of LADDER_SIZES) {
+    setStatus('generating', `measuring ${label} at ${n}²…`);
     window.__app.setGrid(n);
     window.__app.randomize(1, 0.28);
     ladderValues[rowKey][n] = await measureGenerations();
+    logRun(`ladder: ${label} ${n}² = ${fmtSec(ladderValues[rowKey][n])} s/gen`);
     renderLadderTable();
   }
 }
@@ -1413,23 +1423,25 @@ async function measureLlmRows() {
   window.__app.randomize(1, 0.28);
 
   window.__app.setNarrationStyle('perpixel');
-  setStatus('generating', 'measuring LLM per pixel…');
+  setStatus('generating', 'measuring LLM per pixel at 16²…');
   await window.__app.step(1);
   ladderValues['llm-per-pixel'][16] = window.__app.secondsPerGeneration();
   const perPixelMsPerCell = window.__app.msPerCell();
   ladderValues['llm-per-pixel'][32] = perPixelMsPerCell * 32 * 32 / 1000;
   ladderValues['llm-per-pixel'][64] = perPixelMsPerCell * 64 * 64 / 1000;
   ladderProjected['llm-per-pixel'] = { 16: false, 32: true, 64: true };
+  logRun(`ladder: LLM per pixel 16² = ${fmtSec(ladderValues['llm-per-pixel'][16])} s/gen (32²/64² projected)`);
   renderLadderTable();
 
   window.__app.setNarrationStyle('batched');
-  setStatus('generating', 'measuring LLM batched…');
+  setStatus('generating', 'measuring LLM batched at 16²…');
   await window.__app.step(1);
   ladderValues['llm-batched'][16] = window.__app.secondsPerGeneration();
   const batchedMsPerCell = window.__app.msPerCell();
   ladderValues['llm-batched'][32] = batchedMsPerCell * 32 * 32 / 1000;
   ladderValues['llm-batched'][64] = batchedMsPerCell * 64 * 64 / 1000;
   ladderProjected['llm-batched'] = { 16: false, 32: true, 64: true };
+  logRun(`ladder: LLM batched 16² = ${fmtSec(ladderValues['llm-batched'][16])} s/gen (32²/64² projected)`);
   renderLadderTable();
 }
 
@@ -1445,12 +1457,14 @@ async function runFullLadder() {
   try {
     window.__app.setMode('classical');
     for (const n of LADDER_SIZES) {
+      setStatus('generating', `measuring CPU loop and lookup at ${n}²…`);
       window.__app.setGrid(n);
       window.__app.randomize(1, 0.28);
       const board = Uint8Array.from(window.__app.grid());
       const reps = n <= 32 ? 2000 : 400;
       ladderValues.cpu[n] = timeIt(() => jsLifeStepLoop(board, n, n), reps);
       ladderValues.lookup[n] = timeIt(() => jsLifeStepLookup(board, n, n, lookupTable), reps);
+      logRun(`ladder: CPU loop ${n}² = ${fmtSec(ladderValues.cpu[n])} s/gen · lookup ${n}² = ${fmtSec(ladderValues.lookup[n])} s/gen`);
       renderLadderTable();
     }
 
@@ -1509,7 +1523,7 @@ window.__app = {
     lastP = null;
     armedGridSize = null;
     if (isLlmMode(m) && gridSize > 64) {
-      log(`grid size clamped to 32×32 for ${m} mode (128/256 are not offered for the LLM rungs)`);
+      debugLog(`grid size clamped to 32×32 for ${m} mode (128/256 are not offered for the LLM rungs)`);
       gridSize = 32;
     }
     updateGridButtons();
@@ -1534,13 +1548,13 @@ window.__app = {
   setGrid: (n) => {
     if (![16, 32, 64, 128, 256].includes(n)) throw new Error('grid size must be one of 16, 32, 64, 128, 256');
     if (isLlmMode(mode) && n > 64) {
-      log(`${n}×${n} is disabled for LLM mode — ≈ ${formatDuration(llmSizeEstimateSeconds(n))} per generation on this machine`);
+      debugLog(`${n}×${n} is disabled for LLM mode — ≈ ${formatDuration(llmSizeEstimateSeconds(n))} per generation on this machine`);
       return gridSize;
     }
     if (isLlmMode(mode) && n > 32) {
       if (armedGridSize !== n) {
         armedGridSize = n;
-        log(`${n}×${n} ≈ ${formatDuration(llmSizeEstimateSeconds(n))} per generation on this machine — call setGrid(${n}) again to confirm`);
+        debugLog(`${n}×${n} ≈ ${formatDuration(llmSizeEstimateSeconds(n))} per generation on this machine — call setGrid(${n}) again to confirm`);
         updateGridButtons();
         return gridSize;
       }
@@ -1555,7 +1569,7 @@ window.__app = {
     // `llmStepOnce` applies it once that generation lands.
     if (generating) {
       pendingGridSize = n;
-      log(`grid change queued until generation ${generation + 1} finishes`);
+      debugLog(`grid change queued until generation ${generation + 1} finishes`);
     } else {
       setGridSize(n);
       resync();
