@@ -24,7 +24,7 @@ fn log(msg: &str) {
 }
 
 /// Label-free binarization (`score::otsu_threshold`) — same code path as the
-/// native `rescore` tool, so the tab and `docs/pictures/README.md` agree.
+/// native `rescore` tool, so tab and offline scoring agree.
 #[wasm_bindgen(js_name = otsuThreshold)]
 pub fn otsu_threshold_js(p_alive: Vec<f32>) -> f32 {
     otsu_threshold(&p_alive)
@@ -223,10 +223,9 @@ impl LifeEngine {
     }
 
     /// Load a runtime LoRA adapter (llm-wasm's `lora` module, LLMLIFE2
-    /// format — see llm-life's `tools/merge/lora_io.py` / `train/lora_io.rs`
-    /// for the on-disk layout) onto the already-`load()`-ed model. Applies
-    /// q/k/v/o deltas on every subsequent `step`/`stepChunkA` forward;
-    /// replaces any adapter loaded earlier, does not stack.
+    /// format) onto the already-`load()`-ed model. Applies q/k/v/o deltas
+    /// on every subsequent `step`/`stepChunkA` forward; replaces any
+    /// adapter loaded earlier, does not stack.
     ///
     /// `norules` must match how the adapter itself was trained/evaluated
     /// (`train::run_a::prompt_a`'s `norules` flag — `lora-a-norules-*.bin`
@@ -236,9 +235,8 @@ impl LifeEngine {
     /// A's resident prefix (`prefix_a`/`cache_a`) is rebuilt here whenever
     /// this differs from what it currently holds, so the per-cell chunks
     /// this adapter answers are conditioned on the same prefix it was
-    /// trained/scored against (`docs/runs/2026-09-20-runtime-lora.md`,
-    /// `docs/runs/2026-09-20-a-rollout.md`) instead of the demo's
-    /// rules+few-shot prefix, which this adapter never saw.
+    /// trained/scored against instead of the demo's rules+few-shot prefix,
+    /// which this adapter never saw.
     #[wasm_bindgen(js_name = loadAdapter)]
     pub fn load_adapter(&mut self, bytes: &[u8], norules: bool) -> Result<(), JsError> {
         if self.prefix_norules != Some(norules) {
@@ -443,9 +441,9 @@ impl BertEngine {
     }
 
     /// Load a checkpoint written by `bert::train::train_bert`
-    /// (`BinBytesRecorder<FullPrecisionSettings>`, cross-backend — trained on
-    /// `Autodiff<Wgpu>` on the 3080, loaded here straight onto `Wgpu`, no
-    /// conversion step).
+    /// (`BinBytesRecorder<FullPrecisionSettings>`, cross-backend — trained
+    /// on `Autodiff<Wgpu>`, loaded here straight onto `Wgpu`, no conversion
+    /// step).
     #[wasm_bindgen(js_name = loadCheckpoint)]
     pub fn load_checkpoint(
         &mut self,
@@ -630,8 +628,8 @@ impl VecAttnEngine {
 
 /// The MLP baseline for (i): `vector::model::Mlp2OfLife`, the 2-layer body
 /// (9 raw bits -> hidden -> hidden -> 2 classes) that reached exact on all
-/// 512 cases with the lr-fix rerun (docs/runs/2026-09-20-vector.md) — the
-/// 1-layer `bert::model::MlpOfLife` this engine used to wrap did not.
+/// 512 cases with the lr-fix rerun — the 1-layer `bert::model::MlpOfLife`
+/// this engine used to wrap did not.
 #[wasm_bindgen]
 pub struct VecMlpEngine {
     device: WgpuDevice,
