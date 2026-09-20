@@ -502,3 +502,253 @@ impl BertEngine {
         self.n_layers
     }
 }
+
+/// The vector-space variants (CONCEPT.md §12), in the tab: no tokens
+/// anywhere. `VecAttnEngine` is (i) — the 9-neighbourhood-as-numbers model,
+/// one forward per cell, same narration convention as `BertEngine`.
+/// `VecStencilEngine` is (ii) — the whole grid, one channel, one forward
+/// pass for every cell at once (no per-cell loop at all).
+#[wasm_bindgen]
+pub struct VecAttnEngine {
+    device: WgpuDevice,
+    model: Option<crate::vector::model::AttnOfLife<Wgpu>>,
+    d_model: usize,
+    width: usize,
+    height: usize,
+}
+
+#[wasm_bindgen]
+impl VecAttnEngine {
+    #[wasm_bindgen(constructor)]
+    pub fn new(width: usize, height: usize) -> VecAttnEngine {
+        VecAttnEngine {
+            device: llm_wasm::web::wgpu_device()
+                .expect("initWgpuDevice() must be awaited before constructing VecAttnEngine"),
+            model: None,
+            d_model: 0,
+            width,
+            height,
+        }
+    }
+
+    #[wasm_bindgen(js_name = setGrid)]
+    pub fn set_grid(&mut self, width: usize, height: usize) {
+        self.width = width;
+        self.height = height;
+    }
+
+    #[wasm_bindgen(js_name = loadCheckpoint)]
+    pub fn load_checkpoint(&mut self, bytes: Vec<u8>, d_model: usize) -> Result<(), JsError> {
+        use burn::module::Module;
+        use burn::record::{BinBytesRecorder, FullPrecisionSettings, Recorder};
+
+        let cfg = crate::vector::model::AttnConfig::new(d_model);
+        let model = cfg.init::<Wgpu>(&self.device);
+        let recorder = BinBytesRecorder::<FullPrecisionSettings>::new();
+        let record = recorder
+            .load(bytes, &self.device)
+            .map_err(|e| JsError::new(&format!("load checkpoint: {e}")))?;
+        self.model = Some(model.load_record(record));
+        self.d_model = d_model;
+        log(&format!("[llm-life] vector attention checkpoint loaded: d_model={d_model}"));
+        Ok(())
+    }
+
+    /// p(alive) for one cell: the 9 neighbourhood values as floats (same
+    /// order as `BertEngine::stepCell` — 8 neighbours then self), no
+    /// embedding table.
+    #[wasm_bindgen(js_name = stepCell)]
+    pub async fn step_cell(&self, cells: Vec<u8>, index: usize) -> Result<f32, JsError> {
+        let model = self.model.as_ref().ok_or_else(|| JsError::new("not loaded"))?;
+        if cells.len() != self.width * self.height {
+            return Err(JsError::new("cells length does not match the grid"));
+        }
+        let grid = Grid::from_cells(self.width, self.height, cells);
+        let case = crate::bert::data::case_at(&grid, index);
+        let bits: Vec<f32> = case.iter().map(|&b| b as f32).collect();
+        let t: Tensor<Wgpu, 2> = Tensor::from_data(burn::tensor::TensorData::new(bits, [1, 9]), &self.device);
+        let logits = model.forward(t);
+        let probs = burn::tensor::activation::softmax(logits, 1);
+        let data = probs
+            .into_data_async()
+            .await
+            .map_err(|e| JsError::new(&format!("readback: {e:?}")))?;
+        let v = data.into_vec::<f32>().map_err(|_| JsError::new("readback: bad dtype"))?;
+        Ok(v[1])
+    }
+
+    #[wasm_bindgen(js_name = dModel)]
+    pub fn d_model_js(&self) -> usize {
+        self.d_model
+    }
+}
+
+/// The MLP baseline for (i) (`bert::model::MlpOfLife`, 9 raw bits -> hidden
+/// -> 2 classes — CONCEPT.md §14's narration line names this rung "MLP N",
+/// so the tab runs the MLP here rather than `VecAttnEngine`, which is also
+/// exposed above but is not this rung's headline demo).
+#[wasm_bindgen]
+pub struct VecMlpEngine {
+    device: WgpuDevice,
+    model: Option<crate::bert::model::MlpOfLife<Wgpu>>,
+    hidden: usize,
+    width: usize,
+    height: usize,
+}
+
+#[wasm_bindgen]
+impl VecMlpEngine {
+    #[wasm_bindgen(constructor)]
+    pub fn new(width: usize, height: usize) -> VecMlpEngine {
+        VecMlpEngine {
+            device: llm_wasm::web::wgpu_device()
+                .expect("initWgpuDevice() must be awaited before constructing VecMlpEngine"),
+            model: None,
+            hidden: 0,
+            width,
+            height,
+        }
+    }
+
+    #[wasm_bindgen(js_name = setGrid)]
+    pub fn set_grid(&mut self, width: usize, height: usize) {
+        self.width = width;
+        self.height = height;
+    }
+
+    #[wasm_bindgen(js_name = loadCheckpoint)]
+    pub fn load_checkpoint(&mut self, bytes: Vec<u8>, hidden: usize) -> Result<(), JsError> {
+        use burn::module::Module;
+        use burn::record::{BinBytesRecorder, FullPrecisionSettings, Recorder};
+
+        let cfg = crate::bert::model::MlpConfig { hidden };
+        let model = cfg.init::<Wgpu>(&self.device);
+        let recorder = BinBytesRecorder::<FullPrecisionSettings>::new();
+        let record = recorder
+            .load(bytes, &self.device)
+            .map_err(|e| JsError::new(&format!("load checkpoint: {e}")))?;
+        self.model = Some(model.load_record(record));
+        self.hidden = hidden;
+        log(&format!("[llm-life] vector MLP checkpoint loaded: hidden={hidden}"));
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = stepCell)]
+    pub async fn step_cell(&self, cells: Vec<u8>, index: usize) -> Result<f32, JsError> {
+        let model = self.model.as_ref().ok_or_else(|| JsError::new("not loaded"))?;
+        if cells.len() != self.width * self.height {
+            return Err(JsError::new("cells length does not match the grid"));
+        }
+        let grid = Grid::from_cells(self.width, self.height, cells);
+        let case = crate::bert::data::case_at(&grid, index);
+        let bits: Vec<f32> = case.iter().map(|&b| b as f32).collect();
+        let t: Tensor<Wgpu, 2> = Tensor::from_data(burn::tensor::TensorData::new(bits, [1, 9]), &self.device);
+        let logits = model.forward(t);
+        let probs = burn::tensor::activation::softmax(logits, 1);
+        let data = probs
+            .into_data_async()
+            .await
+            .map_err(|e| JsError::new(&format!("readback: {e:?}")))?;
+        let v = data.into_vec::<f32>().map_err(|_| JsError::new("readback: bad dtype"))?;
+        Ok(v[1])
+    }
+
+    #[wasm_bindgen(js_name = hidden)]
+    pub fn hidden_js(&self) -> usize {
+        self.hidden
+    }
+}
+
+#[wasm_bindgen]
+pub struct VecStencilEngine {
+    device: WgpuDevice,
+    model: Option<crate::vector::model::StencilOfLife<Wgpu>>,
+    d_model: usize,
+    n_layers: usize,
+    width: usize,
+    height: usize,
+}
+
+#[wasm_bindgen]
+impl VecStencilEngine {
+    #[wasm_bindgen(constructor)]
+    pub fn new(width: usize, height: usize) -> VecStencilEngine {
+        VecStencilEngine {
+            device: llm_wasm::web::wgpu_device()
+                .expect("initWgpuDevice() must be awaited before constructing VecStencilEngine"),
+            model: None,
+            d_model: 0,
+            n_layers: 0,
+            width,
+            height,
+        }
+    }
+
+    /// Change the grid size the engine runs at. Unlike every other engine in
+    /// this file, this is not just bookkeeping: the stencil mask
+    /// (`vector::model::stencil_mask`) is rebuilt for the new size — the
+    /// CONCEPT.md §12 generalisation the model itself needs no retraining
+    /// for, since it carries no positional embedding.
+    #[wasm_bindgen(js_name = setGrid)]
+    pub fn set_grid(&mut self, width: usize, height: usize) {
+        self.width = width;
+        self.height = height;
+    }
+
+    #[wasm_bindgen(js_name = loadCheckpoint)]
+    pub fn load_checkpoint(
+        &mut self,
+        bytes: Vec<u8>,
+        d_model: usize,
+        n_layers: usize,
+        n_heads: usize,
+    ) -> Result<(), JsError> {
+        use burn::module::Module;
+        use burn::record::{BinBytesRecorder, FullPrecisionSettings, Recorder};
+
+        let cfg = crate::vector::model::StencilConfig::new(d_model, n_layers, n_heads);
+        let model = cfg.init::<Wgpu>(&self.device);
+        let recorder = BinBytesRecorder::<FullPrecisionSettings>::new();
+        let record = recorder
+            .load(bytes, &self.device)
+            .map_err(|e| JsError::new(&format!("load checkpoint: {e}")))?;
+        self.model = Some(model.load_record(record));
+        self.d_model = d_model;
+        self.n_layers = n_layers;
+        log(&format!(
+            "[llm-life] vector stencil checkpoint loaded: d_model={d_model} n_layers={n_layers} n_heads={n_heads}"
+        ));
+        Ok(())
+    }
+
+    /// p(alive) for every cell in **one forward pass** — CONCEPT.md §12's
+    /// "grid -> grid" claim: no per-cell loop anywhere in this function.
+    #[wasm_bindgen(js_name = stepGrid)]
+    pub async fn step_grid(&self, cells: Vec<u8>) -> Result<Vec<f32>, JsError> {
+        let model = self.model.as_ref().ok_or_else(|| JsError::new("not loaded"))?;
+        if cells.len() != self.width * self.height {
+            return Err(JsError::new("cells length does not match the grid"));
+        }
+        let n = cells.len();
+        let xs: Vec<f32> = cells.iter().map(|&c| c as f32).collect();
+        let x: Tensor<Wgpu, 2> = Tensor::from_data(burn::tensor::TensorData::new(xs, [1, n]), &self.device);
+        let mask = crate::vector::model::stencil_mask(self.width, self.height, &self.device);
+        let logits = model.forward(x, mask);
+        let probs = burn::tensor::activation::sigmoid(logits);
+        let data = probs
+            .into_data_async()
+            .await
+            .map_err(|e| JsError::new(&format!("readback: {e:?}")))?;
+        data.into_vec::<f32>().map_err(|_| JsError::new("readback: bad dtype"))
+    }
+
+    #[wasm_bindgen(js_name = dModel)]
+    pub fn d_model_js(&self) -> usize {
+        self.d_model
+    }
+
+    #[wasm_bindgen(js_name = numLayers)]
+    pub fn num_layers_js(&self) -> usize {
+        self.n_layers
+    }
+}

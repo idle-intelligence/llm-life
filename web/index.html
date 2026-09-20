@@ -248,6 +248,8 @@
         <label><input type="radio" name="mode" value="llm" /> LLM (variant B)</label>
         <label><input type="radio" name="mode" value="llm-a" /> LLM (variant A)</label>
         <label><input type="radio" name="mode" value="bert" /> BERT of Life</label>
+        <label><input type="radio" name="mode" value="vec-mlp" /> 9 numbers -&gt; centre</label>
+        <label><input type="radio" name="mode" value="vec-stencil" /> stencil (grid -&gt; grid)</label>
     </div>
     <div class="radios" id="grid-choice">
         <label><input type="radio" name="gridsize" value="32" /> 32&times;32</label>
@@ -381,7 +383,7 @@ let W = 64, H = 64;
 // (32/64/128); variant A stays fixed at 16x16 (its per-cell cost makes
 // larger grids impractical).
 let llmGridSize = 64;
-const GRID_FOR_MODE = () => ({ classical: llmGridSize, llm: llmGridSize, 'llm-a': 16, bert: 16 });
+const GRID_FOR_MODE = () => ({ classical: llmGridSize, llm: llmGridSize, 'llm-a': 16, bert: 16, 'vec-mlp': 16, 'vec-stencil': 16 });
 const GENS_PER_SEC = 4;   // deliberately slow: you are meant to watch it
 
 const els = {
@@ -556,7 +558,30 @@ function handleBertCellNarration({ index, p, ms }) {
   els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`;
 }
 
-let bertMsPerCell = null;
+// (i) "9 numbers -> centre": one line per cell, no tokens — CONCEPT.md
+// §14's narration line for this rung: `cell (r,c) · 9 numbers · MLP 16 ·
+// 0.02 ms`.
+function handleVecMlpCellNarration({ index, p, ms }) {
+  chunkTimingsMs.push({ ms, chunkSize: 1 });
+  const r = Math.floor(index / W), c = index % W;
+  narrationPush(`cell (${r},${c}) · 9 numbers · MLP ${VEC_MLP_MODEL.hidden} · ${ms.toFixed(2)} ms`);
+  cellsNarrated++;
+  const genLabel = generation + 1;
+  narrationPush(`cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`);
+  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`;
+}
+
+// (ii) "grid -> grid, one channel": one pass computes every cell — one
+// narration line for the whole generation, not one per cell.
+function handleVecStencilNarration({ cells, ms }) {
+  chunkTimingsMs.push({ ms, chunkSize: cells });
+  narrationPush(`whole grid · ${cells} cells · stencil attention · one pass · ${ms.toFixed(1)} ms`);
+  cellsNarrated = cells;
+  const genLabel = generation + 1;
+  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`;
+}
+
+let bertMsPerCell = null, vecMlpMsPerCell = null, vecStencilMsPerCell = null;
 
 function finishNarrationPerf() {
   const totalMs = chunkTimingsMs.reduce((s, c) => s + c.ms, 0);
@@ -568,6 +593,10 @@ function finishNarrationPerf() {
   // each other's last measurement.
   if (mode === 'bert') {
     bertMsPerCell = msPerCell;
+  } else if (mode === 'vec-mlp') {
+    vecMlpMsPerCell = msPerCell;
+  } else if (mode === 'vec-stencil') {
+    vecStencilMsPerCell = msPerCell;
   } else {
     lastMsPerCell = msPerCell;
   }
@@ -654,12 +683,19 @@ function render() {
 // True for every mode that runs through the worker/engine (LLM variants A/B
 // and BERT of Life) rather than the classical in-page loop.
 function isModelMode(m) {
-  return m === 'llm' || m === 'llm-a' || m === 'bert';
+  return m === 'llm' || m === 'llm-a' || m === 'bert' || m === 'vec-mlp' || m === 'vec-stencil';
+}
+
+function isPerCellNarrated(m) {
+  return m === 'llm-a' || m === 'bert' || m === 'vec-mlp' || m === 'vec-stencil';
 }
 
 async function stepOnce() {
   if (isModelMode(mode)) {
-    const ready = mode === 'bert' ? bertReady : llmReady;
+    const ready = mode === 'bert' ? bertReady
+      : mode === 'vec-mlp' ? vecMlpReady
+      : mode === 'vec-stencil' ? vecStencilReady
+      : llmReady;
     if (!ready) { log('mode: no model loaded'); return; }
     return llmStepOnce();
   }
@@ -800,12 +836,35 @@ const BERT_MODEL = {
   nHeads: 1,
 };
 
+// (i) "9 numbers -> centre" (CONCEPT.md §12/§14): the MLP baseline
+// (`bert::model::MlpOfLife`, reused — see `vector::model` doc comment) on
+// the 9 raw neighbourhood bits, no embedding table.
+const VEC_MLP_MODEL = {
+  checkpointUrl: './mlp-16.bin',
+  hidden: 16,
+};
+
+// (ii) "grid -> grid, one channel" (CONCEPT.md §12/§14): jacobi2000's
+// stencil-masked attention with one channel — smallest exact size from the
+// sweep (docs/runs/2026-09-20-vector.md): d=16 L=1 H=1, IoU 1.000 at both
+// 16x16 and 32x32 with the same weights.
+const VEC_STENCIL_MODEL = {
+  checkpointUrl: './stencil-d16-L1.bin',
+  dModel: 16,
+  nLayers: 1,
+  nHeads: 1,
+};
+
 for (const r of document.querySelectorAll('input[name=mode]')) {
   r.addEventListener('change', async () => {
     if (!r.checked) return;
     window.__app.setMode(r.value);
     if (r.value === 'bert' && !bertReady && !bertLoading) {
       try { await loadBert(BERT_MODEL); } catch (e) { /* logged in loadBert */ }
+    } else if (r.value === 'vec-mlp' && !vecMlpReady && !vecMlpLoading) {
+      try { await loadVecMlp(VEC_MLP_MODEL); } catch (e) { /* logged in loadVecMlp */ }
+    } else if (r.value === 'vec-stencil' && !vecStencilReady && !vecStencilLoading) {
+      try { await loadVecStencil(VEC_STENCIL_MODEL); } catch (e) { /* logged in loadVecStencil */ }
     } else if (r.value.startsWith('llm') && !llmReady && !loading) {
       try { await loadLlm(LLM_MODEL); } catch (e) { /* logged in loadLlm */ }
     }
@@ -859,6 +918,8 @@ document.getElementById('c-model').addEventListener('click', (e) => {
 // ---------------------------------------------------------------------------
 let worker = null, nextId = 1, pending = new Map(), llmReady = false, loading = null;
 let bertReady = false, bertLoading = null;
+let vecMlpReady = false, vecMlpLoading = null;
+let vecStencilReady = false, vecStencilLoading = null;
 let genPhase = 'running';
 let lastProgressStage = null;
 
@@ -881,6 +942,14 @@ function ensureWorker() {
     }
     if (type === 'bertCell') {
       handleBertCellNarration(e.data);
+      return;
+    }
+    if (type === 'vecMlpCell') {
+      handleVecMlpCellNarration(e.data);
+      return;
+    }
+    if (type === 'vecStencilGrid') {
+      handleVecStencilNarration(e.data);
       return;
     }
     if (type === 'progress') {
@@ -948,6 +1017,40 @@ async function loadBert(spec) {
   return bertLoading;
 }
 
+async function loadVecMlp(spec) {
+  ensureWorker();
+  if (!vecMlpLoading) {
+    setStatus('loading', 'Loading vector MLP…');
+    log('loading 9-numbers MLP checkpoint into the worker…');
+    vecMlpLoading = ask('loadVecMlp', { ...spec, width: W, height: H })
+      .then((info) => {
+        vecMlpReady = true;
+        setStatus('ready', 'Ready');
+        log(`vector MLP loaded: hidden=${info.hidden}`);
+        return info;
+      })
+      .catch((e) => { vecMlpLoading = null; setStatus('error', 'Load failed'); log('load failed: ' + e.message); throw e; });
+  }
+  return vecMlpLoading;
+}
+
+async function loadVecStencil(spec) {
+  ensureWorker();
+  if (!vecStencilLoading) {
+    setStatus('loading', 'Loading stencil model…');
+    log('loading grid-to-grid stencil checkpoint into the worker…');
+    vecStencilLoading = ask('loadVecStencil', { ...spec, width: W, height: H })
+      .then((info) => {
+        vecStencilReady = true;
+        setStatus('ready', 'Ready');
+        log(`stencil model loaded: d_model=${info.dModel} layers=${info.numLayers}`);
+        return info;
+      })
+      .catch((e) => { vecStencilLoading = null; setStatus('error', 'Load failed'); log('load failed: ' + e.message); throw e; });
+  }
+  return vecStencilLoading;
+}
+
 const ADAPTER_URL = { 'a-norules': './lora-a-norules-300.bin', 'a-rules': './lora-a-rules-300.bin' };
 
 async function setAdapter(name) {
@@ -966,7 +1069,7 @@ async function llmStepOnce() {
   genPhase = 'running';
   generating = true;
   setStatus('generating', 'Generating…');
-  if (mode === 'llm-a' || mode === 'bert') {
+  if (isPerCellNarrated(mode)) {
     gridCellsForStep = Array.from(app.cells());
     resetNarrationForGen();
   }
@@ -979,7 +1082,8 @@ async function llmStepOnce() {
   try {
     r = await ask('step', {
       cells: Array.from(app.cells()),
-      variant: mode === 'llm-a' ? 'a' : mode === 'bert' ? 'bert' : 'b',
+      variant: mode === 'llm-a' ? 'a' : mode === 'bert' ? 'bert'
+        : mode === 'vec-mlp' ? 'vec-mlp' : mode === 'vec-stencil' ? 'vec-stencil' : 'b',
       width: W,
       height: H,
       threshold: thresholdName,
@@ -1014,7 +1118,7 @@ async function llmStepOnce() {
   lastThresholdValue = r.thresholdValue;
   lastChunks = r.chunks;
   lastTokens = r.tokens;
-  if (mode === 'llm-a' || mode === 'bert') finishNarrationPerf();
+  if (isPerCellNarrated(mode)) finishNarrationPerf();
   // The model's *binarized* output (label-free threshold, not 0.5) becomes
   // the next state it is fed — free-running, not teacher-forced: there is no
   // teacher-forced mode in the tab. Truth advances independently from its own
@@ -1026,7 +1130,7 @@ async function llmStepOnce() {
   // A grid-size change requested mid-generation (`window.__app.setGrid`)
   // was deferred; apply it now that this generation's result has already
   // landed on the old-sized `app`/`truth`.
-  if (pendingGridSize !== null && mode !== 'llm-a' && mode !== 'bert') {
+  if (pendingGridSize !== null && !isPerCellNarrated(mode)) {
     const n = pendingGridSize;
     pendingGridSize = null;
     setGridSize(n);
@@ -1104,6 +1208,11 @@ function runLadder() {
   }
   const llmSec = (n) => (lastMsPerCell == null ? null : lastMsPerCell * n * n / 1000);
   const bertSec = (n) => (bertMsPerCell == null ? null : bertMsPerCell * n * n / 1000);
+  const vecMlpSec = (n) => (vecMlpMsPerCell == null ? null : vecMlpMsPerCell * n * n / 1000);
+  // The stencil model measures 16² and 32² directly in the tab (both are
+  // the same one-pass forward, the mask just gets rebuilt) — no projection
+  // needed the way per-cell models require for a size the tab doesn't run.
+  const vecStencilSec = (n) => (vecStencilMsPerCell == null ? null : vecStencilMsPerCell * n * n / 1000);
   const fmt = (v) => (v == null ? '—' : v < 1e-3 ? v.toExponential(2) : v.toFixed(4));
   const rows = [
     { name: 'CPU loop (JS, in the page)', s16: loopS[16], s32: loopS[32], s64: loopS[64], native: '—', iou: '1.000', desc: 'plain nested loop over 8 neighbours, one generation, in the tab' },
@@ -1111,6 +1220,8 @@ function runLadder() {
     { name: 'LLM per pixel (adapter)', s16: llmSec(16), s32: llmSec(32), s64: llmSec(64), native: '2.5 / 11 / 41', iou: '1.000', desc: 'one forward per cell, packed in chunks of 64, a-norules adapter' },
     { name: 'LLM batched (adapter)', s16: llmSec(16), s32: llmSec(32), s64: llmSec(64), native: '2.5 / 11 / 41', iou: '1.000', desc: 'identical forwards to per-pixel — narration names the batch mechanism' },
     { name: 'BERT of Life', s16: bertSec(16), s32: bertSec(32), s64: bertSec(64), native: 'see docs/runs/2026-09-20-bert.md', iou: '1.000', desc: 'transformer encoder, d=16 L=1 H=1, 3490 params, exact on all 512 cases — one forward per cell in the tab (16² measured, 32²/64² projected), native wgpu (3080) + CPU ndarray (laptop) in the run doc' },
+    { name: '9 numbers -> centre', s16: vecMlpSec(16), s32: vecMlpSec(32), s64: vecMlpSec(64), native: 'see docs/runs/2026-09-20-vector.md', iou: '0.31 (not exact)', desc: 'MLP baseline (9->16->2), no embedding table — one forward per cell; did not converge to the exact rule in the training budget (docs/runs/2026-09-20-vector.md)' },
+    { name: 'stencil (grid -> grid)', s16: vecStencilSec(16), s32: vecStencilSec(32), s64: vecStencilSec(64), native: 'see docs/runs/2026-09-20-vector.md', iou: '1.000', desc: 'jacobi2000 stencil-masked attention, one channel, d=16 L=1 H=1, 3329 params — whole grid in ONE forward pass, generalises 16²->32² with the same weights' },
     { name: 'whole-board thinking model', s16: null, s32: null, s64: null, native: '—', iou: '—', desc: 'pending: one big model reasons over the whole board as text, needs > 10 GB VRAM' },
   ];
   ladderRows = rows;
@@ -1124,7 +1235,7 @@ function runLadder() {
 }
 els.ladderBtn.onclick = () => runLadder();
 
-els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell — per-pixel narrated (default) or batched, same forwards either way. BERT of Life is a small transformer encoder trained from scratch (docs/runs/2026-09-20-bert.md) — also 16×16, also one forward per cell, but every token is the raw 0/1 neighbourhood, not text. Click a cell in the LLM of Life grid to toggle it.';
+els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell — per-pixel narrated (default) or batched, same forwards either way. BERT of Life is a small transformer encoder trained from scratch (docs/runs/2026-09-20-bert.md) — also 16×16, also one forward per cell, but every token is the raw 0/1 neighbourhood, not text. "9 numbers -> centre" is the same neighbourhood with no tokens at all — an MLP on 9 floats, one forward per cell. "stencil (grid -> grid)" is jacobi2000\'s stencil-masked attention with one channel: the whole grid in one forward pass, no per-cell loop, and it generalises from 16×16 to 32×32 with the same trained weights (docs/runs/2026-09-20-vector.md). Click a cell in the LLM of Life grid to toggle it.';
 
 window.__app = {
   ready: true,
@@ -1144,7 +1255,7 @@ window.__app = {
     // has no batched alternative — the narration log shows, the style radio
     // (perpixel/batched) doesn't.
     els.narrationChoice.style.display = isA ? '' : 'none';
-    els.narrationWrap.style.display = isA || isBert ? '' : 'none';
+    els.narrationWrap.style.display = isPerCellNarrated(m) ? '' : 'none';
     els.adapterBtn.disabled = !isA || !llmReady;
     return mode;
   },
@@ -1154,7 +1265,7 @@ window.__app = {
     if (![32, 64, 128].includes(n)) throw new Error('grid size must be 32, 64 or 128');
     llmGridSize = n;
     for (const r of document.querySelectorAll('input[name=gridsize]')) r.checked = Number(r.value) === n;
-    if (mode !== 'llm-a' && mode !== 'bert') {
+    if (!isPerCellNarrated(mode)) {
       // Mid-generation, resizing `app`/`truth` now would apply the in-flight
       // result (sized for the old grid) to a mismatched grid. Defer instead —
       // `llmStepOnce` applies it once that generation lands.
@@ -1221,6 +1332,10 @@ window.__app = {
   adapter: () => adapterName,
   bertReady: () => bertReady,
   loadBert,
+  vecMlpReady: () => vecMlpReady,
+  vecStencilReady: () => vecStencilReady,
+  loadVecMlp,
+  loadVecStencil,
   setAdapter,
   runLadder: () => runLadder(),
   ladderRows: () => ladderRows,

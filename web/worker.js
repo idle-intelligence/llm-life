@@ -5,7 +5,7 @@
 // engine reads through a sharded cursor for exactly this reason. The dev
 // server (web/serve.py, stdlib http.server) doesn't support Range requests,
 // so this streams the single GET response and slices it into chunks itself.
-import init, { LifeEngine, BertEngine, initWgpuDevice, otsuThreshold, zscoreThreshold } from './pkg-llm/llm_life.js';
+import init, { LifeEngine, BertEngine, VecMlpEngine, VecStencilEngine, initWgpuDevice, otsuThreshold, zscoreThreshold } from './pkg-llm/llm_life.js';
 
 let engine = null;
 // Tracks the grid size last given to `engine.setGrid`, so a run of `step`
@@ -16,6 +16,14 @@ let engineGrid = null;
 // tokenizer, no KV cache), loaded independently of `engine` above.
 let bertEngine = null;
 let bertGrid = null;
+
+// Vector-space variants (CONCEPT.md §12), each its own tiny engine.
+// (i) MLP on the 9 neighbourhood numbers, one forward per cell.
+let vecMlpEngine = null;
+let vecMlpGrid = null;
+// (ii) whole grid in one forward pass, no per-cell loop.
+let vecStencilEngine = null;
+let vecStencilGrid = null;
 
 const CHUNK = 64 * 1024 * 1024;
 
@@ -111,6 +119,20 @@ async function handle(id, type, payload, reply) {
       const bytes = new Uint8Array(await (await fetch(payload.checkpointUrl)).arrayBuffer());
       bertEngine.loadCheckpoint(bytes, payload.dModel, payload.nLayers, payload.nHeads);
       reply(true, { dModel: bertEngine.dModel(), numLayers: bertEngine.numLayers() });
+    } else if (type === 'loadVecMlp') {
+      await ensureWasm();
+      vecMlpEngine = new VecMlpEngine(payload.width, payload.height);
+      vecMlpGrid = { width: payload.width, height: payload.height };
+      const bytes = new Uint8Array(await (await fetch(payload.checkpointUrl)).arrayBuffer());
+      vecMlpEngine.loadCheckpoint(bytes, payload.hidden);
+      reply(true, { hidden: vecMlpEngine.hidden() });
+    } else if (type === 'loadVecStencil') {
+      await ensureWasm();
+      vecStencilEngine = new VecStencilEngine(payload.width, payload.height);
+      vecStencilGrid = { width: payload.width, height: payload.height };
+      const bytes = new Uint8Array(await (await fetch(payload.checkpointUrl)).arrayBuffer());
+      vecStencilEngine.loadCheckpoint(bytes, payload.dModel, payload.nLayers, payload.nHeads);
+      reply(true, { dModel: vecStencilEngine.dModel(), numLayers: vecStencilEngine.numLayers() });
     } else if (type === 'loadAdapter') {
       // Swap the runtime LoRA adapter without a full model reload — replaces
       // whatever adapter is currently applied (LifeEngine::loadAdapter does
@@ -156,6 +178,53 @@ async function handle(id, type, payload, reply) {
         chunks: n,
         tokens: n * 9,
         seconds: (performance.now() - t0) / 1000,
+      });
+    } else if (type === 'step' && payload.variant === 'vec-mlp') {
+      // (i) 9 numbers -> centre, no tokens: one forward per cell through the
+      // MLP baseline, narrated the same way BERT of Life's per-cell mode is.
+      const t0 = performance.now();
+      if (!vecMlpGrid || vecMlpGrid.width !== payload.width || vecMlpGrid.height !== payload.height) {
+        vecMlpEngine.setGrid(payload.width, payload.height);
+        vecMlpGrid = { width: payload.width, height: payload.height };
+      }
+      const cells = new Uint8Array(payload.cells);
+      const n = cells.length;
+      const p = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const cellT0 = performance.now();
+        const v = await vecMlpEngine.stepCell(cells, i);
+        const ms = performance.now() - cellT0;
+        p[i] = v;
+        self.postMessage({ type: 'vecMlpCell', index: i, p: v, ms });
+      }
+      self.postMessage({ type: 'progress', stage: 'threshold' });
+      const thresholdValue = 0.5;
+      const binarized = Array.from(p, (v) => (v >= thresholdValue ? 1 : 0));
+      self.postMessage({ type: 'progress', stage: 'done' });
+      reply(true, {
+        pAlive: Array.from(p), binarized, thresholdValue,
+        chunks: n, tokens: n * 9, seconds: (performance.now() - t0) / 1000,
+      });
+    } else if (type === 'step' && payload.variant === 'vec-stencil') {
+      // (ii) whole grid -> whole grid, one channel: one forward pass, no
+      // per-cell loop — the narration strip gets exactly one line.
+      const t0 = performance.now();
+      if (!vecStencilGrid || vecStencilGrid.width !== payload.width || vecStencilGrid.height !== payload.height) {
+        vecStencilEngine.setGrid(payload.width, payload.height);
+        vecStencilGrid = { width: payload.width, height: payload.height };
+      }
+      const cells = new Uint8Array(payload.cells);
+      self.postMessage({ type: 'progress', stage: 'forward' });
+      const p = await vecStencilEngine.stepGrid(cells);
+      const ms = performance.now() - t0;
+      self.postMessage({ type: 'vecStencilGrid', cells: cells.length, ms });
+      self.postMessage({ type: 'progress', stage: 'threshold' });
+      const thresholdValue = 0.5;
+      const binarized = Array.from(p, (v) => (v >= thresholdValue ? 1 : 0));
+      self.postMessage({ type: 'progress', stage: 'done' });
+      reply(true, {
+        pAlive: Array.from(p), binarized, thresholdValue,
+        chunks: 1, tokens: cells.length, seconds: (performance.now() - t0) / 1000,
       });
     } else if (type === 'step') {
       const t0 = performance.now();
