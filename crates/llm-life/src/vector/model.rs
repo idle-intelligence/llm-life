@@ -35,6 +35,46 @@ fn linear_params<B: Backend>(l: &Linear<B>) -> usize {
         + l.bias.as_ref().map(|b| b.dims().iter().product::<usize>()).unwrap_or(0)
 }
 
+/// (i) a 2-layer MLP body (9->hidden->hidden->2), for the lr-fix rerun: the
+/// 1-layer `bert::model::MlpOfLife` at lr=1e-2/600 steps did not reach exact
+/// 512/512 (docs/runs/2026-09-20-vector.md's first sweep), and the extra
+/// depth is the other knob CONCEPT.md's "smallest model that fits" search
+/// asks about, alongside the corrected learning rate.
+#[derive(Config, Debug)]
+pub struct Mlp2Config {
+    pub hidden: usize,
+}
+
+impl Mlp2Config {
+    pub fn init<B: Backend>(&self, device: &B::Device) -> Mlp2OfLife<B> {
+        Mlp2OfLife {
+            fc1: LinearConfig::new(9, self.hidden).init(device),
+            fc2: LinearConfig::new(self.hidden, self.hidden).init(device),
+            fc3: LinearConfig::new(self.hidden, 2).init(device),
+        }
+    }
+}
+
+#[derive(Module, Debug)]
+pub struct Mlp2OfLife<B: Backend> {
+    fc1: Linear<B>,
+    fc2: Linear<B>,
+    fc3: Linear<B>,
+}
+
+impl<B: Backend> Mlp2OfLife<B> {
+    pub fn forward(&self, bits: Tensor<B, 2>) -> Tensor<B, 2> {
+        use burn::tensor::activation::relu;
+        let h = relu(self.fc1.forward(bits));
+        let h = relu(self.fc2.forward(h));
+        self.fc3.forward(h)
+    }
+
+    pub fn num_params(&self) -> usize {
+        linear_params(&self.fc1) + linear_params(&self.fc2) + linear_params(&self.fc3)
+    }
+}
+
 /// (i) attention over the 9 neighbourhood cells as scalar float tokens.
 /// Fixed sequence length (9), so — unlike `StencilOfLife` — a learned
 /// absolute position embedding is fine here: this model is never asked to

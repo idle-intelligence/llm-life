@@ -13,9 +13,19 @@ use life::Rule;
 use std::path::PathBuf;
 
 use super::data::density_sweep_batch;
-use super::model::{stencil_mask, AttnConfig, AttnOfLife, StencilConfig, StencilOfLife};
+use super::model::{stencil_mask, AttnConfig, AttnOfLife, Mlp2Config, Mlp2OfLife, StencilConfig, StencilOfLife};
 use crate::bert::data::{all_cases, split_512, Case};
+use crate::bert::model::{MlpConfig, MlpOfLife};
 use crate::score::{score, GenScore};
+
+/// Cosine decay from `lr` down to `lr / 10` over `steps` — the fix for the
+/// lr=1e-2/600-step collapse the first (i) sweep hit (same failure mode the
+/// BERT d=32/64 runs hit this morning, fixed there by lr 2e-3/800 steps).
+fn cosine_lr(lr: f64, step: usize, steps: usize) -> f64 {
+    let floor = lr / 10.0;
+    let t = step as f64 / steps as f64;
+    floor + (lr - floor) * 0.5 * (1.0 + (std::f64::consts::PI * t).cos())
+}
 
 type AB = Autodiff<Wgpu>;
 type IB = Wgpu;
@@ -101,6 +111,188 @@ pub fn train_attn(d_model: usize, steps: usize, lr: f64, out: &PathBuf) -> Resul
         let grads = loss.backward();
         let grads = GradientsParams::from_grads(grads, &model);
         model = opt.step(lr, model, grads);
+        if steps_to_512.is_none() && step.is_multiple_of(5) {
+            let valid = model.valid();
+            if accuracy(&valid.forward(all_t.clone()), &all_y) >= 1.0 {
+                steps_to_512 = Some(step);
+                break;
+            }
+        }
+    }
+    let valid = model.valid();
+    let held_out_acc = accuracy(&valid.forward(held_t), &held_y);
+
+    let mut scores = Vec::new();
+    for seed_n in 1..=3u64 {
+        scores.extend(rollout_score(
+            |cases| {
+                let (t, _) = bits_of::<IB>(cases, &device);
+                let logits = valid.forward(t);
+                let probs = burn::tensor::activation::softmax(logits, 1);
+                probs.slice([0..cases.len(), 1..2]).into_data().into_vec::<f32>().unwrap()
+            },
+            &rule,
+            16,
+            16,
+            seed_n,
+        ));
+    }
+
+    if let Some(dir) = out.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let recorder = BinBytesRecorder::<FullPrecisionSettings>::new();
+    let bytes = recorder.record(model.into_record(), ())?;
+    std::fs::write(out, &bytes)?;
+
+    Ok(AttnResult { params, steps_to_512, held_out_acc, scores })
+}
+
+/// The lr-fix rerun of (i)'s MLP baseline: same 512-case split and rollout
+/// convention as `bert::train::train_mlp`, but with cosine lr decay instead
+/// of a fixed lr — `train_mlp`'s fixed-lr training is what collapsed at
+/// lr=1e-2 (docs/runs/2026-09-20-vector.md's first sweep).
+pub fn train_mlp_decay(hidden: usize, steps: usize, lr: f64, out: &PathBuf) -> Result<AttnResult> {
+    let rule = Rule::life();
+    let device = WgpuDevice::default();
+    let cfg = MlpConfig { hidden };
+    let mut model: MlpOfLife<AB> = cfg.init(&device);
+    let params = model.num_params();
+
+    let (train, held) = split_512(&rule, 64);
+    let all = all_cases(&rule);
+    let (train_t, train_y) = bits_of::<AB>(&train, &device);
+    let (held_t, held_y) = bits_of::<IB>(&held, &device);
+    let (all_t, all_y) = bits_of::<IB>(&all, &device);
+
+    let mut opt = AdamConfig::new().init();
+    let mut steps_to_512 = None;
+    for step in 1..=steps {
+        let logits = model.forward(train_t.clone());
+        let loss = cross_entropy::<AB>(logits, &train_y, &device);
+        let grads = loss.backward();
+        let grads = GradientsParams::from_grads(grads, &model);
+        model = opt.step(cosine_lr(lr, step, steps), model, grads);
+        if steps_to_512.is_none() && step.is_multiple_of(5) {
+            let valid = model.valid();
+            if accuracy(&valid.forward(all_t.clone()), &all_y) >= 1.0 {
+                steps_to_512 = Some(step);
+                break;
+            }
+        }
+    }
+    let valid = model.valid();
+    let held_out_acc = accuracy(&valid.forward(held_t), &held_y);
+
+    let mut scores = Vec::new();
+    for seed_n in 1..=3u64 {
+        scores.extend(rollout_score(
+            |cases| {
+                let (t, _) = bits_of::<IB>(cases, &device);
+                let logits = valid.forward(t);
+                let probs = burn::tensor::activation::softmax(logits, 1);
+                probs.slice([0..cases.len(), 1..2]).into_data().into_vec::<f32>().unwrap()
+            },
+            &rule,
+            16,
+            16,
+            seed_n,
+        ));
+    }
+
+    if let Some(dir) = out.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let recorder = BinBytesRecorder::<FullPrecisionSettings>::new();
+    let bytes = recorder.record(model.into_record(), ())?;
+    std::fs::write(out, &bytes)?;
+
+    Ok(AttnResult { params, steps_to_512, held_out_acc, scores })
+}
+
+/// The 2-layer MLP body (9->hidden->hidden->2), same training/eval
+/// convention as `train_mlp_decay`.
+pub fn train_mlp2_decay(hidden: usize, steps: usize, lr: f64, out: &PathBuf) -> Result<AttnResult> {
+    let rule = Rule::life();
+    let device = WgpuDevice::default();
+    let cfg = Mlp2Config::new(hidden);
+    let mut model: Mlp2OfLife<AB> = cfg.init(&device);
+    let params = model.num_params();
+
+    let (train, held) = split_512(&rule, 64);
+    let all = all_cases(&rule);
+    let (train_t, train_y) = bits_of::<AB>(&train, &device);
+    let (held_t, held_y) = bits_of::<IB>(&held, &device);
+    let (all_t, all_y) = bits_of::<IB>(&all, &device);
+
+    let mut opt = AdamConfig::new().init();
+    let mut steps_to_512 = None;
+    for step in 1..=steps {
+        let logits = model.forward(train_t.clone());
+        let loss = cross_entropy::<AB>(logits, &train_y, &device);
+        let grads = loss.backward();
+        let grads = GradientsParams::from_grads(grads, &model);
+        model = opt.step(cosine_lr(lr, step, steps), model, grads);
+        if steps_to_512.is_none() && step.is_multiple_of(5) {
+            let valid = model.valid();
+            if accuracy(&valid.forward(all_t.clone()), &all_y) >= 1.0 {
+                steps_to_512 = Some(step);
+                break;
+            }
+        }
+    }
+    let valid = model.valid();
+    let held_out_acc = accuracy(&valid.forward(held_t), &held_y);
+
+    let mut scores = Vec::new();
+    for seed_n in 1..=3u64 {
+        scores.extend(rollout_score(
+            |cases| {
+                let (t, _) = bits_of::<IB>(cases, &device);
+                let logits = valid.forward(t);
+                let probs = burn::tensor::activation::softmax(logits, 1);
+                probs.slice([0..cases.len(), 1..2]).into_data().into_vec::<f32>().unwrap()
+            },
+            &rule,
+            16,
+            16,
+            seed_n,
+        ));
+    }
+
+    if let Some(dir) = out.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let recorder = BinBytesRecorder::<FullPrecisionSettings>::new();
+    let bytes = recorder.record(model.into_record(), ())?;
+    std::fs::write(out, &bytes)?;
+
+    Ok(AttnResult { params, steps_to_512, held_out_acc, scores })
+}
+
+/// The lr-fix rerun of (i)'s attention model, same shape as `train_attn` but
+/// with cosine lr decay.
+pub fn train_attn_decay(d_model: usize, steps: usize, lr: f64, out: &PathBuf) -> Result<AttnResult> {
+    let rule = Rule::life();
+    let device = WgpuDevice::default();
+    let cfg = AttnConfig::new(d_model);
+    let mut model: AttnOfLife<AB> = cfg.init(&device);
+    let params = model.num_params();
+
+    let (train, held) = split_512(&rule, 64);
+    let all = all_cases(&rule);
+    let (train_t, train_y) = bits_of::<AB>(&train, &device);
+    let (held_t, held_y) = bits_of::<IB>(&held, &device);
+    let (all_t, all_y) = bits_of::<IB>(&all, &device);
+
+    let mut opt = AdamConfig::new().init();
+    let mut steps_to_512 = None;
+    for step in 1..=steps {
+        let logits = model.forward(train_t.clone());
+        let loss = cross_entropy::<AB>(logits, &train_y, &device);
+        let grads = loss.backward();
+        let grads = GradientsParams::from_grads(grads, &model);
+        model = opt.step(cosine_lr(lr, step, steps), model, grads);
         if steps_to_512.is_none() && step.is_multiple_of(5) {
             let valid = model.valid();
             if accuracy(&valid.forward(all_t.clone()), &all_y) >= 1.0 {

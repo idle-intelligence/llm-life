@@ -298,6 +298,22 @@ enum Command {
         #[arg(long, default_value = "1")]
         seed: u64,
     },
+    /// Rerun (i) only, with a corrected learning-rate schedule (cosine decay
+    /// instead of the fixed lr=1e-2/600-steps that collapsed the first
+    /// sweep — the same failure mode the BERT d=32/64 runs hit, fixed there
+    /// by lr 2e-3/800 steps). MLP h ∈ {8,16,32}, a 2-layer MLP body
+    /// (9->32->32->2), and Attn d ∈ {8,16,32}. Appends a corrected section
+    /// to `--run-doc` rather than overwriting the first sweep.
+    TrainVecILrFix {
+        #[arg(long, default_value = "artifacts/vector")]
+        out: PathBuf,
+        #[arg(long, default_value = "docs/runs/2026-09-20-vector.md")]
+        run_doc: PathBuf,
+        #[arg(long, default_value = "2000")]
+        steps: usize,
+        #[arg(long, default_value = "2e-3")]
+        lr: f64,
+    },
     /// s/generation for a vector-space checkpoint through the native wgpu
     /// backend, at 16x16/32x32/64x64 (stencil) — the same convention as
     /// `BenchBert`.
@@ -1238,6 +1254,7 @@ fn main() -> Result<()> {
             stencil_lr,
             seed,
         } => train_vec_sweep(&out, &run_doc, steps, lr, stencil_steps, stencil_lr, seed),
+        Command::TrainVecILrFix { out, run_doc, steps, lr } => train_vec_i_lr_fix(&out, &run_doc, steps, lr),
         Command::BenchVec {
             checkpoint,
             kind,
@@ -1682,6 +1699,67 @@ fn train_vec_sweep(
     }
     std::fs::write(run_doc, doc)?;
     println!("\nwrote {}", run_doc.display());
+    Ok(())
+}
+
+/// Rerun (i) only with a corrected lr schedule (see `Command::TrainVecILrFix`
+/// doc comment for why). Appends a "corrected" section to `run_doc`,
+/// keeping whatever the file already has (the first, lr=1e-2 sweep) as a
+/// documented lr-sensitivity result rather than overwriting it.
+fn train_vec_i_lr_fix(out: &Path, run_doc: &Path, steps: usize, lr: f64) -> Result<()> {
+    use llm_life::vector::train::{train_attn_decay, train_mlp2_decay, train_mlp_decay};
+
+    let start = Instant::now();
+    let fmt_iou = |v: &[f64]| -> String {
+        v.iter().map(|x| format!("{x:.3}")).collect::<Vec<_>>().join(",")
+    };
+
+    let mut table = String::from(
+        "| model | params | steps to 512/512 | held-out acc (64 cases) | IoU 16\u{b2} gen 1..5 (seed 1) | IoU 16\u{b2} gen 1..5 (seed 2) | IoU 16\u{b2} gen 1..5 (seed 3) |\n\
+         |---|---|---|---|---|---|---|\n",
+    );
+    let mut row = |name: &str, params: usize, steps_to_512: Option<usize>, held_out_acc: f64, scores: &[llm_life::score::GenScore]| {
+        let iou: Vec<f64> = scores.iter().map(|s| s.iou).collect();
+        table.push_str(&format!(
+            "| {name} | {params} | {} | {held_out_acc:.4} | {} | {} | {} |\n",
+            steps_to_512.map(|s| s.to_string()).unwrap_or_else(|| format!(">{steps}")),
+            fmt_iou(&iou[0..5]), fmt_iou(&iou[5..10]), fmt_iou(&iou[10..15]),
+        ));
+    };
+
+    for h in [8usize, 16, 32] {
+        println!("=== (i) lr-fix MLP h={h} ===");
+        let r = train_mlp_decay(h, steps, lr, &out.join(format!("mlp-{h}-lrfix.bin")))?;
+        row(&format!("MLP (9->{h}->2), lr-fix"), r.params, r.steps_to_512, r.held_out_acc, &r.scores);
+    }
+    {
+        println!("=== (i) lr-fix MLP2 h=32 (9->32->32->2) ===");
+        let r = train_mlp2_decay(32, steps, lr, &out.join("mlp2-32-lrfix.bin"))?;
+        row("MLP2 (9->32->32->2), lr-fix", r.params, r.steps_to_512, r.held_out_acc, &r.scores);
+    }
+    for d in [8usize, 16, 32] {
+        println!("=== (i) lr-fix Attn d={d} ===");
+        let r = train_attn_decay(d, steps, lr, &out.join(format!("attn-{d}-lrfix.bin")))?;
+        row(&format!("Attn (9 numbers, d={d}), lr-fix"), r.params, r.steps_to_512, r.held_out_acc, &r.scores);
+    }
+
+    let existing = std::fs::read_to_string(run_doc).unwrap_or_default();
+    let section = format!(
+        "\n## (i) corrected: cosine lr decay {lr}->{:.1e} over {steps} steps\n\n\
+         The first (i) sweep above used a fixed lr=1e-2 for 600 steps — the\n\
+         same setting that collapsed the BERT d=32/64 runs, fixed there by\n\
+         lr 2e-3/800 steps (docs/runs/2026-09-20-bert.md). This section\n\
+         reruns MLP h\u{2208}{{8,16,32}}, a 2-layer MLP body (9->32->32->2), and\n\
+         Attn d\u{2208}{{8,16,32}} with cosine decay from {lr} down to {:.1e} instead,\n\
+         same 512-case split, same 16\u{b2} rollout convention. Kept alongside the\n\
+         first sweep as a documented lr-sensitivity result, not a\n\
+         replacement of it.\n\
+         wall clock: {:.1}s\n\n\
+         {table}\n",
+        lr / 10.0, lr / 10.0, start.elapsed().as_secs_f64(),
+    );
+    std::fs::write(run_doc, existing + &section)?;
+    println!("\nappended corrected section to {}", run_doc.display());
     Ok(())
 }
 
