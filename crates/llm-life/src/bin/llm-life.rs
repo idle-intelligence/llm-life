@@ -34,6 +34,12 @@ use burn::backend::wgpu::WgpuDevice;
 struct Cli {
     #[command(subcommand)]
     command: Command,
+    /// B/S rulestring for the classical truth and, where the subcommand
+    /// builds a prefix, the rules-in-prompt variant (CONCEPT.md §11 backlog:
+    /// rule families). `norules` prefixes are unaffected by design — that's
+    /// the point of the ablation.
+    #[arg(long, global = true, default_value = "B3/S23")]
+    rule: String,
 }
 
 #[derive(Subcommand)]
@@ -1073,7 +1079,7 @@ fn seed_grid(name: &str, size: usize, density: f64) -> Result<Grid> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let rule = Rule::life();
+    let rule = Rule::parse(&cli.rule).with_context(|| format!("invalid --rule '{}'", cli.rule))?;
     let device = WgpuDevice::default();
     match cli.command {
         Command::Picture {
@@ -1204,6 +1210,7 @@ fn main() -> Result<()> {
         } => llm_life::train::run_a::run(RunAArgs {
             gguf,
             tokenizer,
+            rule,
             norules,
             steps,
             batch,

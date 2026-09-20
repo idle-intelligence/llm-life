@@ -33,6 +33,7 @@ type AB = Autodiff<Wgpu>;
 pub struct RunAArgs {
     pub gguf: PathBuf,
     pub tokenizer: PathBuf,
+    pub rule: Rule,
     pub norules: bool,
     pub steps: usize,
     pub batch: usize,
@@ -332,7 +333,7 @@ fn real_grids(size: usize) -> Vec<Grid> {
 }
 
 pub fn run(args: RunAArgs) -> Result<()> {
-    let rule = Rule::life();
+    let rule = args.rule;
     let device = WgpuDevice::default();
     let p = prompt_a(&args.tokenizer, &rule, args.norules)?;
     let tok = Tokenizer::from_json(&std::fs::read(&args.tokenizer)?)?;
@@ -514,17 +515,20 @@ pub fn run(args: RunAArgs) -> Result<()> {
             println!("final eval hit the wall-clock budget before finishing (partial)");
         }
         let mut s = format!(
-            "# Variant A LoRA fine-tune — {}\n\n\
+            "# Variant A LoRA fine-tune — {} ({})\n\n\
              machine: {}\n\
              model: {}\n\
+             rule: {}\n\
              adapter: {}\n\
              LoRA: rank {}, alpha {}, q/k/v/o{}\n\
              steps: {step}{}, batch {}, lr {}, seed {}\n\
              trainable parameters: {n_trainable}\n\
              wall clock: {:.1}s\n\n",
             if args.norules { "a-norules" } else { "a-rules" },
+            rule.to_rulestring(),
             machine(),
             args.gguf.display(),
+            rule.to_rulestring(),
             if args.norules { "a-norules (no rule text in the prefix)" } else { "a-rules (rules in the prefix)" },
             args.lora.rank,
             args.lora.alpha,
