@@ -1016,10 +1016,10 @@ function runLadder() {
     { name: 'whole-board thinking model', s16: null, s32: null, s64: null, native: '—', iou: '—', desc: 'pending: one big model reasons over the whole board as text, needs > 10 GB VRAM' },
   ];
   ladderRows = rows;
-  const pad = (s, n) => String(s).padEnd(n);
-  const lines = [pad('rung', 26) + pad('16² s/gen', 13) + pad('32² s/gen', 13) + pad('64² s/gen', 13) + pad('native (3080)', 16) + pad('IoU vs Life', 13) + 'what it computes'];
+  const pad = (s, n) => (String(s).length >= n ? String(s) + ' ' : String(s).padEnd(n));
+  const lines = [pad('rung', 28) + pad('16² s/gen', 13) + pad('32² s/gen', 13) + pad('64² s/gen', 13) + pad('native (3080)', 16) + pad('IoU vs Life', 13) + 'what it computes'];
   for (const r of rows) {
-    lines.push(pad(r.name, 26) + pad(fmt(r.s16), 13) + pad(fmt(r.s32), 13) + pad(fmt(r.s64), 13) + pad(r.native, 16) + pad(r.iou, 13) + r.desc);
+    lines.push(pad(r.name, 28) + pad(fmt(r.s16), 13) + pad(fmt(r.s32), 13) + pad(fmt(r.s64), 13) + pad(r.native, 16) + pad(r.iou, 13) + r.desc);
   }
   els.ladderPre.textContent = lines.join('\n');
   return rows;
