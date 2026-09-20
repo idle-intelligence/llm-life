@@ -1,0 +1,35 @@
+{
+  "device": "Darwin 25.3.0 arm64",
+  "backend": "wgpu",
+  "rows": [
+    {
+      "rung": "CPU loop",
+      "s_per_gen": {"16": 0.000002, "32": 0.000006, "64": 0.000024}
+    },
+    {
+      "rung": "512-entry lookup",
+      "s_per_gen": {"16": 0.000002, "32": 0.000006, "64": 0.000026}
+    },
+    {
+      "rung": "LLM per pixel (adapter)",
+      "s_per_gen": {"16": 19.019382, "32": null, "64": null}
+    },
+    {
+      "rung": "LLM batched (adapter)",
+      "s_per_gen": {"16": 19.019382, "32": null, "64": null},
+      "note": "identical forward to per-pixel (LADDER.md)"
+    },
+    {
+      "rung": "BERT of Life",
+      "s_per_gen": {"16": 0.001527, "32": 0.005218, "64": 0.007712}
+    },
+    {
+      "rung": "9 numbers -> centre",
+      "s_per_gen": {"16": 0.000501, "32": 0.000594, "64": 0.000712}
+    },
+    {
+      "rung": "stencil (grid -> grid)",
+      "s_per_gen": {"16": 0.001423, "32": 0.001511, "64": 0.002687}
+    }
+  ]
+}
