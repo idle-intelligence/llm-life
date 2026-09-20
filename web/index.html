@@ -251,10 +251,12 @@
         <label><input type="radio" name="mode" value="vec-mlp" /> 9 numbers -&gt; centre</label>
         <label><input type="radio" name="mode" value="vec-stencil" /> stencil (grid -&gt; grid)</label>
     </div>
-    <div class="radios" id="grid-choice">
-        <label><input type="radio" name="gridsize" value="32" /> 32&times;32</label>
-        <label><input type="radio" name="gridsize" value="64" checked /> 64&times;64</label>
-        <label><input type="radio" name="gridsize" value="128" /> 128&times;128</label>
+    <div class="controls" id="grid-choice" style="margin-bottom:12px;">
+        <button type="button" class="gridsize-btn" data-size="16">16&times;16</button>
+        <button type="button" class="gridsize-btn" data-size="32">32&times;32</button>
+        <button type="button" class="gridsize-btn primary" data-size="64">64&times;64</button>
+        <button type="button" class="gridsize-btn" data-size="128">128&times;128</button>
+        <button type="button" class="gridsize-btn" data-size="256">256&times;256</button>
     </div>
     <div class="radios" id="narration-choice" style="display:none">
         <label><input type="radio" name="narration" value="perpixel" checked /> per-pixel narrated</label>
@@ -374,16 +376,22 @@ run the ladder to fill this in&hellip;</pre>
 <script type="module">
 import init, { LifeApp } from './pkg/life.js';
 
-// Variant B packs the whole grid into one forward, so it runs at 64x64;
-// variant A pays ~28 tokens *per cell* and runs at 16x16 (256 cells, 4
-// chunks). The grid is resized when the mode changes, and the classical and
-// true-Life panels follow it.
+// One grid size, shared by every mode's classical and model panels alike
+// (16/32/64/128/256, chosen in the INPUT section). The per-cell tiny models
+// (MLP, BERT) and the stencil grid->grid model are local and cheap at any of
+// these sizes; the LLM rungs (variant B, variant A) are gated separately —
+// see `setGrid` below — because a real forward pass is the cost, not a
+// lookup table.
 let W = 64, H = 64;
-// Classical and variant B share one grid size, chosen in the INPUT section
-// (32/64/128); variant A stays fixed at 16x16 (its per-cell cost makes
-// larger grids impractical).
-let llmGridSize = 64;
-const GRID_FOR_MODE = () => ({ classical: llmGridSize, llm: llmGridSize, 'llm-a': 16, bert: 16, 'vec-mlp': 16, 'vec-stencil': 16 });
+let gridSize = 64;
+// Set when an LLM-mode grid button above 32 is clicked once (estimate shown,
+// not yet applied); a second click on the same size confirms it. Cleared on
+// any mode switch or on choosing a different size.
+let armedGridSize = null;
+// Last measured variant-B (whole-grid) generation, used to project the time
+// estimate for a size not yet run. Variant A's per-cell estimate instead
+// uses `lastMsPerCell`, already tracked for the ladder.
+let lastLlmBSec = null, lastLlmBSize = null;
 const GENS_PER_SEC = 4;   // deliberately slow: you are meant to watch it
 
 const els = {
@@ -821,13 +829,13 @@ const LLM_MODEL = {
 };
 
 // BERT of Life (CONCEPT.md §11 backlog item): the smallest transformer
-// encoder that is exact on all 512 cases (`docs/runs/2026-09-20-bert.md`).
+// encoder that is exact on all 512 cases.
 // Config must match the checkpoint's training config — `BertEngine`'s
 // `loadCheckpoint` rebuilds the module from these dims before loading the
 // weight bytes. Served from web/, gitignored, like the LoRA files above.
 const BERT_MODEL = {
   checkpointUrl: './bert-d16-L1.bin',
-  // The smallest size in the sweep (docs/runs/2026-09-20-bert.md) — 3490
+  // The smallest size in the sweep — 3490
   // parameters, exact on all 512 cases, IoU 1.000 on the 16x16 rollout. The
   // bigger sizes (d=32/64) are also exact but not smaller, so this is the
   // one shipped to the tab.
@@ -846,8 +854,8 @@ const VEC_MLP_MODEL = {
 
 // (ii) "grid -> grid, one channel" (CONCEPT.md §12/§14): jacobi2000's
 // stencil-masked attention with one channel — smallest exact size from the
-// sweep (docs/runs/2026-09-20-vector.md): d=16 L=1 H=1, IoU 1.000 at both
-// 16x16 and 32x32 with the same weights.
+// sweep: d=16 L=1 H=1, IoU 1.000 at both 16x16 and 32x32 with the same
+// weights.
 const VEC_STENCIL_MODEL = {
   checkpointUrl: './stencil-d16-L1.bin',
   dModel: 16,
@@ -871,11 +879,56 @@ for (const r of document.querySelectorAll('input[name=mode]')) {
   });
 }
 
-for (const r of document.querySelectorAll('input[name=gridsize]')) {
-  r.addEventListener('change', () => {
-    if (!r.checked) return;
-    window.__app.setGrid(Number(r.value));
-  });
+function isLlmMode(m) {
+  return m === 'llm' || m === 'llm-a';
+}
+
+// vec-stencil allocates a dense n*n attention mask (crates/llm-life/src/vector/model.rs);
+// 128^2 is ~1 GB and 256^2 is ~17 GB, so it OOMs the tab. Capped at 64 until
+// that's fixed engine-side.
+function isMemCappedMode(m) {
+  return m === 'vec-stencil';
+}
+
+function formatDuration(seconds) {
+  if (seconds == null || !isFinite(seconds)) return 'an unknown time';
+  if (seconds < 60) return `${seconds.toFixed(0)} s`;
+  return `${(seconds / 60).toFixed(1)} min`;
+}
+
+// Rough, this-machine estimate for a size the LLM rungs haven't run at yet:
+// variant A (per-cell) scales off its own ms/cell; variant B (whole grid)
+// scales off its own last measured generation. Neither is exact — it exists
+// to gate the click, not to promise a number.
+function llmSizeEstimateSeconds(n) {
+  const cells = n * n;
+  if (mode === 'llm-a' && lastMsPerCell != null) return (lastMsPerCell / 1000) * cells;
+  if (mode === 'llm' && lastLlmBSec != null && lastLlmBSize) return lastLlmBSec * cells / (lastLlmBSize * lastLlmBSize);
+  return cells * 0.15; // no measurement yet: rough fallback
+}
+
+function updateGridButtons() {
+  const llm = isLlmMode(mode);
+  const memCapped = isMemCappedMode(mode);
+  for (const btn of document.querySelectorAll('.gridsize-btn')) {
+    const n = Number(btn.dataset.size);
+    btn.classList.toggle('primary', n === gridSize);
+    const disabled = (llm || memCapped) && n > 64;
+    btn.disabled = disabled;
+    if (memCapped && n > 64) {
+      btn.title = 'stencil above 64 needs the engine fix';
+    } else if (llm && disabled) {
+      btn.title = `disabled for LLM mode — would be ≈ ${formatDuration(llmSizeEstimateSeconds(n))} per generation`;
+    } else if (llm && n > 32) {
+      btn.title = armedGridSize === n ? 'click again to confirm' : 'click to see a time estimate first';
+    } else {
+      btn.title = '';
+    }
+  }
+}
+
+for (const btn of document.querySelectorAll('.gridsize-btn')) {
+  btn.addEventListener('click', () => window.__app.setGrid(Number(btn.dataset.size)));
 }
 
 for (const r of document.querySelectorAll('input[name=narration]')) {
@@ -895,6 +948,7 @@ app = new LifeApp(W, H);
 truth = new LifeApp(W, H);
 app.place_glider(2, 2);
 resync();
+updateGridButtons();
 setStatus('ready', 'Ready');
 log(`ready — ${W}×${H}, rule ${app.rulestring()}, ${GENS_PER_SEC} generations/s`);
 
@@ -1134,14 +1188,15 @@ async function llmStepOnce() {
   app.set_cells(Uint8Array.from(r.binarized));
   truth.step(1);
   generation++;
+  if (mode === 'llm') { lastLlmBSec = lastSec; lastLlmBSize = W; }
   // A grid-size change requested mid-generation (`window.__app.setGrid`)
   // was deferred; apply it now that this generation's result has already
   // landed on the old-sized `app`/`truth`.
-  if (pendingGridSize !== null && !isPerCellNarrated(mode)) {
+  if (pendingGridSize !== null) {
     const n = pendingGridSize;
     pendingGridSize = null;
     setGridSize(n);
-    if (mode === 'llm') logGridInfo(n);
+    if (isLlmMode(mode)) logGridInfo(n);
   }
   render();
   setStatus('ready', 'Ready');
@@ -1151,8 +1206,8 @@ async function llmStepOnce() {
 // ---------------------------------------------------------------------------
 // LADDER — CPU loop and 512-entry lookup measured live in this page (JS,
 // no wasm); LLM rows projected from the last llm-a generation's ms/cell;
-// native (3080) and IoU are cited from docs/runs/2026-09-20-a-rollout.md
-// (a-norules: IoU 1.000 at every generation, every seed, 16²/32²/64²).
+// native and IoU are cited from a desktop GPU run (a-norules: IoU 1.000 at
+// every generation, every seed, 16²/32²/64²).
 // ---------------------------------------------------------------------------
 function jsLifeStepLoop(cells, w, h) {
   const out = new Uint8Array(w * h);
@@ -1254,7 +1309,16 @@ window.__app = {
     mode = m;
     lastSec = null;
     lastP = null;
-    setGridSize(GRID_FOR_MODE()[m] ?? 64);
+    armedGridSize = null;
+    if (isLlmMode(m) && gridSize > 64) {
+      log(`grid size clamped to 32×32 for ${m} mode (128/256 are not offered for the LLM rungs)`);
+      gridSize = 32;
+    } else if (isMemCappedMode(m) && gridSize > 64) {
+      log(`grid size clamped to 64×64 for ${m} mode (above 64 needs the engine fix)`);
+      gridSize = 64;
+    }
+    updateGridButtons();
+    setGridSize(gridSize);
     resync();
     const isA = m === 'llm-a';
     const isBert = m === 'bert';
@@ -1266,26 +1330,48 @@ window.__app = {
     els.adapterBtn.disabled = !isA || !llmReady;
     return mode;
   },
-  // Grid size for classical and variant B (32/64/128); variant A is
-  // unaffected (fixed 16x16). No-op in variant A mode.
+  // Grid size, shared by every mode's classical and model panels. The
+  // per-cell tiny models accept any of 16/32/64/128/256 immediately; the
+  // stencil model disables 128/256 outright (dense n*n attention mask OOMs
+  // above 64 until the engine is fixed); the LLM rungs (llm, llm-a) also
+  // disable 128/256 outright and require a size above 32 to be requested
+  // twice in a row (the first call only logs the time estimate) before it
+  // is applied.
   setGrid: (n) => {
-    if (![32, 64, 128].includes(n)) throw new Error('grid size must be 32, 64 or 128');
-    llmGridSize = n;
-    for (const r of document.querySelectorAll('input[name=gridsize]')) r.checked = Number(r.value) === n;
-    if (!isPerCellNarrated(mode)) {
-      // Mid-generation, resizing `app`/`truth` now would apply the in-flight
-      // result (sized for the old grid) to a mismatched grid. Defer instead —
-      // `llmStepOnce` applies it once that generation lands.
-      if (generating) {
-        pendingGridSize = n;
-        log(`grid change queued until generation ${generation + 1} finishes`);
-      } else {
-        setGridSize(n);
-        resync();
-        if (mode === 'llm') logGridInfo(n);
-      }
+    if (![16, 32, 64, 128, 256].includes(n)) throw new Error('grid size must be one of 16, 32, 64, 128, 256');
+    if (isMemCappedMode(mode) && n > 64) {
+      log(`${n}×${n} is disabled for stencil mode — needs the engine fix for its dense attention mask`);
+      return gridSize;
     }
-    return llmGridSize;
+    if (isLlmMode(mode) && n > 64) {
+      log(`${n}×${n} is disabled for LLM mode — ≈ ${formatDuration(llmSizeEstimateSeconds(n))} per generation on this machine`);
+      return gridSize;
+    }
+    if (isLlmMode(mode) && n > 32) {
+      if (armedGridSize !== n) {
+        armedGridSize = n;
+        log(`${n}×${n} ≈ ${formatDuration(llmSizeEstimateSeconds(n))} per generation on this machine — call setGrid(${n}) again to confirm`);
+        updateGridButtons();
+        return gridSize;
+      }
+      armedGridSize = null;
+    } else {
+      armedGridSize = null;
+    }
+    gridSize = n;
+    updateGridButtons();
+    // Mid-generation, resizing `app`/`truth` now would apply the in-flight
+    // result (sized for the old grid) to a mismatched grid. Defer instead —
+    // `llmStepOnce` applies it once that generation lands.
+    if (generating) {
+      pendingGridSize = n;
+      log(`grid change queued until generation ${generation + 1} finishes`);
+    } else {
+      setGridSize(n);
+      resync();
+      if (isLlmMode(mode)) logGridInfo(n);
+    }
+    return gridSize;
   },
   llmReady: () => llmReady,
   loadLlm,
