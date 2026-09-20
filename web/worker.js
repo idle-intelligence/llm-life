@@ -84,7 +84,15 @@ async function handle(id, type, payload, reply) {
         const name = payload.adapterUrl.split('/').pop().replace(/\.bin$/, '');
         adapter = { name, bytes: bytes.length };
       }
-      reply(true, { packedTokens: engine.packedTokens(), adapter });
+      reply(true, { packedTokens: engine.packedTokens(), cellTokens: engine.cellTokens(), adapter });
+    } else if (type === 'loadAdapter') {
+      // Swap the runtime LoRA adapter without a full model reload — replaces
+      // whatever adapter is currently applied (LifeEngine::loadAdapter does
+      // not stack).
+      const bytes = new Uint8Array(await (await fetch(payload.adapterUrl)).arrayBuffer());
+      engine.loadAdapter(bytes);
+      const name = payload.adapterUrl.split('/').pop().replace(/\.bin$/, '');
+      reply(true, { name, bytes: bytes.length });
     } else if (type === 'step') {
       const t0 = performance.now();
       // The engine packs for whatever grid it was last told about; variant B
@@ -105,8 +113,18 @@ async function handle(id, type, payload, reply) {
         p = new Float32Array(cells.length);
         let at = 0;
         for (let i = 0; i < n; i++) {
-          self.postMessage({ type: 'progress', stage: `chunk ${i + 1}/${n}` });
+          const chunkT0 = performance.now();
           const q = await engine.stepChunkA(cells, i);
+          const ms = performance.now() - chunkT0;
+          // One message per chunk carrying everything the narration strip
+          // needs: the per-cell p(alive) this chunk actually computed and
+          // the chunk's own forward time. The engine only exposes chunk-level
+          // calls (one forward per 64-cell chunk), so "per cell" narration
+          // and timing are derived from this: chunk time / chunk size.
+          self.postMessage({
+            type: 'chunk', chunkIndex: i, chunkCount: n, firstCell: at,
+            pAlive: Array.from(q), ms,
+          });
           p.set(q, at);
           at += q.length;
         }

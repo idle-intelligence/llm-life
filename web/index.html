@@ -253,12 +253,17 @@
         <label><input type="radio" name="gridsize" value="64" checked /> 64&times;64</label>
         <label><input type="radio" name="gridsize" value="128" /> 128&times;128</label>
     </div>
+    <div class="radios" id="narration-choice" style="display:none">
+        <label><input type="radio" name="narration" value="perpixel" checked /> per-pixel narrated</label>
+        <label><input type="radio" name="narration" value="batched" /> batched</label>
+    </div>
     <div class="controls">
         <button id="play" class="primary">Play</button>
         <button id="step">Step</button>
         <button id="clear">Clear</button>
         <button id="random">Random</button>
         <button id="glider">Glider</button>
+        <button id="adapter" disabled>adapter: a-norules</button>
     </div>
     <p class="info" id="mode-note">Click a cell in the LLM of Life grid to toggle it.</p>
     <label class="overlay"><input type="checkbox" id="overlay-palive" /> show p(alive) overlay on the LLM of Life panel (LLM mode only)</label>
@@ -270,6 +275,11 @@
         <div class="panel"><canvas id="c-model" width="64" height="64"></canvas><div class="caption">LLM of Life</div></div>
         <div class="panel"><canvas id="c-true" width="64" height="64"></canvas><div class="caption">Game of Life</div></div>
         <div class="panel"><canvas id="c-diff" width="64" height="64"></canvas><div class="caption">diff</div></div>
+    </div>
+    <div id="narrationWrap" style="display:none; margin-top:16px;">
+        <div class="metric-label" style="margin-bottom:6px;">narration (variant A)</div>
+        <div id="narrationLog" style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--muted); border:1px solid var(--border); padding:10px; white-space:pre; line-height:1.6; height:9.6em; overflow:hidden;"></div>
+        <div id="narrationCounter" class="info" style="margin-top:6px;"></div>
     </div>
 </section>
 
@@ -320,8 +330,30 @@
             <div class="metric-value" id="p-gen">0</div>
             <div class="metric-label">generation</div>
         </div>
+        <div class="metric">
+            <div class="metric-value" id="p-mspercell">—</div>
+            <div class="metric-label">ms / cell</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="p-cellspersec">—</div>
+            <div class="metric-label">cells / s</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="p-proj64">—</div>
+            <div class="metric-label">proj. s/gen @ 64&sup2;</div>
+        </div>
     </div>
     <p class="info">All timings provisional: shared GPU. LLM mode binarizes p(alive) with a label-free threshold (default: Otsu 1979) before painting the LLM of Life panel and feeding it forward as the next generation's input — z-score (mean + k·std) is selectable via <code>window.__app.setThreshold('zscore', k)</code>, no UI setting. Variant B is one forward over the whole 64&times;64 grid; variant A is 16&times;16, one forward per chunk of 64 cells against a few-shot prefix resident in the KV cache.</p>
+</section>
+
+<section>
+    <h2>LADDER <span class="sub">— same computation, six ways to pay for it</span></h2>
+    <p class="info">Same board, one generation, seconds. CPU loop and lookup are measured live in this page (JS); the LLM rows are measured here at 16&times;16 (the grid variant A runs) and projected to 32&sup2;/64&sup2; from ms/cell; native is the 3080 running the same adapter through the f32 forward path (docs/runs/2026-09-20-a-rollout.md), a separate machine for scale, not a browser number.</p>
+    <div class="controls" style="margin:12px 0;">
+        <button id="ladder-run">measure CPU loop &amp; lookup (this page)</button>
+    </div>
+    <pre id="ladder" style="font-family:'IBM Plex Mono',monospace; font-size:12px; border:1px solid var(--border); padding:12px; overflow-x:auto; white-space:pre;">rung                     16&sup2; s/gen   32&sup2; s/gen   64&sup2; s/gen   native (3080)   IoU vs Life   what it computes
+run the ladder to fill this in&hellip;</pre>
 </section>
 
 <footer>
@@ -365,6 +397,16 @@ const els = {
   thresh: document.getElementById('p-thresh'),
   overlay: document.getElementById('overlay-palive'),
   note: document.getElementById('mode-note'),
+  narrationChoice: document.getElementById('narration-choice'),
+  narrationWrap: document.getElementById('narrationWrap'),
+  narrationLog: document.getElementById('narrationLog'),
+  narrationCounter: document.getElementById('narrationCounter'),
+  adapterBtn: document.getElementById('adapter'),
+  mspercell: document.getElementById('p-mspercell'),
+  cellspersec: document.getElementById('p-cellspersec'),
+  proj64: document.getElementById('p-proj64'),
+  ladderBtn: document.getElementById('ladder-run'),
+  ladderPre: document.getElementById('ladder'),
 };
 const canvases = {
   model: document.getElementById('c-model'),
@@ -420,6 +462,83 @@ let generating = false, pendingGridSize = null, pendingReset = null;
 // default; z-score is reachable only through `window.__app.setThreshold`,
 // never a UI control (CLAUDE.md "Demo": no settings panels).
 let thresholdName = 'otsu', thresholdK = 2.0, lastThresholdValue = null;
+
+// Variant A narration (per-pixel / batched). Both styles run the identical
+// forwards (the engine only exposes chunk-level calls — one forward per
+// 64-cell chunk); they differ only in how the same chunk results are
+// presented in the narration strip. `narrationStyle` is set by the radio (or
+// window.__app.setNarrationStyle) and read when a 'chunk' message arrives
+// mid-generation.
+let narrationStyle = 'perpixel';
+let adapterName = 'a-norules';
+let cellTokensCount = null;
+let narrationLines = [];
+let cellsNarrated = 0, cellsThisGen = 0, chunkTimingsMs = [];
+let gridCellsForStep = null;
+let lastMsPerCell = null, lastCellsPerSec = null, lastProj64 = null;
+
+function narrationPush(line) {
+  narrationLines.push(line);
+  if (narrationLines.length > 6) narrationLines.shift();
+  els.narrationLog.textContent = narrationLines.join('\n');
+}
+
+// Moore neighbourhood, toroidal wraparound, NW/N/NE/W/E/SW/S/SE — the same
+// order as life::Grid::neighbor_indices (crates/life/src/grid.rs), which is
+// the order variant A's per-cell prompt lists them in.
+function neighborBitsAt(cellsArr, w, h, idx) {
+  const x = idx % w, y = Math.floor(idx / w);
+  const xm = (x + w - 1) % w, xp = (x + 1) % w;
+  const ym = (y + h - 1) % h, yp = (y + 1) % h;
+  const at = (xx, yy) => (cellsArr[yy * w + xx] !== 0 ? 1 : 0);
+  return [at(xm, ym), at(x, ym), at(xp, ym), at(xm, y), at(xp, y), at(xm, yp), at(x, yp), at(xp, yp)];
+}
+
+function resetNarrationForGen() {
+  narrationLines = [];
+  els.narrationLog.textContent = '';
+  cellsNarrated = 0;
+  cellsThisGen = W * H;
+  chunkTimingsMs = [];
+}
+
+function handleChunkNarration({ firstCell, pAlive, ms }) {
+  const chunkSize = pAlive.length;
+  chunkTimingsMs.push({ ms, chunkSize });
+  if (narrationStyle === 'batched') {
+    narrationPush(`prefix shared · batch ${chunkSize} cells × ${cellTokensCount} tokens · one forward ${ms.toFixed(0)} ms · ${chunkSize} answers read back`);
+    cellsNarrated += chunkSize;
+  } else {
+    const msPerCell = ms / chunkSize;
+    for (let k = 0; k < chunkSize; k++) {
+      const cellIdx = firstCell + k;
+      const r = Math.floor(cellIdx / W), c = cellIdx % W;
+      const nb = neighborBitsAt(gridCellsForStep, W, H, cellIdx);
+      const self = gridCellsForStep[cellIdx] !== 0 ? 1 : 0;
+      const p = pAlive[k];
+      const answer = p >= 0.5 ? 1 : 0;
+      const conf = answer === 1 ? p : 1 - p;
+      const row0 = `${nb[0]}${nb[1]}${nb[2]}`, row1 = `${nb[3]}${self}${nb[4]}`, row2 = `${nb[5]}${nb[6]}${nb[7]}`;
+      narrationPush(`cell (${r},${c}) · neighbourhood ${row0}/${row1}/${row2} · ${cellTokensCount}-token prompt · answer ${answer} (p ${conf.toFixed(2)}) · ${msPerCell.toFixed(0)} ms`);
+      cellsNarrated++;
+    }
+  }
+  const genLabel = generation + 1;
+  narrationPush(`cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`);
+  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`;
+}
+
+function finishNarrationPerf() {
+  const totalMs = chunkTimingsMs.reduce((s, c) => s + c.ms, 0);
+  const totalCells = chunkTimingsMs.reduce((s, c) => s + c.chunkSize, 0);
+  if (totalCells === 0) return;
+  lastMsPerCell = totalMs / totalCells;
+  lastCellsPerSec = 1000 / lastMsPerCell;
+  lastProj64 = lastMsPerCell * 64 * 64 / 1000;
+  els.mspercell.textContent = lastMsPerCell.toFixed(1);
+  els.cellspersec.textContent = lastCellsPerSec.toFixed(1);
+  els.proj64.textContent = lastProj64.toFixed(1);
+}
 
 // Paint a [0,1] float per cell: 0 = white, 1 = black. Binary grids are just
 // the two endpoints; LLM mode paints p(alive) as gray.
@@ -626,6 +745,18 @@ for (const r of document.querySelectorAll('input[name=gridsize]')) {
   });
 }
 
+for (const r of document.querySelectorAll('input[name=narration]')) {
+  r.addEventListener('change', () => {
+    if (!r.checked) return;
+    window.__app.setNarrationStyle(r.value);
+  });
+}
+
+els.adapterBtn.onclick = async () => {
+  const next = adapterName === 'a-norules' ? 'a-rules' : 'a-norules';
+  await setAdapter(next);
+};
+
 await init();
 app = new LifeApp(W, H);
 truth = new LifeApp(W, H);
@@ -669,6 +800,10 @@ function ensureWorker() {
   worker = new Worker('./worker.js', { type: 'module' });
   worker.onmessage = (e) => {
     const { id, ok, result, type, stage, fraction } = e.data;
+    if (type === 'chunk') {
+      handleChunkNarration(e.data);
+      return;
+    }
     if (type === 'progress') {
       if (fraction !== undefined) {
         const line = `${stage}: ${(fraction * 100).toFixed(0)}%`;
@@ -701,15 +836,31 @@ async function loadLlm(spec) {
         const name = spec.ggufUrl.split('/').pop().replace(/\.gguf$/, '');
         setStatus('ready', 'Ready');
         log(`model loaded: ${name}`);
+        cellTokensCount = info.cellTokens ?? cellTokensCount;
         if (info.adapter) {
           const label = info.adapter.name.replace(/^lora-/, '').replace(/-\d+$/, '');
           log(`adapter loaded: ${label} (${(info.adapter.bytes / 1e6).toFixed(1)} MB)`);
+          adapterName = label;
+          els.adapterBtn.textContent = `adapter: ${adapterName}`;
         }
+        els.adapterBtn.disabled = mode !== 'llm-a';
         return info;
       })
       .catch((e) => { loading = null; setStatus('error', 'Load failed'); log('load failed: ' + e.message); throw e; });
   }
   return loading;
+}
+
+const ADAPTER_URL = { 'a-norules': './lora-a-norules-300.bin', 'a-rules': './lora-a-rules-300.bin' };
+
+async function setAdapter(name) {
+  if (!llmReady) { adapterName = name; return; }
+  ensureWorker();
+  const info = await ask('loadAdapter', { adapterUrl: ADAPTER_URL[name] });
+  adapterName = name;
+  els.adapterBtn.textContent = `adapter: ${adapterName}`;
+  log(`adapter loaded: ${adapterName} (${(info.bytes / 1e6).toFixed(1)} MB)`);
+  return adapterName;
 }
 
 async function llmStepOnce() {
@@ -718,6 +869,10 @@ async function llmStepOnce() {
   genPhase = 'running';
   generating = true;
   setStatus('generating', 'Generating…');
+  if (mode === 'llm-a') {
+    gridCellsForStep = Array.from(app.cells());
+    resetNarrationForGen();
+  }
   log(`generation ${genLabel}: ${genPhase}… 0.0 s`);
   const ticker = setInterval(() => {
     const elapsed = (performance.now() - t0) / 1000;
@@ -762,6 +917,7 @@ async function llmStepOnce() {
   lastThresholdValue = r.thresholdValue;
   lastChunks = r.chunks;
   lastTokens = r.tokens;
+  if (mode === 'llm-a') finishNarrationPerf();
   // The model's *binarized* output (label-free threshold, not 0.5) becomes
   // the next state it is fed — free-running, not teacher-forced: there is no
   // teacher-forced mode in the tab. Truth advances independently from its own
@@ -784,7 +940,93 @@ async function llmStepOnce() {
   logReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (game of life ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)} · IoU ${lastIou.toFixed(2)} · wrong ${lastWrong}`);
 }
 
-els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell. Click a cell in the LLM of Life grid to toggle it.';
+// ---------------------------------------------------------------------------
+// LADDER — CPU loop and 512-entry lookup measured live in this page (JS,
+// no wasm); LLM rows projected from the last llm-a generation's ms/cell;
+// native (3080) and IoU are cited from docs/runs/2026-09-20-a-rollout.md
+// (a-norules: IoU 1.000 at every generation, every seed, 16²/32²/64²).
+// ---------------------------------------------------------------------------
+function jsLifeStepLoop(cells, w, h) {
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          n += cells[((y + dy + h) % h) * w + ((x + dx + w) % w)];
+        }
+      }
+      const c = cells[y * w + x];
+      out[y * w + x] = (c ? (n === 2 || n === 3) : n === 3) ? 1 : 0;
+    }
+  }
+  return out;
+}
+
+let lookupTable = null;
+function buildLookupTable() {
+  const t = new Uint8Array(512);
+  for (let k = 0; k < 512; k++) {
+    let n = 0;
+    for (let b = 0; b < 8; b++) if ((k >> b) & 1) n++;
+    const self = (k >> 8) & 1;
+    t[k] = (self ? (n === 2 || n === 3) : n === 3) ? 1 : 0;
+  }
+  return t;
+}
+function jsLifeStepLookup(cells, w, h, table) {
+  const out = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const x = i % w, y = Math.floor(i / w);
+    const xm = (x + w - 1) % w, xp = (x + 1) % w, ym = (y + h - 1) % h, yp = (y + 1) % h;
+    const k = cells[ym * w + xm] | (cells[ym * w + x] << 1) | (cells[ym * w + xp] << 2) |
+      (cells[y * w + xm] << 3) | (cells[y * w + xp] << 4) |
+      (cells[yp * w + xm] << 5) | (cells[yp * w + x] << 6) | (cells[yp * w + xp] << 7) |
+      (cells[i] << 8);
+    out[i] = table[k];
+  }
+  return out;
+}
+function timeIt(fn, reps) {
+  const t0 = performance.now();
+  for (let i = 0; i < reps; i++) fn();
+  return (performance.now() - t0) / reps / 1000; // seconds/call
+}
+
+let ladderRows = [];
+function runLadder() {
+  if (!lookupTable) lookupTable = buildLookupTable();
+  const sizes = [16, 32, 64];
+  const loopS = {}, lookupS = {};
+  for (const n of sizes) {
+    const cells = Uint8Array.from({ length: n * n }, () => (Math.random() < 0.3 ? 1 : 0));
+    const reps = n <= 32 ? 2000 : 400;
+    loopS[n] = timeIt(() => jsLifeStepLoop(cells, n, n), reps);
+    lookupS[n] = timeIt(() => jsLifeStepLookup(cells, n, n, lookupTable), reps);
+  }
+  const llmSec = (n) => (lastMsPerCell == null ? null : lastMsPerCell * n * n / 1000);
+  const fmt = (v) => (v == null ? '—' : v < 1e-3 ? v.toExponential(2) : v.toFixed(4));
+  const rows = [
+    { name: 'CPU loop (JS, in the page)', s16: loopS[16], s32: loopS[32], s64: loopS[64], native: '—', iou: '1.000', desc: 'plain nested loop over 8 neighbours, one generation, in the tab' },
+    { name: '512-entry lookup (JS)', s16: lookupS[16], s32: lookupS[32], s64: lookupS[64], native: '—', iou: '1.000', desc: '9-bit index (8 neighbours + self) into a precomputed 512-entry table' },
+    { name: 'LLM per pixel (adapter)', s16: llmSec(16), s32: llmSec(32), s64: llmSec(64), native: '2.5 / 11 / 41', iou: '1.000', desc: 'one forward per cell, packed in chunks of 64, a-norules adapter' },
+    { name: 'LLM batched (adapter)', s16: llmSec(16), s32: llmSec(32), s64: llmSec(64), native: '2.5 / 11 / 41', iou: '1.000', desc: 'identical forwards to per-pixel — narration names the batch mechanism' },
+    { name: 'BERT of Life', s16: null, s32: null, s64: null, native: '—', iou: '—', desc: 'pending: small encoder classifying 0/1 per cell, batched, no tokens' },
+    { name: 'whole-board thinking model', s16: null, s32: null, s64: null, native: '—', iou: '—', desc: 'pending: one big model reasons over the whole board as text, needs > 10 GB VRAM' },
+  ];
+  ladderRows = rows;
+  const pad = (s, n) => String(s).padEnd(n);
+  const lines = [pad('rung', 26) + pad('16² s/gen', 13) + pad('32² s/gen', 13) + pad('64² s/gen', 13) + pad('native (3080)', 16) + pad('IoU vs Life', 13) + 'what it computes'];
+  for (const r of rows) {
+    lines.push(pad(r.name, 26) + pad(fmt(r.s16), 13) + pad(fmt(r.s32), 13) + pad(fmt(r.s64), 13) + pad(r.native, 16) + pad(r.iou, 13) + r.desc);
+  }
+  els.ladderPre.textContent = lines.join('\n');
+  return rows;
+}
+els.ladderBtn.onclick = () => runLadder();
+
+els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell — per-pixel narrated (default) or batched, same forwards either way. Click a cell in the LLM of Life grid to toggle it.';
 
 window.__app = {
   ready: true,
@@ -798,6 +1040,10 @@ window.__app = {
     lastP = null;
     setGridSize(GRID_FOR_MODE()[m] ?? 64);
     resync();
+    const isA = m === 'llm-a';
+    els.narrationChoice.style.display = isA ? '' : 'none';
+    els.narrationWrap.style.display = isA ? '' : 'none';
+    els.adapterBtn.disabled = !isA || !llmReady;
     return mode;
   },
   // Grid size for classical and variant B (32/64/128); variant A is
@@ -855,6 +1101,23 @@ window.__app = {
   secondsPerGeneration: () => lastSec,
   play: (on) => { setPlaying(on ?? !playing); return playing; },
   isPlaying: () => playing,
+  // Narration (variant A). Both styles run identical forwards; see
+  // `handleChunkNarration`.
+  narrationStyle: () => narrationStyle,
+  setNarrationStyle: (s) => {
+    if (s !== 'perpixel' && s !== 'batched') throw new Error("narration style must be 'perpixel' or 'batched'");
+    narrationStyle = s;
+    for (const r of document.querySelectorAll('input[name=narration]')) r.checked = r.value === s;
+    return narrationStyle;
+  },
+  narrationLines: () => narrationLines.slice(),
+  msPerCell: () => lastMsPerCell,
+  cellsPerSecond: () => lastCellsPerSec,
+  projectedSecondsPerGen64: () => lastProj64,
+  adapter: () => adapterName,
+  setAdapter,
+  runLadder: () => runLadder(),
+  ladderRows: () => ladderRows,
 };
 </script>
 </body>
