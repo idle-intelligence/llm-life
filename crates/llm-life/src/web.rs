@@ -583,14 +583,14 @@ impl VecAttnEngine {
     }
 }
 
-/// The MLP baseline for (i) (`bert::model::MlpOfLife`, 9 raw bits -> hidden
-/// -> 2 classes — CONCEPT.md §14's narration line names this rung "MLP N",
-/// so the tab runs the MLP here rather than `VecAttnEngine`, which is also
-/// exposed above but is not this rung's headline demo).
+/// The MLP baseline for (i): `vector::model::Mlp2OfLife`, the 2-layer body
+/// (9 raw bits -> hidden -> hidden -> 2 classes) that reached exact on all
+/// 512 cases with the lr-fix rerun (docs/runs/2026-09-20-vector.md) — the
+/// 1-layer `bert::model::MlpOfLife` this engine used to wrap did not.
 #[wasm_bindgen]
 pub struct VecMlpEngine {
     device: WgpuDevice,
-    model: Option<crate::bert::model::MlpOfLife<Wgpu>>,
+    model: Option<crate::vector::model::Mlp2OfLife<Wgpu>>,
     hidden: usize,
     width: usize,
     height: usize,
@@ -621,7 +621,7 @@ impl VecMlpEngine {
         use burn::module::Module;
         use burn::record::{BinBytesRecorder, FullPrecisionSettings, Recorder};
 
-        let cfg = crate::bert::model::MlpConfig { hidden };
+        let cfg = crate::vector::model::Mlp2Config::new(hidden);
         let model = cfg.init::<Wgpu>(&self.device);
         let recorder = BinBytesRecorder::<FullPrecisionSettings>::new();
         let record = recorder

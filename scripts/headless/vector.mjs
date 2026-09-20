@@ -18,7 +18,7 @@ function arg(name, dflt) {
   return i === -1 ? dflt : process.argv[i + 1];
 }
 const URL_ = arg('url', 'http://127.0.0.1:8010/');
-const MLP_CHECKPOINT = arg('mlp-checkpoint', 'http://127.0.0.1:8010/mlp-16.bin');
+const MLP_CHECKPOINT = arg('mlp-checkpoint', 'http://127.0.0.1:8010/mlp2-32-lrfix.bin');
 const STENCIL_CHECKPOINT = arg('stencil-checkpoint', 'http://127.0.0.1:8010/stencil-d16-L1.bin');
 const SCREENSHOT = arg('screenshot', '/tmp');
 const TIMEOUT = parseInt(arg('timeout', String(5 * 60 * 1000)), 10);
@@ -45,11 +45,11 @@ await page.waitForFunction(() => window.__app && window.__app.ready, null, { tim
 console.log('loading vector MLP checkpoint…');
 let t0 = Date.now();
 const mlpInfo = await page.evaluate(
-  (checkpointUrl) => window.__app.loadVecMlp({ checkpointUrl, hidden: 16 }),
+  (checkpointUrl) => window.__app.loadVecMlp({ checkpointUrl, hidden: 32 }),
   MLP_CHECKPOINT,
 );
 console.log(`loaded in ${((Date.now() - t0) / 1000).toFixed(1)}s — hidden=${mlpInfo.hidden}`);
-if (mlpInfo.hidden !== 16) throw new Error('unexpected vector MLP config loaded');
+if (mlpInfo.hidden !== 32) throw new Error('unexpected vector MLP config loaded');
 if (!(await page.evaluate(() => window.__app.vecMlpReady()))) throw new Error('vecMlpReady() false after load');
 
 await page.evaluate(() => {
@@ -72,10 +72,11 @@ console.log(`(i) MLP generation: IoU=${genMlp.iou.toFixed(4)} ${genMlp.seconds.t
 console.log('narration lines (last 6):');
 for (const l of genMlp.narrationLines) console.log('  ' + l);
 if (genMlp.narrationLines.length > 6) throw new Error('narration strip exceeded 6 lines');
-if (!/9 numbers · MLP 16/.test(genMlp.narrationLines.join('\n'))) {
+if (!/9 numbers · MLP 32.32/.test(genMlp.narrationLines.join('\n'))) {
   throw new Error('narration does not name the 9-numbers MLP rung');
 }
-console.log(`(i) IoU vs true Life: ${genMlp.iou.toFixed(4)} (not exact — matches docs/runs/2026-09-20-vector.md)`);
+if (genMlp.iou !== 1) throw new Error(`expected IoU 1.000 for the 9-numbers MLP (exact rung now), got ${genMlp.iou}`);
+console.log(`(i) IoU vs true Life: ${genMlp.iou.toFixed(4)} (exact)`);
 
 // --- (ii) grid -> grid stencil model ---
 console.log('loading stencil checkpoint…');
