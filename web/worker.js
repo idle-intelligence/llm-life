@@ -80,8 +80,11 @@ async function handle(id, type, payload, reply) {
       let adapter = null;
       if (payload.adapterUrl) {
         const bytes = new Uint8Array(await (await fetch(payload.adapterUrl)).arrayBuffer());
-        engine.loadAdapter(bytes);
         const name = payload.adapterUrl.split('/').pop().replace(/\.bin$/, '');
+        // Variant A's resident prefix must match how this adapter was
+        // trained/evaluated (`norules_prefix()` vs `rules_prefix()`, no
+        // few-shot) — `LifeEngine::loadAdapter` rebuilds it from this flag.
+        engine.loadAdapter(bytes, name.includes('norules'));
         adapter = { name, bytes: bytes.length };
       }
       reply(true, { packedTokens: engine.packedTokens(), cellTokens: engine.cellTokens(), adapter });
@@ -90,8 +93,8 @@ async function handle(id, type, payload, reply) {
       // whatever adapter is currently applied (LifeEngine::loadAdapter does
       // not stack).
       const bytes = new Uint8Array(await (await fetch(payload.adapterUrl)).arrayBuffer());
-      engine.loadAdapter(bytes);
       const name = payload.adapterUrl.split('/').pop().replace(/\.bin$/, '');
+      engine.loadAdapter(bytes, name.includes('norules'));
       reply(true, { name, bytes: bytes.length });
     } else if (type === 'step') {
       const t0 = performance.now();

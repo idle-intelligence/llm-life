@@ -68,6 +68,13 @@ pub struct LifeEngine {
     /// The 512 distinct (8 neighbors, self) per-cell prompts, tokenized once.
     prompts: Vec<Vec<u32>>,
     cell_tokens: usize,
+    /// Kept so `loadAdapter` can rebuild `prefix_a`/`cache_a` for whichever
+    /// adapter's own training-time prefix it needs (see `load_adapter`).
+    rule: Option<Rule>,
+    tokenizer: Option<Tokenizer>,
+    /// Which prefix flavor `prefix_a`/`cache_a` currently hold — `None` until
+    /// the first `loadAdapter` call.
+    prefix_norules: Option<bool>,
 }
 
 #[wasm_bindgen]
@@ -93,6 +100,9 @@ impl LifeEngine {
             cache_a: None,
             prompts: Vec::new(),
             cell_tokens: 0,
+            rule: None,
+            tokenizer: None,
+            prefix_norules: None,
         }
     }
 
@@ -186,6 +196,13 @@ impl LifeEngine {
             .forward_hidden(&self.prefix_a, &mut cache)
             .map_err(|e| JsError::new(&format!("prefill variant A prefix: {e}")))?;
         self.cache_a = Some(cache);
+        self.rule = Some(rule);
+        self.tokenizer = Some(tokenizer);
+        // `prefix_norules` stays `None`: the rules+few-shot prefix built
+        // above is only a fallback for running the base model with no
+        // adapter. `loadAdapter` rebuilds it to match whichever adapter's
+        // own training-time prefix (no few-shot either way — see
+        // `train::run_a::prompt_a`) it is about to apply.
 
         log(&format!(
             "[llm-life] loaded: {} layers, hidden {}, prefix {} tokens, grid {}x{}",
@@ -204,15 +221,51 @@ impl LifeEngine {
     /// for the on-disk layout) onto the already-`load()`-ed model. Applies
     /// q/k/v/o deltas on every subsequent `step`/`stepChunkA` forward;
     /// replaces any adapter loaded earlier, does not stack.
+    ///
+    /// `norules` must match how the adapter itself was trained/evaluated
+    /// (`train::run_a::prompt_a`'s `norules` flag — `lora-a-norules-*.bin`
+    /// vs `lora-a-rules-*.bin`): `norules_prefix()` states no rule text,
+    /// `rules_prefix()` states the actual rule, and *neither* carries the
+    /// few-shot examples `load()`'s base-model fallback prefix does. Variant
+    /// A's resident prefix (`prefix_a`/`cache_a`) is rebuilt here whenever
+    /// this differs from what it currently holds, so the per-cell chunks
+    /// this adapter answers are conditioned on the same prefix it was
+    /// trained/scored against (`docs/runs/2026-09-20-runtime-lora.md`,
+    /// `docs/runs/2026-09-20-a-rollout.md`) instead of the demo's
+    /// rules+few-shot prefix, which this adapter never saw.
     #[wasm_bindgen(js_name = loadAdapter)]
-    pub fn load_adapter(&mut self, bytes: &[u8]) -> Result<(), JsError> {
+    pub fn load_adapter(&mut self, bytes: &[u8], norules: bool) -> Result<(), JsError> {
+        if self.prefix_norules != Some(norules) {
+            let rule = self.rule.ok_or_else(|| JsError::new("not loaded"))?;
+            let tokenizer = self.tokenizer.as_ref().ok_or_else(|| JsError::new("not loaded"))?;
+            let text = if norules {
+                variant_a::norules_prefix()
+            } else {
+                variant_a::rules_prefix(&rule)
+            };
+            self.prefix_a = tokenizer
+                .encode(&text, false)
+                .map_err(|e| JsError::new(&format!("encode variant A prefix: {e}")))?;
+            let model = self.model.as_ref().ok_or_else(|| JsError::new("not loaded"))?;
+            let mut cache = model.new_cache(self.prefix_a.len() + CHUNK_CELLS * self.cell_tokens);
+            model
+                .forward_hidden(&self.prefix_a, &mut cache)
+                .map_err(|e| JsError::new(&format!("prefill variant A prefix: {e}")))?;
+            self.cache_a = Some(cache);
+            self.prefix_norules = Some(norules);
+        }
+
         let model = self.model.as_mut().ok_or_else(|| JsError::new("not loaded"))?;
         let adapter = llm_wasm::lora::LoraAdapter::from_bytes(bytes, model.config().num_layers, &self.device)
             .map_err(|e| JsError::new(&format!("parse adapter: {e}")))?;
         model
             .apply_lora(adapter)
             .map_err(|e| JsError::new(&format!("apply adapter: {e}")))?;
-        log(&format!("[llm-life] LoRA adapter applied ({} bytes)", bytes.len()));
+        log(&format!(
+            "[llm-life] LoRA adapter applied ({} bytes, {})",
+            bytes.len(),
+            if norules { "norules prefix" } else { "rules prefix" }
+        ));
         Ok(())
     }
 
