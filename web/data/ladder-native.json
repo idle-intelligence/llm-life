@@ -1,0 +1,7 @@
+{
+  "rows": {
+    "LLM per pixel (adapter)": { "16": 2.5, "32": 11, "64": 41 },
+    "LLM batched (adapter)": { "16": 2.5, "32": 11, "64": 41 }
+  },
+  "note": "measured on a desktop GPU, native f32 forward path, a-norules adapter, from docs/runs/2026-09-20-a-rollout.md. The other rungs have no native numbers yet — a separate bench job fills them in without changing this page."
+}
