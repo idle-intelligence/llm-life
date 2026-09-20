@@ -226,6 +226,23 @@ enum Command {
         #[arg(long, default_value = "900")]
         max_secs: f64,
     },
+    /// Train BERT of Life: a small transformer encoder from scratch on the
+    /// 512 exhaustive neighbourhood cases (CONCEPT.md §11 backlog item).
+    /// Sweeps several sizes plus the MLP baseline and the lookup floor in
+    /// one run; writes a checkpoint per size under `artifacts/bert/` and one
+    /// run doc with the whole table.
+    TrainBert {
+        #[arg(long, default_value = "artifacts/bert")]
+        out: PathBuf,
+        #[arg(long, default_value = "docs/runs/2026-09-20-bert.md")]
+        run_doc: PathBuf,
+        #[arg(long, default_value = "400")]
+        steps: usize,
+        #[arg(long, default_value = "1e-2")]
+        lr: f64,
+        #[arg(long, default_value = "1")]
+        seed: u64,
+    },
     /// Re-score an already-written `<tag>-<seed>-gen1-{palive,true}.pgm`
     /// pair at the Otsu and z-score (k=2) thresholds, label-free, no rerun.
     Rescore {
@@ -936,6 +953,14 @@ fn bench_forward(
     Ok(())
 }
 
+fn machine() -> String {
+    let out = std::process::Command::new("uname").arg("-srm").output();
+    match out {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        Err(_) => "unknown".into(),
+    }
+}
+
 fn single_token(tok: &Tokenizer, s: &str) -> Result<u32> {
     let ids = tok.encode(s, false)?;
     anyhow::ensure!(ids.len() == 1, "'{s}' is not a single token: {ids:?}");
@@ -1102,8 +1127,79 @@ fn main() -> Result<()> {
             run_doc,
             max_secs,
         }),
+        Command::TrainBert {
+            out,
+            run_doc,
+            steps,
+            lr,
+            seed,
+        } => train_bert_sweep(&out, &run_doc, steps, lr, seed),
         Command::Rescore { dir, tag, seed } => rescore(&dir, &tag, &seed),
     }
+}
+
+/// Sweep BERT of Life sizes + baselines, writing checkpoints and one run doc
+/// with the whole table (CONCEPT.md §11 backlog item, task step 3).
+fn train_bert_sweep(out: &Path, run_doc: &Path, steps: usize, lr: f64, seed: u64) -> Result<()> {
+    use llm_life::bert::train::{eval_lookup, train_bert, train_mlp};
+
+    let start = Instant::now();
+    let mut table = String::from(
+        "| model | params | steps to 512/512 | held-out acc (64 cases) | IoU 16\u{b2} gen 1..5 (seed 1) | IoU 16\u{b2} gen 1..5 (seed 2) | IoU 16\u{b2} gen 1..5 (seed 3) |\n\
+         |---|---|---|---|---|---|---|\n",
+    );
+
+    let fmt_iou = |v: &[f64]| -> String {
+        v.iter().map(|x| format!("{x:.3}")).collect::<Vec<_>>().join(",")
+    };
+
+    println!("=== lookup (zero-parameter floor) ===");
+    let (lp, lacc, liou) = eval_lookup();
+    table.push_str(&format!(
+        "| lookup (512-entry table) | {lp} | 0 (exact by construction) | {lacc:.4} | {} | {} | {} |\n",
+        fmt_iou(&liou[0..5]), fmt_iou(&liou[5..10]), fmt_iou(&liou[10..15])
+    ));
+
+    println!("=== mlp baseline ===");
+    let (mp, msteps, macc, miou) = train_mlp(16, steps, lr, &out.join("mlp-16.bin"))?;
+    table.push_str(&format!(
+        "| MLP (9->16->2) | {mp} | {} | {macc:.4} | {} | {} | {} |\n",
+        msteps.map(|s| s.to_string()).unwrap_or_else(|| format!(">{steps}")),
+        fmt_iou(&miou[0..5]), fmt_iou(&miou[5..10]), fmt_iou(&miou[10..15])
+    ));
+
+    for (d, l, h) in [(16usize, 1usize, 1usize), (32, 2, 2), (64, 2, 2)] {
+        println!("=== bert d={d} L={l} H={h} ===");
+        let r = train_bert(d, l, h, steps, lr, seed, &out.join(format!("bert-d{d}-L{l}.bin")))?;
+        table.push_str(&format!(
+            "| BERT d={d} L={l} H={h} | {} | {} | {:.4} | {} | {} | {} |\n",
+            r.params,
+            r.steps_to_512.map(|s| s.to_string()).unwrap_or_else(|| format!(">{steps}")),
+            r.held_out_acc,
+            fmt_iou(&r.iou_per_gen[0..5]), fmt_iou(&r.iou_per_gen[5..10]), fmt_iou(&r.iou_per_gen[10..15])
+        ));
+    }
+
+    let doc = format!(
+        "# BERT of Life sweep\n\n\
+         machine: {}\n\
+         data: exhaustive 512 neighbourhood cases (train on all 512 minus a\n\
+         64-case held-out split; a finite function, CONCEPT.md §12), IoU rollout\n\
+         on real 16x16 grids, 5 generations, seeds 1-3, teacher-forced\n\
+         (each generation starts from true Life, same convention as\n\
+         `docs/runs/2026-09-20-a-rollout.md`).\n\
+         steps budget: {steps}, lr {lr}, seed {seed}\n\
+         wall clock: {:.1}s\n\n\
+         ## Table\n\n{table}\n",
+        machine(),
+        start.elapsed().as_secs_f64(),
+    );
+    if let Some(dir) = run_doc.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(run_doc, doc)?;
+    println!("\nwrote {}", run_doc.display());
+    Ok(())
 }
 
 /// Re-score a picture already on disk (no GPU, no rerun): read its

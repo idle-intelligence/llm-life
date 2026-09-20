@@ -4,6 +4,7 @@
 //! crate owns the CA-to-model glue — packing, stencil masks, reading p(alive)
 //! out of logits — and scores the model against that ground truth.
 
+pub mod bert;
 pub mod pgm;
 pub mod score;
 #[cfg(feature = "native")]
