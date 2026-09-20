@@ -199,6 +199,23 @@ impl LifeEngine {
         Ok(())
     }
 
+    /// Load a runtime LoRA adapter (llm-wasm's `lora` module, LLMLIFE2
+    /// format — see llm-life's `tools/merge/lora_io.py` / `train/lora_io.rs`
+    /// for the on-disk layout) onto the already-`load()`-ed model. Applies
+    /// q/k/v/o deltas on every subsequent `step`/`stepChunkA` forward;
+    /// replaces any adapter loaded earlier, does not stack.
+    #[wasm_bindgen(js_name = loadAdapter)]
+    pub fn load_adapter(&mut self, bytes: &[u8]) -> Result<(), JsError> {
+        let model = self.model.as_mut().ok_or_else(|| JsError::new("not loaded"))?;
+        let adapter = llm_wasm::lora::LoraAdapter::from_bytes(bytes, model.config().num_layers, &self.device)
+            .map_err(|e| JsError::new(&format!("parse adapter: {e}")))?;
+        model
+            .apply_lora(adapter)
+            .map_err(|e| JsError::new(&format!("apply adapter: {e}")))?;
+        log(&format!("[llm-life] LoRA adapter applied ({} bytes)", bytes.len()));
+        Ok(())
+    }
+
     /// One generation. `cells` is the current grid (row-major, 0/1); returns
     /// p(alive) per cell.
     #[wasm_bindgen(js_name = step)]
