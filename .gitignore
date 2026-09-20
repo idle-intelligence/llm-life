@@ -2,6 +2,7 @@
 /web/pkg
 /web/pkg-llm
 /web/models
+/web/*.bin
 /scripts/headless/out
 /artifacts
 target/

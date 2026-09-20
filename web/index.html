@@ -604,6 +604,9 @@ async function logGridInfo(n) {
 const LLM_MODEL = {
   ggufUrl: './models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf',
   tokenizerUrl: './models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json',
+  // Runtime LoRA (llm_wasm::lora), applied onto the base Q4 model after
+  // load — not an offline GGUF merge. Served from web/, gitignored.
+  adapterUrl: './lora-a-norules-300.bin',
 };
 
 for (const r of document.querySelectorAll('input[name=mode]')) {
@@ -698,6 +701,10 @@ async function loadLlm(spec) {
         const name = spec.ggufUrl.split('/').pop().replace(/\.gguf$/, '');
         setStatus('ready', 'Ready');
         log(`model loaded: ${name}`);
+        if (info.adapter) {
+          const label = info.adapter.name.replace(/^lora-/, '').replace(/-\d+$/, '');
+          log(`adapter loaded: ${label} (${(info.adapter.bytes / 1e6).toFixed(1)} MB)`);
+        }
         return info;
       })
       .catch((e) => { loading = null; setStatus('error', 'Load failed'); log('load failed: ' + e.message); throw e; });

@@ -73,7 +73,18 @@ async function handle(id, type, payload, reply) {
       for (const c of chunks) engine.appendModelShard(c);
       const tokenizerJson = await (await fetch(payload.tokenizerUrl)).text();
       await engine.load(tokenizerJson, payload.rulestring);
-      reply(true, { packedTokens: engine.packedTokens() });
+      // Runtime LoRA (llm_wasm::lora — not the offline GGUF merge): applies
+      // q/k/v/o deltas onto the already-loaded base Q4 model, no reload.
+      // Optional — if `adapterUrl` isn't set, the engine is byte-for-byte
+      // the base model.
+      let adapter = null;
+      if (payload.adapterUrl) {
+        const bytes = new Uint8Array(await (await fetch(payload.adapterUrl)).arrayBuffer());
+        engine.loadAdapter(bytes);
+        const name = payload.adapterUrl.split('/').pop().replace(/\.bin$/, '');
+        adapter = { name, bytes: bytes.length };
+      }
+      reply(true, { packedTokens: engine.packedTokens(), adapter });
     } else if (type === 'step') {
       const t0 = performance.now();
       // The engine packs for whatever grid it was last told about; variant B
