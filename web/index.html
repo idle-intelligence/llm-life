@@ -1038,6 +1038,10 @@ async function loadLlm(spec) {
           els.adapterBtn.textContent = `adapter: ${ADAPTER_SHORT[adapterName] ?? adapterName}`;
         }
         els.adapterBtn.disabled = mode !== 'llm-a';
+        // The base load always applies variant A's adapter (`spec.adapterUrl`
+        // above); if the mode already selected is variant B, swap to its own
+        // adapter right away instead of leaving A's applied.
+        ensureModeAdapter().catch((e) => debugLog('adapter sync failed: ' + e.message));
         return info;
       })
       .catch((e) => { loading = null; setStatus('error', 'Load failed'); debugLog('load failed: ' + e.message); throw e; });
@@ -1105,6 +1109,33 @@ const ADAPTER_DESC = {
   'a-norules': 'adapter trained without the rules in the prompt',
   'a-rules': 'adapter trained with the rules in the prompt',
 };
+
+// Variant B (whole grid, one pass) has its own adapter, trained per grid
+// size (docs/runs/2026-09-20-ft-b-16-s3-300.md) — not variant A's per-cell
+// adapter. No adapter has been trained at 64×64 yet.
+const B_ADAPTER_BY_SIZE = { 16: './lora-b-16-s3-300.bin', 32: './lora-b-32.bin' };
+let bAdapterAvailable = true;
+
+// Keeps whichever LoRA is on the GPU in sync with the mode/grid-size pair
+// currently selected — variant A's own adapter for 'llm-a', variant B's
+// size-specific adapter for 'llm' — without ever reloading the base model
+// (`LifeEngine::loadAdapter` swaps deltas onto the model already resident).
+async function ensureModeAdapter() {
+  if (!llmReady) return;
+  if (mode === 'llm-a') {
+    await setAdapter(adapterName);
+  } else if (mode === 'llm') {
+    const url = B_ADAPTER_BY_SIZE[gridSize];
+    bAdapterAvailable = !!url;
+    if (!url) {
+      debugLog(`no adapter trained at ${gridSize}×${gridSize} for variant B`);
+      return;
+    }
+    ensureWorker();
+    const info = await ask('loadAdapter', { adapterUrl: url });
+    debugLog(`adapter loaded: variant B, ${gridSize}×${gridSize} (${(info.bytes / 1e6).toFixed(1)} MB)`);
+  }
+}
 
 async function setAdapter(name) {
   if (!llmReady) { adapterName = name; return; }
@@ -1195,7 +1226,7 @@ async function llmStepOnce() {
   logRunReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (game of life ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)} · IoU ${lastIou.toFixed(3)} · alive recall ${lastAliveRecall.toFixed(3)} · dead recall ${lastDeadRecall.toFixed(3)} · wrong ${lastWrong}`);
 }
 
-els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell — per-pixel narrated (default) or batched, same forwards either way. BERT of Life is a small transformer encoder trained from scratch — also 16×16, also one forward per cell, but every token is the raw 0/1 neighbourhood, not text. "9 numbers -> centre" is the same neighbourhood with no tokens at all — an MLP on 9 floats, one forward per cell. "stencil (grid -> grid)" is a stencil-masked attention layer with one channel: the whole grid in one forward pass, no per-cell loop, and it generalises from 16×16 up through 256×256 with the same trained weights. Click a cell in the LLM of Life grid to toggle it.';
+els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B reads the whole grid as one text prompt and asks the model for one generated token per cell in a single forward, using its own trained adapter (16×16 and 32×32 only — no adapter has been trained at 64×64 yet); variant A drops to 16×16 and asks the model one question per cell, using a separate adapter of its own — per-pixel narrated (default) or batched, same forwards either way. The two variants cost differently for a real reason: one large forward over the whole board versus many small per-cell forwards. BERT of Life is a small transformer encoder trained from scratch — also 16×16, also one forward per cell, but every token is the raw 0/1 neighbourhood, not text. "9 numbers -> centre" is the same neighbourhood with no tokens at all — an MLP on 9 floats, one forward per cell. "stencil (grid -> grid)" is a stencil-masked attention layer with one channel: the whole grid in one forward pass, no per-cell loop, and it generalises from 16×16 up through 256×256 with the same trained weights. Click a cell in the LLM of Life grid to toggle it.';
 
 window.__app = {
   ready: true,
@@ -1223,6 +1254,7 @@ window.__app = {
     els.narrationChoice.style.display = isA ? '' : 'none';
     els.narrationWrap.style.display = isPerCellNarrated(m) ? '' : 'none';
     els.adapterBtn.disabled = !isA || !llmReady;
+    ensureModeAdapter().catch((e) => debugLog('adapter sync failed: ' + e.message));
     return mode;
   },
   // Grid size, shared by every mode's classical and model panels. The
@@ -1250,6 +1282,7 @@ window.__app = {
     }
     gridSize = n;
     updateGridButtons();
+    if (isLlmMode(mode)) ensureModeAdapter().catch((e) => debugLog('adapter sync failed: ' + e.message));
     // Mid-generation, resizing `app`/`truth` now would apply the in-flight
     // result (sized for the old grid) to a mismatched grid. Defer instead —
     // `llmStepOnce` applies it once that generation lands.

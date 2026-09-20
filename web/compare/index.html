@@ -245,14 +245,15 @@
         <div class="panel"><canvas id="c-board" width="32" height="32"></canvas><div class="caption">board</div></div>
     </div>
     <div class="controls" style="margin-top:16px;">
+        <button type="button" class="gridsize-btn" data-size="16">16&times;16</button>
         <button type="button" class="gridsize-btn primary" data-size="32">32&times;32</button>
         <button type="button" class="gridsize-btn" data-size="64">64&times;64</button>
     </div>
     <div class="controls" style="margin-top:12px;">
-        <button id="run-all" class="primary">run every rung</button>
+        <button id="run-all" class="primary">run every method</button>
         <button id="load-llm">load the LLM (&asymp;400 MB, stored locally)</button>
     </div>
-    <p class="info">One board, one seed, the same starting cells for every rung below.</p>
+    <p class="info">One board, one seed, the same starting cells for every method below.</p>
 </section>
 
 <section>
@@ -261,7 +262,7 @@
         <table class="ladder-table" id="ladder">
             <thead>
                 <tr>
-                    <th>rung</th>
+                    <th>method</th>
                     <th>s/gen</th>
                     <th>&times; lookup</th>
                     <th>IoU vs next gen</th>
@@ -277,16 +278,16 @@
 </section>
 
 <section>
-    <h2>THE RUNGS</h2>
+    <h2>THE METHODS</h2>
     <div class="rungs">
-        <p><strong>CPU loop</strong> reads the eight neighbours of every cell with a plain nested loop and counts how many are alive, then applies the original Game of Life rule: a live cell survives with two or three live neighbours, a dead cell is born with exactly three. It has no parameters — it is the definition of the rule, not a model of it — and every other rung on this page is measured against its result.</p>
+        <p><strong>CPU loop</strong> reads the eight neighbours of every cell with a plain nested loop and counts how many are alive, then applies the original Game of Life rule: a live cell survives with two or three live neighbours, a dead cell is born with exactly three. It has no parameters — it is the definition of the rule, not a model of it — and every other method on this page is measured against its result.</p>
         <p><strong>512-entry lookup</strong> packs the same eight neighbours plus the cell itself into a nine-bit number and reads the answer out of a table built once, with all five hundred and twelve possible neighbourhoods precomputed. It has no parameters beyond that table. At the board sizes measured here it costs about the same as the loop above — a single memory read is not obviously cheaper than eight additions until the board is large enough that memory traffic, rather than arithmetic, decides which one wins.</p>
         <p><strong>LLM per pixel (adapter)</strong> reads one cell's eight neighbours and its own state as a short templated sentence, appended to a shared rules prefix, and asks a half-billion-parameter language model, adjusted with a small trained adapter, to answer with the next state. Every cell gets its own forward pass through the whole model, chunked sixty-four at a time — by far the most expensive way to compute this rule on the page.</p>
-        <p><strong>LLM batched (adapter)</strong> runs the identical forward passes as the row above it — same model, same adapter, same chunks of sixty-four cells — and reaches exactly the same answers. The only difference is what gets written to the log while it runs: this row narrates the shared prefix and the batch mechanism instead of naming one cell at a time, so its cost is the same as the row above it.</p>
-        <p><strong>BERT of Life</strong> is a small transformer encoder, trained from scratch on the rule instead of on language, with one attention layer sixteen numbers wide and thirty-five hundred parameters in total. Each cell's nine neighbourhood values become tokens read by the encoder, which reads out a single answer from the position for the centre cell, and it gets every one of the five hundred and twelve possible neighbourhoods exactly right. It costs far less than either LLM row above it — thousands of parameters instead of hundreds of millions — while still doing one forward pass per cell.</p>
-        <p><strong>9 numbers -&gt; centre</strong> drops tokens altogether: the same nine neighbourhood values enter a small two-layer network as plain numbers, fourteen hundred and forty-two parameters in all, and it also answers every one of the five hundred and twelve neighbourhoods correctly. Removing the embedding and attention machinery that BERT of Life still carries makes this the cheaper of the two per-cell models, one forward per cell either way.</p>
-        <p><strong>Stencil (grid -&gt; grid)</strong> reads the whole board at once instead of one cell at a time: each cell's value becomes a small vector, and one attention layer lets every cell see only its eight grid neighbours, so no position needs to be told to the model beyond that mask. With three thousand three hundred and twenty-nine parameters it scores every case correctly at one board size and then, using the same trained weights, at a board four times as large — it generalises rather than being retrained. Because it takes one pass over the whole board rather than one pass per cell, it is the cheapest of the model rungs here by a wide margin.</p>
-        <p><strong>Whole-board thinking model</strong> is the rung that is not built yet: one very large language model would read the entire board as text and write out the next one directly, with no per-cell structure at all. It needs more memory than a browser tab can give it — more than ten gigabytes — so it would have to run elsewhere, and a single generation would be expected to take minutes rather than milliseconds: by far the most expensive way to compute this rule.</p>
+        <p><strong>LLM, whole grid in one pass</strong> reads the entire board as a single text prompt instead of one cell at a time, and asks the same half-billion-parameter model — adjusted with its own trained adapter, a different one from the per-cell row above — for one generated token per cell in a single forward pass. Its cost differs from the per-cell row for a real reason: one large forward over the whole board instead of many small ones. No adapter has been trained for the sixty-four-by-sixty-four board yet, so this row is unavailable at that size.</p>
+        <p><strong>BERT of Life</strong> is a small transformer encoder, trained from scratch on the rule instead of on language, with one attention layer sixteen numbers wide and thirty-five hundred parameters in total. Each cell's nine neighbourhood values become tokens read by the encoder, which reads out a single answer from the position for the centre cell, and it gets every one of the five hundred and twelve possible neighbourhoods exactly right. It costs far less than either LLM row above it — thousands of parameters instead of hundreds of millions — while still doing one forward pass per cell. The batched row below it is the same weights answering the same neighbourhoods, gathered into one pass over the whole grid instead of one pass per cell.</p>
+        <p><strong>9 numbers -&gt; centre</strong> drops tokens altogether: the same nine neighbourhood values enter a small two-layer network as plain numbers, fourteen hundred and forty-two parameters in all, and it also answers every one of the five hundred and twelve neighbourhoods correctly. Removing the embedding and attention machinery that BERT of Life still carries makes this the cheaper of the two per-cell models, one forward per cell either way. Its batched row is the same weights and the same nine numbers per cell, run as one forward over the whole grid.</p>
+        <p><strong>Stencil (grid -&gt; grid)</strong> reads the whole board at once instead of one cell at a time: each cell's value becomes a small vector, and one attention layer lets every cell see only its eight grid neighbours, so no position needs to be told to the model beyond that mask. With three thousand three hundred and twenty-nine parameters it scores every case correctly at one board size and then, using the same trained weights, at a board four times as large — it generalises rather than being retrained. Because it takes one pass over the whole board rather than one pass per cell, it is the cheapest of the model methods here by a wide margin.</p>
+        <p><strong>Whole-board thinking model</strong> is the method that is not built yet: one very large language model would read the entire board as text and write out the next one directly, with no per-cell structure at all. It needs more memory than a browser tab can give it — more than ten gigabytes — so it would have to run elsewhere, and a single generation would be expected to take minutes rather than milliseconds: by far the most expensive way to compute this rule.</p>
     </div>
 </section>
 
@@ -418,7 +419,7 @@ function ensureWorker() {
   worker = new Worker('../worker.js', { type: 'module' });
   worker.onmessage = (e) => {
     const { id, ok, result, type } = e.data;
-    if (type === 'chunk' || type === 'bertCell' || type === 'vecMlpCell' || type === 'vecStencilGrid' || type === 'progress') return;
+    if (type === 'chunk' || type === 'bertCell' || type === 'vecMlpCell' || type === 'bertGrid' || type === 'vecMlpGrid' || type === 'vecStencilGrid' || type === 'progress') return;
     const p = pending.get(id);
     if (!p) return;
     pending.delete(id);
@@ -438,6 +439,12 @@ const LLM_MODEL = {
   tokenizerUrl: './models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json',
   adapterUrl: './lora-a-norules-300.bin',
 };
+// The one-pass row (variant B) has its own adapter, trained per grid size
+// (docs/runs/2026-09-20-ft-b-16-s3-300.md) — swapped in with `loadAdapter`
+// right before that row runs, and swapped back to `LLM_MODEL.adapterUrl`
+// at the start of the per-cell row so a rerun always starts from the right
+// adapter regardless of what the previous run left loaded.
+const B_ADAPTER_BY_SIZE = { 16: './lora-b-16-s3-300.bin', 32: './lora-b-32.bin' };
 const BERT_MODEL = { checkpointUrl: './bert-d16-L1.bin', dModel: 16, nLayers: 1, nHeads: 1 };
 const VEC_MLP_MODEL = { checkpointUrl: './mlp2-32-lrfix.bin', hidden: 32 };
 const VEC_STENCIL_MODEL = { checkpointUrl: './stencil-d16-L1.bin', dModel: 16, nLayers: 1, nHeads: 1 };
@@ -506,13 +513,19 @@ const RUNGS = [
   { key: 'cpu', name: 'CPU loop (JS, in the page)', params: 'no parameters' },
   { key: 'lookup', name: '512-entry lookup (JS)', params: '512-entry table' },
   { key: 'llm-per-pixel', name: 'LLM per pixel (adapter)', params: '≈0.5B (+ adapter)' },
-  { key: 'llm-batched', name: 'LLM batched (adapter)', params: '≈0.5B (+ adapter)' },
-  { key: 'bert', name: 'BERT of Life', params: '3,490' },
-  { key: 'vec-mlp', name: '9 numbers -> centre', params: '1,442' },
+  { key: 'llm-onepass', name: 'LLM, whole grid in one pass', params: '≈0.5B (+ adapter)' },
+  { key: 'bert-cell', name: 'BERT of Life (cell by cell)', params: '3,490' },
+  { key: 'bert-batched', name: 'BERT of Life (batched)', params: '3,490' },
+  { key: 'vec-mlp-cell', name: '9 numbers -> centre (cell by cell)', params: '1,442' },
+  { key: 'vec-mlp-batched', name: '9 numbers -> centre (batched)', params: '1,442' },
   { key: 'vec-stencil', name: 'stencil (grid -> grid)', params: '3,329' },
   { key: 'thinking', name: 'whole-board thinking model (not built)', params: '> 10B (not built)' },
 ];
-const NATIVE_KEY = { 'llm-per-pixel': 'LLM per pixel (adapter)', 'llm-batched': 'LLM batched (adapter)' };
+// No native comparison data for the one-pass row: bin/llm-life.rs's own
+// "LLM batched (adapter)" ladder row is the same duplicate this page's row
+// used to be, not a real whole-grid-in-one-pass measurement — left alone
+// here since fixing the native bench_ladder is out of this change's scope.
+const NATIVE_KEY = { 'llm-per-pixel': 'LLM per pixel (adapter)' };
 let nativeLadderData = null;
 
 function nativeFor(key) {
@@ -528,11 +541,13 @@ function renderLadderTable() {
   const lookupSec = results.lookup ? results.lookup.seconds : null;
   els.ladderBody.innerHTML = RUNGS.map((r) => {
     const res = results[r.key];
-    const isLlm = r.key === 'llm-per-pixel' || r.key === 'llm-batched';
+    const isLlm = r.key === 'llm-per-pixel' || r.key === 'llm-onepass';
     const notReady = isLlm && !llmReady;
-    const secText = r.key === 'thinking' ? '—' : (res ? fmtSec(res.seconds) : (notReady ? 'load the LLM to measure' : '—'));
-    const ratioText = res && lookupSec ? fmtRatio(res.seconds / lookupSec) : '—';
-    const iouText = res ? res.iou.toFixed(3) : '—';
+    const secText = r.key === 'thinking' ? '—'
+      : (res && res.note) ? res.note
+      : (res ? fmtSec(res.seconds) : (notReady ? 'load the LLM to measure' : '—'));
+    const ratioText = res && res.seconds != null && lookupSec ? fmtRatio(res.seconds / lookupSec) : '—';
+    const iouText = res && res.iou != null ? res.iou.toFixed(3) : '—';
     return `<tr><td>${r.name}</td><td>${secText}</td><td>${ratioText}</td><td>${iouText}</td><td>${r.params}</td><td>${nativeFor(r.key)}</td></tr>`;
   }).join('');
 }
@@ -573,9 +588,11 @@ function renderThumbs(trueNext) {
     { key: 'cpu', label: 'CPU loop' },
     { key: 'lookup', label: 'lookup' },
     { key: 'llm-per-pixel', label: 'LLM per pixel' },
-    { key: 'llm-batched', label: 'LLM batched' },
-    { key: 'bert', label: 'BERT of Life' },
-    { key: 'vec-mlp', label: '9→centre' },
+    { key: 'llm-onepass', label: 'LLM one pass' },
+    { key: 'bert-cell', label: 'BERT of Life (cell)' },
+    { key: 'bert-batched', label: 'BERT of Life (batch)' },
+    { key: 'vec-mlp-cell', label: '9→centre (cell)' },
+    { key: 'vec-mlp-batched', label: '9→centre (batch)' },
     { key: 'vec-stencil', label: 'stencil' },
     { key: 'thinking', label: 'thinking (n/a)' },
   ];
@@ -588,12 +605,12 @@ function renderThumbs(trueNext) {
     nameEl.className = 'name';
     const iouEl = document.createElement('div');
     iouEl.className = 'iou';
-    if (res) {
+    if (res && res.binarized) {
       drawThumb(canvas, size, size, res.binarized, false);
       iouEl.textContent = 'IoU ' + res.iou.toFixed(3);
     } else {
       drawThumb(canvas, size, size, null, true);
-      iouEl.textContent = it.key === 'thinking' ? 'not built' : 'not run';
+      iouEl.textContent = res && res.note ? res.note : (it.key === 'thinking' ? 'not built' : 'not run');
     }
     nameEl.textContent = it.label;
     wrap.appendChild(canvas);
@@ -607,7 +624,7 @@ async function runEveryRung() {
   if (running) return;
   running = true;
   els.runAll.disabled = true;
-  setStatus('generating', 'running every rung…');
+  setStatus('generating', 'running every method…');
   try {
     if (!lookupTable) lookupTable = buildLookupTable();
     const board = Array.from(app.cells());
@@ -625,30 +642,51 @@ async function runEveryRung() {
     // we could train something
     if (llmReady) {
       setStatus('generating', 'running the LLM, per pixel…');
+      // Always start from variant A's own adapter, regardless of whatever
+      // the previous run's one-pass row left loaded.
+      await ask('loadAdapter', { adapterUrl: LLM_MODEL.adapterUrl });
       results['llm-per-pixel'] = await measureWorkerStep('a', board);
       results['llm-per-pixel'].iou = iou(results['llm-per-pixel'].binarized, trueNext);
       lastResults = results;
       renderLadderTable();
 
-      setStatus('generating', 'running the LLM, batched…');
-      results['llm-batched'] = await measureWorkerStep('a', board);
-      results['llm-batched'].iou = iou(results['llm-batched'].binarized, trueNext);
+      const bAdapterUrl = B_ADAPTER_BY_SIZE[size];
+      setStatus('generating', 'running the LLM, whole grid in one pass…');
+      if (bAdapterUrl) {
+        await ask('loadAdapter', { adapterUrl: bAdapterUrl });
+        results['llm-onepass'] = await measureWorkerStep('b', board);
+        results['llm-onepass'].iou = iou(results['llm-onepass'].binarized, trueNext);
+      } else {
+        results['llm-onepass'] = { note: `no adapter trained at ${size}×${size}` };
+      }
       lastResults = results;
       renderLadderTable();
     }
 
-    setStatus('generating', 'running BERT of Life…');
+    setStatus('generating', 'running BERT of Life, cell by cell…');
     await ensureBert();
-    results.bert = await measureWorkerStep('bert', board);
-    results.bert.iou = iou(results.bert.binarized, trueNext);
+    results['bert-cell'] = await measureWorkerStep('bert', board);
+    results['bert-cell'].iou = iou(results['bert-cell'].binarized, trueNext);
+    lastResults = results;
+    renderLadderTable();
+
+    setStatus('generating', 'running BERT of Life, batched…');
+    results['bert-batched'] = await measureWorkerStep('bert-batched', board);
+    results['bert-batched'].iou = iou(results['bert-batched'].binarized, trueNext);
     lastResults = results;
     renderLadderTable();
 
     // it's just a matrix
-    setStatus('generating', 'running 9 numbers -> centre…');
+    setStatus('generating', 'running 9 numbers -> centre, cell by cell…');
     await ensureVecMlp();
-    results['vec-mlp'] = await measureWorkerStep('vec-mlp', board);
-    results['vec-mlp'].iou = iou(results['vec-mlp'].binarized, trueNext);
+    results['vec-mlp-cell'] = await measureWorkerStep('vec-mlp', board);
+    results['vec-mlp-cell'].iou = iou(results['vec-mlp-cell'].binarized, trueNext);
+    lastResults = results;
+    renderLadderTable();
+
+    setStatus('generating', 'running 9 numbers -> centre, batched…');
+    results['vec-mlp-batched'] = await measureWorkerStep('vec-mlp-batched', board);
+    results['vec-mlp-batched'].iou = iou(results['vec-mlp-batched'].binarized, trueNext);
     lastResults = results;
     renderLadderTable();
 
@@ -662,7 +700,7 @@ async function runEveryRung() {
     renderThumbs(trueNext);
     setStatus('ready', 'ready');
   } catch (e) {
-    setStatus('error', 'a rung failed: ' + e.message);
+    setStatus('error', 'a method failed: ' + e.message);
   } finally {
     running = false;
     els.runAll.disabled = false;
