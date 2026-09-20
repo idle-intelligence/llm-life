@@ -341,6 +341,54 @@ enum Command {
         #[arg(long, default_value = "5")]
         reps: usize,
     },
+    /// s/generation for every rung of `docs/LADDER.md`'s compute ladder, on
+    /// this machine, at the same board (density/seed) for every rung. "CPU
+    /// loop" and "512-entry lookup" are the plain-Rust equivalents of the
+    /// tab's live JS measurement; "LLM per pixel"/"LLM batched (adapter)"
+    /// are the same forward (`TrainRunnerA`, `a-norules`) narrated twice per
+    /// LADDER.md's own convention, measured only at `--llm-sizes` (each
+    /// cell is a real forward — never projected here); BERT of Life, "9
+    /// numbers -> centre" and stencil are cheap whole-batch/whole-grid
+    /// native forwards, measured at every `--sizes` entry. Prints one JSON
+    /// object and a human table; `--out-json`/`--out-md` also write them to
+    /// files.
+    BenchLadder {
+        #[arg(long, value_delimiter = ',', default_value = "16,32,64")]
+        sizes: Vec<usize>,
+        /// Sizes to actually run the two LLM rungs at (one real forward per
+        /// size, no projection). Sizes requested via `--sizes` but not here
+        /// are reported as `null` for those two rows.
+        #[arg(long, value_delimiter = ',', default_value = "16")]
+        llm_sizes: Vec<usize>,
+        #[arg(long, default_value = "models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf")]
+        gguf: PathBuf,
+        #[arg(long, default_value = "models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json")]
+        tokenizer: PathBuf,
+        #[arg(long, default_value = "artifacts/lora-a-norules-300.bin")]
+        adapter: PathBuf,
+        #[arg(long, default_value = "artifacts/bert/bert-d16-L1.bin")]
+        bert_checkpoint: PathBuf,
+        #[arg(long, default_value = "artifacts/vector/mlp2-32-lrfix.bin")]
+        mlp2_checkpoint: PathBuf,
+        #[arg(long, default_value = "artifacts/vector/stencil-d16-L1.bin")]
+        stencil_checkpoint: PathBuf,
+        /// The stencil forward is O(n) with the current `stencil_neighbors`
+        /// gather table, but is skipped above this size as a safety cap
+        /// while the crate's stencil implementation is still being worked
+        /// on elsewhere.
+        #[arg(long, default_value = "64")]
+        stencil_max_size: usize,
+        #[arg(long, default_value = "0.28")]
+        density: f64,
+        #[arg(long, default_value = "1")]
+        seed: u64,
+        #[arg(long, default_value = "5")]
+        reps: usize,
+        #[arg(long)]
+        out_json: Option<PathBuf>,
+        #[arg(long)]
+        out_md: Option<PathBuf>,
+    },
     /// Re-score an already-written `<tag>-<seed>-gen1-{palive,true}.pgm`
     /// pair at the Otsu and z-score (k=2) thresholds, label-free, no rerun.
     Rescore {
@@ -1271,6 +1319,39 @@ fn main() -> Result<()> {
             sizes,
             reps,
         } => bench_vec_native(&checkpoint, &kind, d_model, n_layers, n_heads, &sizes, reps, &device),
+        Command::BenchLadder {
+            sizes,
+            llm_sizes,
+            gguf,
+            tokenizer,
+            adapter,
+            bert_checkpoint,
+            mlp2_checkpoint,
+            stencil_checkpoint,
+            stencil_max_size,
+            density,
+            seed,
+            reps,
+            out_json,
+            out_md,
+        } => bench_ladder(
+            &sizes,
+            &llm_sizes,
+            &gguf,
+            &tokenizer,
+            &adapter,
+            &bert_checkpoint,
+            &mlp2_checkpoint,
+            &stencil_checkpoint,
+            stencil_max_size,
+            density,
+            seed,
+            reps,
+            &rule,
+            out_json.as_deref(),
+            out_md.as_deref(),
+            &device,
+        ),
         Command::Rescore { dir, tag, seed } => rescore(&dir, &tag, &seed),
     }
 }
@@ -1824,5 +1905,370 @@ fn rescore(dir: &Path, tag: &str, seed: &str) -> Result<()> {
         s_z2.accuracy, s_z2.live_recall, s_z2.model_live,
         s_med.accuracy, s_med.live_recall, s_med.model_live,
     );
+    Ok(())
+}
+
+/// One row of `docs/LADDER.md`'s table: a rung name and its s/generation at
+/// each requested size (`None` = not measured at that size, never
+/// projected).
+struct LadderRow {
+    rung: String,
+    sizes: Vec<(usize, Option<f64>)>,
+    note: Option<String>,
+}
+
+fn json_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn ladder_json(device: &str, rows: &[LadderRow]) -> String {
+    let mut out = String::from("{\n");
+    out.push_str(&format!("  \"device\": \"{}\",\n", json_escape(device)));
+    out.push_str("  \"backend\": \"wgpu\",\n");
+    out.push_str("  \"rows\": [\n");
+    for (i, row) in rows.iter().enumerate() {
+        out.push_str("    {\n");
+        out.push_str(&format!("      \"rung\": \"{}\",\n", json_escape(&row.rung)));
+        let fields: Vec<String> = row
+            .sizes
+            .iter()
+            .map(|(sz, v)| match v {
+                Some(x) => format!("\"{sz}\": {x:.6}"),
+                None => format!("\"{sz}\": null"),
+            })
+            .collect();
+        out.push_str(&format!("      \"s_per_gen\": {{{}}}", fields.join(", ")));
+        match &row.note {
+            Some(note) => out.push_str(&format!(",\n      \"note\": \"{}\"\n", json_escape(note))),
+            None => out.push('\n'),
+        }
+        out.push_str("    }");
+        if i + 1 < rows.len() {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+    out.push_str("  ]\n}\n");
+    out
+}
+
+fn ladder_table(rows: &[LadderRow], columns: &[usize]) -> String {
+    let mut out = String::from("| rung |");
+    for c in columns {
+        out.push_str(&format!(" {c}\u{b2} s/gen |"));
+    }
+    out.push_str(" note |\n|---|");
+    for _ in columns {
+        out.push_str("---|");
+    }
+    out.push_str("---|\n");
+    for row in rows {
+        out.push_str(&format!("| {} |", row.rung));
+        for c in columns {
+            let v = row.sizes.iter().find(|(sz, _)| sz == c).and_then(|(_, v)| *v);
+            match v {
+                Some(x) => out.push_str(&format!(" {x:.6} |")),
+                None => out.push_str(" — |"),
+            }
+        }
+        out.push_str(&format!(" {} |\n", row.note.as_deref().unwrap_or("")));
+    }
+    out
+}
+
+/// One generation, timed, for every `docs/LADDER.md` rung, on this machine.
+/// Same board (density/seed) for every rung. Never projects: a rung not
+/// measured at a size is `null`, not `ms_per_cell * n^2`.
+#[allow(clippy::too_many_arguments)]
+fn bench_ladder(
+    sizes: &[usize],
+    llm_sizes: &[usize],
+    gguf: &Path,
+    tokenizer: &Path,
+    adapter: &Path,
+    bert_checkpoint: &Path,
+    mlp2_checkpoint: &Path,
+    stencil_checkpoint: &Path,
+    stencil_max_size: usize,
+    density: f64,
+    seed: u64,
+    reps: usize,
+    rule: &Rule,
+    out_json: Option<&Path>,
+    out_md: Option<&Path>,
+    device: &WgpuDevice,
+) -> Result<()> {
+    use burn::backend::Wgpu;
+    use burn::module::Module;
+    use burn::record::{BinBytesRecorder, FullPrecisionSettings, Recorder};
+    use burn::tensor::{Int, Tensor, TensorData};
+    use llm_life::bert::data::grid_cases;
+    use llm_life::bert::model::BertConfig;
+    use llm_life::vector::model::{stencil_neighbors, Mlp2Config, StencilConfig};
+
+    let mut rows: Vec<LadderRow> = Vec::new();
+
+    // "CPU loop": life::Grid::step is exactly the plain nested loop over 8
+    // neighbours the tab's JS measures live.
+    {
+        let mut cells = Vec::with_capacity(sizes.len());
+        for &size in sizes {
+            let grid = Grid::random(size, size, seed, density);
+            let _ = grid.step(rule);
+            let mut times = Vec::with_capacity(reps);
+            for _ in 0..reps {
+                let start = Instant::now();
+                let _ = grid.step(rule);
+                times.push(start.elapsed().as_secs_f64());
+            }
+            cells.push((size, Some(median(times))));
+        }
+        rows.push(LadderRow { rung: "CPU loop".into(), sizes: cells, note: None });
+    }
+
+    // "512-entry lookup": precompute the 9-bit-index table once (outside
+    // the timed loop), then a per-cell gather + table read.
+    {
+        let mut table = [false; 512];
+        for self_state in 0u8..2 {
+            for mask in 0usize..256 {
+                let neighbors: Vec<u8> = (0..8).map(|b| ((mask >> b) & 1) as u8).collect();
+                let idx = case_index(&neighbors, self_state);
+                let count = neighbors.iter().filter(|&&x| x != 0).count();
+                table[idx] = rule.next(self_state != 0, count);
+            }
+        }
+        let lookup_step = |grid: &Grid| -> Grid {
+            let n = grid.width() * grid.height();
+            let mut out = vec![0u8; n];
+            for (i, o) in out.iter_mut().enumerate() {
+                let neighbors: Vec<u8> = grid.neighbor_indices(i).iter().map(|&j| grid.cells()[j]).collect();
+                let idx = case_index(&neighbors, grid.cells()[i]);
+                *o = table[idx] as u8;
+            }
+            Grid::from_cells(grid.width(), grid.height(), out)
+        };
+        let mut cells = Vec::with_capacity(sizes.len());
+        for &size in sizes {
+            let grid = Grid::random(size, size, seed, density);
+            let _ = lookup_step(&grid);
+            let mut times = Vec::with_capacity(reps);
+            for _ in 0..reps {
+                let start = Instant::now();
+                let _ = lookup_step(&grid);
+                times.push(start.elapsed().as_secs_f64());
+            }
+            cells.push((size, Some(median(times))));
+        }
+        rows.push(LadderRow { rung: "512-entry lookup".into(), sizes: cells, note: None });
+    }
+
+    // "LLM per pixel (adapter)" / "LLM batched (adapter)": the same forward
+    // (`TrainRunnerA`, `a-norules`), per LADDER.md's own note that the two
+    // narrations share one set of numbers. Measured only at `llm_sizes` —
+    // each cell is a real forward, never projected.
+    {
+        let have_model = gguf.exists() && tokenizer.exists() && adapter.exists();
+        if have_model {
+            let chunk_cells = 64;
+            let runner = TrainRunnerA::new(gguf, tokenizer, rule, Some(adapter), true, chunk_cells, device)?;
+            let mut measured = Vec::with_capacity(llm_sizes.len());
+            for &size in llm_sizes {
+                let grid = Grid::random(size, size, seed, density);
+                let _ = Stepper::step(&runner, &grid)?;
+                let (_, secs) = Stepper::step(&runner, &grid)?;
+                measured.push((size, secs));
+            }
+            let cells: Vec<(usize, Option<f64>)> = sizes
+                .iter()
+                .map(|&size| (size, measured.iter().find(|(s, _)| *s == size).map(|(_, v)| *v)))
+                .collect();
+            rows.push(LadderRow { rung: "LLM per pixel (adapter)".into(), sizes: cells.clone(), note: None });
+            rows.push(LadderRow {
+                rung: "LLM batched (adapter)".into(),
+                sizes: cells,
+                note: Some("identical forward to per-pixel (LADDER.md)".into()),
+            });
+        } else {
+            let note = format!(
+                "skipped: model files not local ({}, {}, {})",
+                gguf.display(),
+                tokenizer.display(),
+                adapter.display()
+            );
+            let cells: Vec<(usize, Option<f64>)> = sizes.iter().map(|&s| (s, None)).collect();
+            rows.push(LadderRow { rung: "LLM per pixel (adapter)".into(), sizes: cells.clone(), note: Some(note.clone()) });
+            rows.push(LadderRow { rung: "LLM batched (adapter)".into(), sizes: cells, note: Some(note) });
+        }
+    }
+
+    // "BERT of Life": whole-batch native forward (not one LLM call per
+    // cell), cheap at every requested size.
+    {
+        if bert_checkpoint.exists() {
+            let cfg = BertConfig::small(16, 1, 1);
+            let model: llm_life::bert::model::BertOfLife<Wgpu> = cfg.init(device);
+            let bytes = std::fs::read(bert_checkpoint).context("read bert checkpoint")?;
+            let recorder = BinBytesRecorder::<FullPrecisionSettings>::new();
+            let record = recorder.load(bytes, device)?;
+            let model = model.load_record(record);
+
+            let mut cells = Vec::with_capacity(sizes.len());
+            for &size in sizes {
+                let grid = Grid::random(size, size, seed, density);
+                let cases = grid_cases(&grid, rule);
+                let n = cases.len();
+                let mut toks = Vec::with_capacity(n * 9);
+                for (c, _) in &cases {
+                    toks.extend(c.iter().map(|&b| b as i32));
+                }
+                let t: Tensor<Wgpu, 2, Int> = Tensor::from_data(TensorData::new(toks, [n, 9]), device);
+                let _ = model.forward(t.clone()).into_data();
+                let mut times = Vec::with_capacity(reps);
+                for _ in 0..reps {
+                    let start = Instant::now();
+                    let logits = model.forward(t.clone());
+                    let _ = logits.into_data();
+                    times.push(start.elapsed().as_secs_f64());
+                }
+                cells.push((size, Some(median(times))));
+            }
+            rows.push(LadderRow { rung: "BERT of Life".into(), sizes: cells, note: None });
+        } else {
+            let note = format!("skipped: checkpoint not local ({})", bert_checkpoint.display());
+            let cells: Vec<(usize, Option<f64>)> = sizes.iter().map(|&s| (s, None)).collect();
+            rows.push(LadderRow { rung: "BERT of Life".into(), sizes: cells, note: Some(note) });
+        }
+    }
+
+    // "9 numbers -> centre": MLP2 (9->32->32->2), the exact checkpoint.
+    {
+        if mlp2_checkpoint.exists() {
+            let cfg = Mlp2Config::new(32);
+            let model = cfg.init::<Wgpu>(device);
+            let bytes = std::fs::read(mlp2_checkpoint).context("read mlp2 checkpoint")?;
+            let recorder = BinBytesRecorder::<FullPrecisionSettings>::new();
+            let record = recorder.load(bytes, device)?;
+            let model = model.load_record(record);
+
+            let mut cells = Vec::with_capacity(sizes.len());
+            for &size in sizes {
+                let grid = Grid::random(size, size, seed, density);
+                let cases = grid_cases(&grid, rule);
+                let n = cases.len();
+                let mut xs = Vec::with_capacity(n * 9);
+                for (c, _) in &cases {
+                    xs.extend(c.iter().map(|&b| b as f32));
+                }
+                let t: Tensor<Wgpu, 2> = Tensor::from_data(TensorData::new(xs, [n, 9]), device);
+                let _ = model.forward(t.clone()).into_data();
+                let mut times = Vec::with_capacity(reps);
+                for _ in 0..reps {
+                    let start = Instant::now();
+                    let logits = model.forward(t.clone());
+                    let _ = logits.into_data();
+                    times.push(start.elapsed().as_secs_f64());
+                }
+                cells.push((size, Some(median(times))));
+            }
+            rows.push(LadderRow { rung: "9 numbers -> centre".into(), sizes: cells, note: None });
+        } else {
+            let note = format!("skipped: checkpoint not local ({})", mlp2_checkpoint.display());
+            let cells: Vec<(usize, Option<f64>)> = sizes.iter().map(|&s| (s, None)).collect();
+            rows.push(LadderRow { rung: "9 numbers -> centre".into(), sizes: cells, note: Some(note) });
+        }
+    }
+
+    // "stencil (grid -> grid)": whole grid in one forward pass. Capped at
+    // `stencil_max_size` — the current O(9n) `stencil_neighbors` gather is
+    // fine at 16/32/64, but until the crate's stencil implementation is
+    // settled elsewhere, larger sizes are not attempted here rather than
+    // risking a GPU OOM mid-ladder.
+    {
+        if stencil_checkpoint.exists() {
+            let cfg = StencilConfig::new(16, 1, 1);
+            let model = cfg.init::<Wgpu>(device);
+            let bytes = std::fs::read(stencil_checkpoint).context("read stencil checkpoint")?;
+            let recorder = BinBytesRecorder::<FullPrecisionSettings>::new();
+            let record = recorder.load(bytes, device)?;
+            let model = model.load_record(record);
+
+            let mut cells = Vec::with_capacity(sizes.len());
+            let mut skipped = Vec::new();
+            for &size in sizes {
+                if size > stencil_max_size {
+                    cells.push((size, None));
+                    skipped.push(size);
+                    continue;
+                }
+                let n = size * size;
+                let grid = Grid::random(size, size, seed, density);
+                let x_cells: Vec<f32> = grid.cells().iter().map(|&c| c as f32).collect();
+                let x: Tensor<Wgpu, 2> = Tensor::from_data(TensorData::new(x_cells, [1, n]), device);
+                let neighbors: Tensor<Wgpu, 1, Int> = stencil_neighbors(size, size, device);
+                let _ = model.forward(x.clone(), neighbors.clone()).into_data();
+                let mut times = Vec::with_capacity(reps);
+                for _ in 0..reps {
+                    let start = Instant::now();
+                    let logits = model.forward(x.clone(), neighbors.clone());
+                    let _ = logits.into_data();
+                    times.push(start.elapsed().as_secs_f64());
+                }
+                cells.push((size, Some(median(times))));
+            }
+            let note = if skipped.is_empty() {
+                None
+            } else {
+                Some(format!(
+                    "{skipped:?} skipped above --stencil-max-size={stencil_max_size} (pending stencil fix)"
+                ))
+            };
+            rows.push(LadderRow { rung: "stencil (grid -> grid)".into(), sizes: cells, note });
+        } else {
+            let note = format!("skipped: checkpoint not local ({})", stencil_checkpoint.display());
+            let cells: Vec<(usize, Option<f64>)> = sizes.iter().map(|&s| (s, None)).collect();
+            rows.push(LadderRow { rung: "stencil (grid -> grid)".into(), sizes: cells, note: Some(note) });
+        }
+    }
+
+    let mut columns: Vec<usize> = sizes.to_vec();
+    for &s in llm_sizes {
+        if !columns.contains(&s) {
+            columns.push(s);
+        }
+    }
+    columns.sort_unstable();
+
+    let device_str = machine();
+    let json = ladder_json(&device_str, &rows);
+    let table = ladder_table(&rows, &columns);
+
+    println!("{json}");
+    println!("{table}");
+
+    if let Some(path) = out_json {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(path, &json)?;
+        println!("wrote {}", path.display());
+    }
+    if let Some(path) = out_md {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let doc = format!(
+            "# Ladder bench\n\n\
+             machine: {device_str}\n\
+             backend: wgpu\n\
+             board: density {density}, seed {seed}\n\
+             reps: {reps} (median), LLM rungs: 1\n\
+             sizes: {sizes:?}, llm-sizes: {llm_sizes:?}\n\n\
+             ## Table\n\n{table}\n",
+        );
+        std::fs::write(path, doc)?;
+        println!("wrote {}", path.display());
+    }
+
     Ok(())
 }
