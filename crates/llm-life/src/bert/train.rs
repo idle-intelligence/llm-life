@@ -33,7 +33,7 @@ fn tokens_of<B: Backend>(cases: &[([u8; 9], u8)], device: &B::Device) -> (Tensor
     let mut toks = Vec::with_capacity(n * 9);
     let mut labels = Vec::with_capacity(n);
     for (c, y) in cases {
-        toks.extend(c.iter().map(|&b| b as i64));
+        toks.extend(c.iter().map(|&b| b as i32));
         labels.push(*y);
     }
     let t = Tensor::from_data(TensorData::new(toks, [n, 9]), device);
@@ -54,7 +54,7 @@ fn bits_of<B: Backend>(cases: &[([u8; 9], u8)], device: &B::Device) -> (Tensor<B
 fn cross_entropy<B: Backend>(logits: Tensor<B, 2>, labels: &[u8], device: &B::Device) -> Tensor<B, 1> {
     let n = labels.len();
     let targets: Tensor<B, 1, Int> = Tensor::from_data(
-        TensorData::new(labels.iter().map(|&l| l as i64).collect::<Vec<_>>(), [n]),
+        TensorData::new(labels.iter().map(|&l| l as i32).collect::<Vec<_>>(), [n]),
         device,
     );
     burn::nn::loss::CrossEntropyLossConfig::new()
@@ -63,7 +63,7 @@ fn cross_entropy<B: Backend>(logits: Tensor<B, 2>, labels: &[u8], device: &B::De
 }
 
 fn accuracy<B: Backend>(logits: &Tensor<B, 2>, labels: &[u8]) -> f64 {
-    let pred = logits.clone().argmax(1).into_data().into_vec::<i64>().unwrap();
+    let pred = logits.clone().argmax(1).into_data().into_vec::<i32>().unwrap();
     let ok = pred.iter().zip(labels).filter(|(&p, &l)| p as u8 == l).count();
     ok as f64 / labels.len() as f64
 }
