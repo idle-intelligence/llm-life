@@ -291,3 +291,87 @@ pub fn stencil_neighbors<B: Backend>(width: usize, height: usize, device: &B::De
     }
     Tensor::<B, 1, Int>::from_data(burn::tensor::TensorData::new(data, [n * 9]), device)
 }
+
+#[cfg(test)]
+mod tests {
+    //! Equivalence test for the O(n^2)-mask -> O(9n)-gather rewrite
+    //! (docs/runs/2026-09-20-stencil-any-size.md): the dense `[n, n]`
+    //! additive-mask attention this module used to run is reproduced here
+    //! byte-for-byte (same q/k/v/proj/norm/ff weights, same softmax), and
+    //! its output is compared against `StencilBlock::forward`'s new
+    //! neighbour-gather path on random grids. NdArray, not wgpu: this is a
+    //! numerics check, not a benchmark.
+    use super::*;
+    use burn::backend::NdArray;
+    use burn::tensor::Distribution;
+
+    type B = NdArray;
+
+    fn dense_mask(width: usize, height: usize, device: &<B as Backend>::Device) -> Tensor<B, 2> {
+        let g = Grid::new(width, height);
+        let n = width * height;
+        let mut data = vec![f32::NEG_INFINITY; n * n];
+        for i in 0..n {
+            data[i * n + i] = 0.0;
+            for j in g.neighbor_indices(i) {
+                data[i * n + j] = 0.0;
+            }
+        }
+        Tensor::<B, 1>::from_floats(data.as_slice(), device).reshape([n, n])
+    }
+
+    /// The removed `StencilBlock::attention`/`forward`, verbatim, taking a
+    /// dense additive mask instead of the gather table.
+    fn dense_block_forward(blk: &StencilBlock<B>, x: Tensor<B, 3>, mask: Tensor<B, 4>, heads: usize) -> Tensor<B, 3> {
+        let h = blk.norm1.forward(x.clone());
+        let [b, t, d] = h.dims();
+        let hd = d / heads;
+        let split = |y: Tensor<B, 3>| y.reshape([b, t, heads, hd]).permute([0, 2, 1, 3]);
+        let q = split(blk.q.forward(h.clone()));
+        let k = split(blk.k.forward(h.clone()));
+        let v = split(blk.v.forward(h));
+        let scores = q.matmul(k.permute([0, 1, 3, 2])) / (hd as f32).sqrt() + mask;
+        let w = softmax(scores, 3);
+        let a = w.matmul(v).permute([0, 2, 1, 3]).reshape([b, t, d]);
+        let x = x + blk.proj.forward(a);
+        let h = blk.norm2.forward(x.clone());
+        x + blk.ff2.forward(blk.act.forward(blk.ff1.forward(h)))
+    }
+
+    fn dense_forward(model: &StencilOfLife<B>, cells: Tensor<B, 2>, mask: Tensor<B, 2>) -> Tensor<B, 2> {
+        let [b, n] = cells.dims();
+        let mut x = model.embed.forward(cells.reshape([b, n, 1]));
+        let m = mask.reshape([1, 1, n, n]);
+        for blk in &model.blocks {
+            x = dense_block_forward(blk, x, m.clone(), model.n_heads);
+        }
+        model.head.forward(x).reshape([b, n])
+    }
+
+    fn check_equivalence(width: usize, height: usize) {
+        let device = Default::default();
+        let cfg = StencilConfig::new(8, 2, 2);
+        let model: StencilOfLife<B> = cfg.init(&device);
+        let n = width * height;
+        let cells: Tensor<B, 2> = Tensor::random([1, n], Distribution::Bernoulli(0.5), &device);
+
+        let neighbors = stencil_neighbors::<B>(width, height, &device);
+        let got = model.forward(cells.clone(), neighbors);
+
+        let mask = dense_mask(width, height, &device);
+        let want = dense_forward(&model, cells, mask);
+
+        let diff = (got - want).abs().max().into_scalar();
+        assert!(diff < 1e-6, "{width}x{height}: max abs diff {diff} >= 1e-6");
+    }
+
+    #[test]
+    fn gather_matches_dense_mask_16x16() {
+        check_equivalence(16, 16);
+    }
+
+    #[test]
+    fn gather_matches_dense_mask_32x32() {
+        check_equivalence(32, 32);
+    }
+}
