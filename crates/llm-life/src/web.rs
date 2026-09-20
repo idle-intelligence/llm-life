@@ -396,3 +396,109 @@ impl LifeEngine {
         self.cell_tokens
     }
 }
+
+/// BERT of Life (CONCEPT.md §11 backlog item), in the tab: the same 9-token
+/// neighbourhood-as-tokens encoder trained natively
+/// (`bert::train::train_bert`), run here one cell at a time so the
+/// narration strip reads the same way variant A's per-pixel mode does —
+/// "cell (r,c) · 9 tokens · encoder N layers · answer · t ms" — even though
+/// the model itself is tiny enough that a whole-grid batch would be
+/// millisecond-scale either way (CONCEPT.md §14's "one batch" framing is the
+/// PERFORMANCE-panel total, not how each cell is computed here).
+#[wasm_bindgen]
+pub struct BertEngine {
+    device: WgpuDevice,
+    model: Option<crate::bert::model::BertOfLife<Wgpu>>,
+    d_model: usize,
+    n_layers: usize,
+    width: usize,
+    height: usize,
+}
+
+#[wasm_bindgen]
+impl BertEngine {
+    #[wasm_bindgen(constructor)]
+    pub fn new(width: usize, height: usize) -> BertEngine {
+        BertEngine {
+            device: llm_wasm::web::wgpu_device()
+                .expect("initWgpuDevice() must be awaited before constructing BertEngine"),
+            model: None,
+            d_model: 0,
+            n_layers: 0,
+            width,
+            height,
+        }
+    }
+
+    #[wasm_bindgen(js_name = setGrid)]
+    pub fn set_grid(&mut self, width: usize, height: usize) {
+        self.width = width;
+        self.height = height;
+    }
+
+    /// Load a checkpoint written by `bert::train::train_bert`
+    /// (`BinBytesRecorder<FullPrecisionSettings>`, cross-backend — trained on
+    /// `Autodiff<Wgpu>` on the 3080, loaded here straight onto `Wgpu`, no
+    /// conversion step).
+    #[wasm_bindgen(js_name = loadCheckpoint)]
+    pub fn load_checkpoint(
+        &mut self,
+        bytes: Vec<u8>,
+        d_model: usize,
+        n_layers: usize,
+        n_heads: usize,
+    ) -> Result<(), JsError> {
+        use burn::module::Module;
+        use burn::record::{BinBytesRecorder, FullPrecisionSettings, Recorder};
+
+        let cfg = crate::bert::model::BertConfig::small(d_model, n_layers, n_heads);
+        let model = cfg.init::<Wgpu>(&self.device);
+        let recorder = BinBytesRecorder::<FullPrecisionSettings>::new();
+        let record = recorder
+            .load(bytes, &self.device)
+            .map_err(|e| JsError::new(&format!("load checkpoint: {e}")))?;
+        self.model = Some(model.load_record(record));
+        self.d_model = d_model;
+        self.n_layers = n_layers;
+        log(&format!(
+            "[llm-life] BERT of Life checkpoint loaded: d_model={d_model} n_layers={n_layers} n_heads={n_heads}"
+        ));
+        Ok(())
+    }
+
+    /// p(alive) for one cell: the same 9-token case (`bert::data::case_at`
+    /// order — 8 neighbours then self) forwarded through the tiny encoder,
+    /// one WebGPU dispatch per cell, `into_data_async` readback.
+    #[wasm_bindgen(js_name = stepCell)]
+    pub async fn step_cell(&self, cells: Vec<u8>, index: usize) -> Result<f32, JsError> {
+        let model = self.model.as_ref().ok_or_else(|| JsError::new("not loaded"))?;
+        if cells.len() != self.width * self.height {
+            return Err(JsError::new("cells length does not match the grid"));
+        }
+        let grid = Grid::from_cells(self.width, self.height, cells);
+        let case = crate::bert::data::case_at(&grid, index);
+        let toks: Vec<i64> = case.iter().map(|&b| b as i64).collect();
+        let t: Tensor<Wgpu, 2, burn::tensor::Int> =
+            Tensor::from_data(burn::tensor::TensorData::new(toks, [1, 9]), &self.device);
+        let logits = model.forward(t);
+        let probs = burn::tensor::activation::softmax(logits, 1);
+        let data = probs
+            .into_data_async()
+            .await
+            .map_err(|e| JsError::new(&format!("readback: {e:?}")))?;
+        let v = data
+            .into_vec::<f32>()
+            .map_err(|_| JsError::new("readback: bad dtype"))?;
+        Ok(v[1])
+    }
+
+    #[wasm_bindgen(js_name = dModel)]
+    pub fn d_model_js(&self) -> usize {
+        self.d_model
+    }
+
+    #[wasm_bindgen(js_name = numLayers)]
+    pub fn num_layers_js(&self) -> usize {
+        self.n_layers
+    }
+}

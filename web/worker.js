@@ -5,12 +5,17 @@
 // engine reads through a sharded cursor for exactly this reason. The dev
 // server (web/serve.py, stdlib http.server) doesn't support Range requests,
 // so this streams the single GET response and slices it into chunks itself.
-import init, { LifeEngine, initWgpuDevice, otsuThreshold, zscoreThreshold } from './pkg-llm/llm_life.js';
+import init, { LifeEngine, BertEngine, initWgpuDevice, otsuThreshold, zscoreThreshold } from './pkg-llm/llm_life.js';
 
 let engine = null;
 // Tracks the grid size last given to `engine.setGrid`, so a run of `step`
 // messages at the same size doesn't call it redundantly.
 let engineGrid = null;
+
+// BERT of Life — a separate, much smaller wasm-bindgen engine (no GGUF, no
+// tokenizer, no KV cache), loaded independently of `engine` above.
+let bertEngine = null;
+let bertGrid = null;
 
 const CHUNK = 64 * 1024 * 1024;
 
@@ -61,11 +66,22 @@ self.onmessage = (e) => {
   enqueue(() => handle(id, type, payload, reply));
 };
 
+// `init()` (wasm module) and `initWgpuDevice()` (the shared WebGPU device
+// both engines construct against) are each idempotent to call once; guarded
+// here so BERT of Life can load on its own, without the big LLM engine ever
+// having been loaded, and vice versa.
+let wasmInited = false;
+async function ensureWasm() {
+  if (wasmInited) return;
+  await init();
+  await initWgpuDevice();
+  wasmInited = true;
+}
+
 async function handle(id, type, payload, reply) {
   try {
     if (type === 'load') {
-      await init();
-      await initWgpuDevice();
+      await ensureWasm();
       engine = new LifeEngine(payload.width, payload.height);
       engineGrid = { width: payload.width, height: payload.height };
       const chunks = await fetchChunks(payload.ggufUrl, (f) =>
@@ -88,6 +104,13 @@ async function handle(id, type, payload, reply) {
         adapter = { name, bytes: bytes.length };
       }
       reply(true, { packedTokens: engine.packedTokens(), cellTokens: engine.cellTokens(), adapter });
+    } else if (type === 'loadBert') {
+      await ensureWasm();
+      bertEngine = new BertEngine(payload.width, payload.height);
+      bertGrid = { width: payload.width, height: payload.height };
+      const bytes = new Uint8Array(await (await fetch(payload.checkpointUrl)).arrayBuffer());
+      bertEngine.loadCheckpoint(bytes, payload.dModel, payload.nLayers, payload.nHeads);
+      reply(true, { dModel: bertEngine.dModel(), numLayers: bertEngine.numLayers() });
     } else if (type === 'loadAdapter') {
       // Swap the runtime LoRA adapter without a full model reload — replaces
       // whatever adapter is currently applied (LifeEngine::loadAdapter does
@@ -96,6 +119,40 @@ async function handle(id, type, payload, reply) {
       const name = payload.adapterUrl.split('/').pop().replace(/\.bin$/, '');
       engine.loadAdapter(bytes, name.includes('norules'));
       reply(true, { name, bytes: bytes.length });
+    } else if (type === 'step' && payload.variant === 'bert') {
+      // BERT of Life: a separate, much smaller engine — one forward per
+      // cell, no chunking (the model is tiny enough that per-cell round
+      // trips are still fast), one 'bertCell' narration message per cell.
+      const t0 = performance.now();
+      if (!bertGrid || bertGrid.width !== payload.width || bertGrid.height !== payload.height) {
+        bertEngine.setGrid(payload.width, payload.height);
+        bertGrid = { width: payload.width, height: payload.height };
+      }
+      const cells = new Uint8Array(payload.cells);
+      const n = cells.length;
+      const p = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const cellT0 = performance.now();
+        const v = await bertEngine.stepCell(cells, i);
+        const ms = performance.now() - cellT0;
+        p[i] = v;
+        self.postMessage({ type: 'bertCell', index: i, p: v, ms });
+      }
+      self.postMessage({ type: 'progress', stage: 'threshold' });
+      const pArr = Float32Array.from(p);
+      const thresholdValue = payload.threshold === 'zscore'
+        ? zscoreThreshold(pArr, payload.k ?? 2.0)
+        : otsuThreshold(pArr);
+      const binarized = Array.from(p, (v) => (v > thresholdValue ? 1 : 0));
+      self.postMessage({ type: 'progress', stage: 'done' });
+      reply(true, {
+        pAlive: Array.from(p),
+        binarized,
+        thresholdValue,
+        chunks: n,
+        tokens: n * 9,
+        seconds: (performance.now() - t0) / 1000,
+      });
     } else if (type === 'step') {
       const t0 = performance.now();
       // The engine packs for whatever grid it was last told about; variant B

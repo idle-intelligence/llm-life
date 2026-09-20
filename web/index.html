@@ -247,6 +247,7 @@
         <label><input type="radio" name="mode" value="classical" checked /> classical</label>
         <label><input type="radio" name="mode" value="llm" /> LLM (variant B)</label>
         <label><input type="radio" name="mode" value="llm-a" /> LLM (variant A)</label>
+        <label><input type="radio" name="mode" value="bert" /> BERT of Life</label>
     </div>
     <div class="radios" id="grid-choice">
         <label><input type="radio" name="gridsize" value="32" /> 32&times;32</label>
@@ -372,7 +373,7 @@ let W = 64, H = 64;
 // (32/64/128); variant A stays fixed at 16x16 (its per-cell cost makes
 // larger grids impractical).
 let llmGridSize = 64;
-const GRID_FOR_MODE = () => ({ classical: llmGridSize, llm: llmGridSize, 'llm-a': 16 });
+const GRID_FOR_MODE = () => ({ classical: llmGridSize, llm: llmGridSize, 'llm-a': 16, bert: 16 });
 const GENS_PER_SEC = 4;   // deliberately slow: you are meant to watch it
 
 const els = {
@@ -472,6 +473,7 @@ let thresholdName = 'otsu', thresholdK = 2.0, lastThresholdValue = null;
 let narrationStyle = 'perpixel';
 let adapterName = 'a-norules';
 let cellTokensCount = null;
+let bertNumLayers = null;
 let narrationLines = [];
 let cellsNarrated = 0, cellsThisGen = 0, chunkTimingsMs = [];
 let gridCellsForStep = null;
@@ -528,14 +530,40 @@ function handleChunkNarration({ firstCell, pAlive, ms }) {
   els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`;
 }
 
+// BERT of Life narration: one line per cell, same "cell (r,c)" framing as
+// variant A's per-pixel mode but naming the encoder instead of a token
+// prompt — CONCEPT.md §14's per-rung narration convention applied to this
+// rung: `cell (r,c) · 9 tokens · encoder N layers · answer 1 · 0.08 ms`.
+function handleBertCellNarration({ index, p, ms }) {
+  chunkTimingsMs.push({ ms, chunkSize: 1 });
+  const r = Math.floor(index / W), c = index % W;
+  const answer = p >= 0.5 ? 1 : 0;
+  const conf = answer === 1 ? p : 1 - p;
+  narrationPush(`cell (${r},${c}) · 9 tokens · encoder ${bertNumLayers} layers · answer ${answer} (p ${conf.toFixed(2)}) · ${ms.toFixed(2)} ms`);
+  cellsNarrated++;
+  const genLabel = generation + 1;
+  narrationPush(`cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`);
+  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`;
+}
+
+let bertMsPerCell = null;
+
 function finishNarrationPerf() {
   const totalMs = chunkTimingsMs.reduce((s, c) => s + c.ms, 0);
   const totalCells = chunkTimingsMs.reduce((s, c) => s + c.chunkSize, 0);
   if (totalCells === 0) return;
-  lastMsPerCell = totalMs / totalCells;
-  lastCellsPerSec = 1000 / lastMsPerCell;
-  lastProj64 = lastMsPerCell * 64 * 64 / 1000;
-  els.mspercell.textContent = lastMsPerCell.toFixed(1);
+  const msPerCell = totalMs / totalCells;
+  // Variant A and BERT of Life each keep their own ms/cell — they are
+  // different engines, so the ladder's LLM and BERT rows must not clobber
+  // each other's last measurement.
+  if (mode === 'bert') {
+    bertMsPerCell = msPerCell;
+  } else {
+    lastMsPerCell = msPerCell;
+  }
+  lastCellsPerSec = 1000 / msPerCell;
+  lastProj64 = msPerCell * 64 * 64 / 1000;
+  els.mspercell.textContent = msPerCell.toFixed(1);
   els.cellspersec.textContent = lastCellsPerSec.toFixed(1);
   els.proj64.textContent = lastProj64.toFixed(1);
 }
@@ -602,9 +630,16 @@ function render() {
   els.f1.textContent = f1.toFixed(3);
 }
 
+// True for every mode that runs through the worker/engine (LLM variants A/B
+// and BERT of Life) rather than the classical in-page loop.
+function isModelMode(m) {
+  return m === 'llm' || m === 'llm-a' || m === 'bert';
+}
+
 async function stepOnce() {
-  if (mode === 'llm' || mode === 'llm-a') {
-    if (!llmReady) { log('LLM mode: no model loaded'); return; }
+  if (isModelMode(mode)) {
+    const ready = mode === 'bert' ? bertReady : llmReady;
+    if (!ready) { log('mode: no model loaded'); return; }
     return llmStepOnce();
   }
   const t0 = performance.now();
@@ -648,7 +683,7 @@ function setPlaying(on) {
   playing = on;
   els.play.textContent = on ? 'Pause' : 'Play';
   if (timer) { clearInterval(timer); timer = null; }
-  if (mode === 'llm' || mode === 'llm-a') {
+  if (isModelMode(mode)) {
     if (on) llmPlayLoop();
     return;
   }
@@ -728,11 +763,25 @@ const LLM_MODEL = {
   adapterUrl: './lora-a-norules-300.bin',
 };
 
+// BERT of Life (CONCEPT.md §11 backlog item): the smallest transformer
+// encoder that is exact on all 512 cases (`docs/runs/2026-09-20-bert.md`).
+// Config must match the checkpoint's training config — `BertEngine`'s
+// `loadCheckpoint` rebuilds the module from these dims before loading the
+// weight bytes. Served from web/, gitignored, like the LoRA files above.
+const BERT_MODEL = {
+  checkpointUrl: './bert-best.bin',
+  dModel: 32,
+  nLayers: 2,
+  nHeads: 2,
+};
+
 for (const r of document.querySelectorAll('input[name=mode]')) {
   r.addEventListener('change', async () => {
     if (!r.checked) return;
     window.__app.setMode(r.value);
-    if (r.value.startsWith('llm') && !llmReady && !loading) {
+    if (r.value === 'bert' && !bertReady && !bertLoading) {
+      try { await loadBert(BERT_MODEL); } catch (e) { /* logged in loadBert */ }
+    } else if (r.value.startsWith('llm') && !llmReady && !loading) {
       try { await loadLlm(LLM_MODEL); } catch (e) { /* logged in loadLlm */ }
     }
   });
@@ -784,6 +833,7 @@ document.getElementById('c-model').addEventListener('click', (e) => {
 // does UI only).
 // ---------------------------------------------------------------------------
 let worker = null, nextId = 1, pending = new Map(), llmReady = false, loading = null;
+let bertReady = false, bertLoading = null;
 let genPhase = 'running';
 let lastProgressStage = null;
 
@@ -802,6 +852,10 @@ function ensureWorker() {
     const { id, ok, result, type, stage, fraction } = e.data;
     if (type === 'chunk') {
       handleChunkNarration(e.data);
+      return;
+    }
+    if (type === 'bertCell') {
+      handleBertCellNarration(e.data);
       return;
     }
     if (type === 'progress') {
@@ -851,6 +905,24 @@ async function loadLlm(spec) {
   return loading;
 }
 
+async function loadBert(spec) {
+  ensureWorker();
+  if (!bertLoading) {
+    setStatus('loading', 'Loading BERT of Life…');
+    log('loading BERT of Life checkpoint into the worker…');
+    bertLoading = ask('loadBert', { ...spec, width: W, height: H })
+      .then((info) => {
+        bertReady = true;
+        bertNumLayers = info.numLayers;
+        setStatus('ready', 'Ready');
+        log(`BERT of Life loaded: d_model=${info.dModel} layers=${info.numLayers}`);
+        return info;
+      })
+      .catch((e) => { bertLoading = null; setStatus('error', 'Load failed'); log('load failed: ' + e.message); throw e; });
+  }
+  return bertLoading;
+}
+
 const ADAPTER_URL = { 'a-norules': './lora-a-norules-300.bin', 'a-rules': './lora-a-rules-300.bin' };
 
 async function setAdapter(name) {
@@ -869,7 +941,7 @@ async function llmStepOnce() {
   genPhase = 'running';
   generating = true;
   setStatus('generating', 'Generating…');
-  if (mode === 'llm-a') {
+  if (mode === 'llm-a' || mode === 'bert') {
     gridCellsForStep = Array.from(app.cells());
     resetNarrationForGen();
   }
@@ -882,7 +954,7 @@ async function llmStepOnce() {
   try {
     r = await ask('step', {
       cells: Array.from(app.cells()),
-      variant: mode === 'llm-a' ? 'a' : 'b',
+      variant: mode === 'llm-a' ? 'a' : mode === 'bert' ? 'bert' : 'b',
       width: W,
       height: H,
       threshold: thresholdName,
@@ -917,7 +989,7 @@ async function llmStepOnce() {
   lastThresholdValue = r.thresholdValue;
   lastChunks = r.chunks;
   lastTokens = r.tokens;
-  if (mode === 'llm-a') finishNarrationPerf();
+  if (mode === 'llm-a' || mode === 'bert') finishNarrationPerf();
   // The model's *binarized* output (label-free threshold, not 0.5) becomes
   // the next state it is fed — free-running, not teacher-forced: there is no
   // teacher-forced mode in the tab. Truth advances independently from its own
@@ -929,7 +1001,7 @@ async function llmStepOnce() {
   // A grid-size change requested mid-generation (`window.__app.setGrid`)
   // was deferred; apply it now that this generation's result has already
   // landed on the old-sized `app`/`truth`.
-  if (pendingGridSize !== null && mode !== 'llm-a') {
+  if (pendingGridSize !== null && mode !== 'llm-a' && mode !== 'bert') {
     const n = pendingGridSize;
     pendingGridSize = null;
     setGridSize(n);
@@ -1006,13 +1078,14 @@ function runLadder() {
     lookupS[n] = timeIt(() => jsLifeStepLookup(cells, n, n, lookupTable), reps);
   }
   const llmSec = (n) => (lastMsPerCell == null ? null : lastMsPerCell * n * n / 1000);
+  const bertSec = (n) => (bertMsPerCell == null ? null : bertMsPerCell * n * n / 1000);
   const fmt = (v) => (v == null ? '—' : v < 1e-3 ? v.toExponential(2) : v.toFixed(4));
   const rows = [
     { name: 'CPU loop (JS, in the page)', s16: loopS[16], s32: loopS[32], s64: loopS[64], native: '—', iou: '1.000', desc: 'plain nested loop over 8 neighbours, one generation, in the tab' },
     { name: '512-entry lookup (JS)', s16: lookupS[16], s32: lookupS[32], s64: lookupS[64], native: '—', iou: '1.000', desc: '9-bit index (8 neighbours + self) into a precomputed 512-entry table' },
     { name: 'LLM per pixel (adapter)', s16: llmSec(16), s32: llmSec(32), s64: llmSec(64), native: '2.5 / 11 / 41', iou: '1.000', desc: 'one forward per cell, packed in chunks of 64, a-norules adapter' },
     { name: 'LLM batched (adapter)', s16: llmSec(16), s32: llmSec(32), s64: llmSec(64), native: '2.5 / 11 / 41', iou: '1.000', desc: 'identical forwards to per-pixel — narration names the batch mechanism' },
-    { name: 'BERT of Life', s16: null, s32: null, s64: null, native: '—', iou: '—', desc: 'pending: small encoder classifying 0/1 per cell, batched, no tokens' },
+    { name: 'BERT of Life', s16: bertSec(16), s32: bertSec(32), s64: bertSec(64), native: 'see docs/runs/2026-09-20-bert.md', iou: '1.000', desc: 'small transformer encoder (d=32, L=2), one forward per cell in the tab (16² measured, 32²/64² projected), CPU ndarray/native wgpu on the 3080 from the run doc' },
     { name: 'whole-board thinking model', s16: null, s32: null, s64: null, native: '—', iou: '—', desc: 'pending: one big model reasons over the whole board as text, needs > 10 GB VRAM' },
   ];
   ladderRows = rows;
@@ -1026,7 +1099,7 @@ function runLadder() {
 }
 els.ladderBtn.onclick = () => runLadder();
 
-els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell — per-pixel narrated (default) or batched, same forwards either way. Click a cell in the LLM of Life grid to toggle it.';
+els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell — per-pixel narrated (default) or batched, same forwards either way. BERT of Life is a small transformer encoder trained from scratch (docs/runs/2026-09-20-bert.md) — also 16×16, also one forward per cell, but every token is the raw 0/1 neighbourhood, not text. Click a cell in the LLM of Life grid to toggle it.';
 
 window.__app = {
   ready: true,
@@ -1041,8 +1114,12 @@ window.__app = {
     setGridSize(GRID_FOR_MODE()[m] ?? 64);
     resync();
     const isA = m === 'llm-a';
+    const isBert = m === 'bert';
+    // BERT of Life narrates per-cell like variant A's per-pixel mode, but
+    // has no batched alternative — the narration log shows, the style radio
+    // (perpixel/batched) doesn't.
     els.narrationChoice.style.display = isA ? '' : 'none';
-    els.narrationWrap.style.display = isA ? '' : 'none';
+    els.narrationWrap.style.display = isA || isBert ? '' : 'none';
     els.adapterBtn.disabled = !isA || !llmReady;
     return mode;
   },
@@ -1052,7 +1129,7 @@ window.__app = {
     if (![32, 64, 128].includes(n)) throw new Error('grid size must be 32, 64 or 128');
     llmGridSize = n;
     for (const r of document.querySelectorAll('input[name=gridsize]')) r.checked = Number(r.value) === n;
-    if (mode !== 'llm-a') {
+    if (mode !== 'llm-a' && mode !== 'bert') {
       // Mid-generation, resizing `app`/`truth` now would apply the in-flight
       // result (sized for the old grid) to a mismatched grid. Defer instead —
       // `llmStepOnce` applies it once that generation lands.
@@ -1115,6 +1192,8 @@ window.__app = {
   cellsPerSecond: () => lastCellsPerSec,
   projectedSecondsPerGen64: () => lastProj64,
   adapter: () => adapterName,
+  bertReady: () => bertReady,
+  loadBert,
   setAdapter,
   runLadder: () => runLadder(),
   ladderRows: () => ladderRows,

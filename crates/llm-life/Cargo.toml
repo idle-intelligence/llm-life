@@ -22,6 +22,10 @@ web = [
     "dep:wasm-bindgen-futures",
     "dep:web-sys",
 ]
+# CPU backend for BERT of Life's ns/cell laptop measurement — burn-ndarray,
+# not wgpu, so it never touches the M2's shared GPU (CLAUDE.md "GPU and
+# measurements"). Consumer-crate-only, per CLAUDE.md "Code".
+cpu = ["burn/ndarray"]
 
 [dependencies]
 life = { path = "../life" }

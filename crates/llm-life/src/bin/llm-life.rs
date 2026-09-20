@@ -243,6 +243,24 @@ enum Command {
         #[arg(long, default_value = "1")]
         seed: u64,
     },
+    /// ns/cell for a BERT-of-Life checkpoint on the CPU (burn-ndarray, not
+    /// wgpu — safe to run on the laptop while the GPU belongs to another
+    /// worker). Requires `--features cpu`.
+    #[cfg(feature = "cpu")]
+    BenchBertCpu {
+        #[arg(long)]
+        checkpoint: PathBuf,
+        #[arg(long, default_value = "64")]
+        d_model: usize,
+        #[arg(long, default_value = "2")]
+        n_layers: usize,
+        #[arg(long, default_value = "2")]
+        n_heads: usize,
+        #[arg(long, value_delimiter = ',', default_value = "16,32,64")]
+        sizes: Vec<usize>,
+        #[arg(long, default_value = "5")]
+        reps: usize,
+    },
     /// Re-score an already-written `<tag>-<seed>-gen1-{palive,true}.pgm`
     /// pair at the Otsu and z-score (k=2) thresholds, label-free, no rerun.
     Rescore {
@@ -1134,8 +1152,69 @@ fn main() -> Result<()> {
             lr,
             seed,
         } => train_bert_sweep(&out, &run_doc, steps, lr, seed),
+        #[cfg(feature = "cpu")]
+        Command::BenchBertCpu {
+            checkpoint,
+            d_model,
+            n_layers,
+            n_heads,
+            sizes,
+            reps,
+        } => bench_bert_cpu(&checkpoint, d_model, n_layers, n_heads, &sizes, reps),
         Command::Rescore { dir, tag, seed } => rescore(&dir, &tag, &seed),
     }
+}
+
+#[cfg(feature = "cpu")]
+fn bench_bert_cpu(
+    checkpoint: &Path,
+    d_model: usize,
+    n_layers: usize,
+    n_heads: usize,
+    sizes: &[usize],
+    reps: usize,
+) -> Result<()> {
+    use burn::backend::NdArray;
+    use burn::module::Module;
+    use burn::record::{BinBytesRecorder, FullPrecisionSettings, Recorder};
+    use burn::tensor::{Int, Tensor, TensorData};
+    use llm_life::bert::data::grid_cases;
+    use llm_life::bert::model::BertConfig;
+
+    let device = <NdArray as burn::tensor::backend::Backend>::Device::default();
+    let cfg = BertConfig::small(d_model, n_layers, n_heads);
+    let model: llm_life::bert::model::BertOfLife<NdArray> = cfg.init(&device);
+    let bytes = std::fs::read(checkpoint).context("read checkpoint")?;
+    let recorder = BinBytesRecorder::<FullPrecisionSettings>::new();
+    let record = recorder.load(bytes, &device)?;
+    let model = model.load_record(record);
+
+    let rule = Rule::life();
+    println!("| grid | cells | median s/gen | ns/cell |");
+    println!("|---|---|---|---|");
+    for &size in sizes {
+        let grid = Grid::random(size, size, 1, 0.28);
+        let cases = grid_cases(&grid, &rule);
+        let n = cases.len();
+        let mut toks = Vec::with_capacity(n * 9);
+        for (c, _) in &cases {
+            toks.extend(c.iter().map(|&b| b as i64));
+        }
+        let t: Tensor<NdArray, 2, Int> = Tensor::from_data(TensorData::new(toks, [n, 9]), &device);
+
+        let _ = model.forward(t.clone()); // warm-up
+        let mut times = Vec::with_capacity(reps);
+        for _ in 0..reps {
+            let start = Instant::now();
+            let logits = model.forward(t.clone());
+            let _ = logits.into_data();
+            times.push(start.elapsed().as_secs_f64());
+        }
+        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let m = times[times.len() / 2];
+        println!("| {size}x{size} | {n} | {m:.6} | {:.1} |", 1e9 * m / n as f64);
+    }
+    Ok(())
 }
 
 /// Sweep BERT of Life sizes + baselines, writing checkpoints and one run doc
