@@ -883,13 +883,6 @@ function isLlmMode(m) {
   return m === 'llm' || m === 'llm-a';
 }
 
-// vec-stencil allocates a dense n*n attention mask (crates/llm-life/src/vector/model.rs);
-// 128^2 is ~1 GB and 256^2 is ~17 GB, so it OOMs the tab. Capped at 64 until
-// that's fixed engine-side.
-function isMemCappedMode(m) {
-  return m === 'vec-stencil';
-}
-
 function formatDuration(seconds) {
   if (seconds == null || !isFinite(seconds)) return 'an unknown time';
   if (seconds < 60) return `${seconds.toFixed(0)} s`;
@@ -909,15 +902,12 @@ function llmSizeEstimateSeconds(n) {
 
 function updateGridButtons() {
   const llm = isLlmMode(mode);
-  const memCapped = isMemCappedMode(mode);
   for (const btn of document.querySelectorAll('.gridsize-btn')) {
     const n = Number(btn.dataset.size);
     btn.classList.toggle('primary', n === gridSize);
-    const disabled = (llm || memCapped) && n > 64;
+    const disabled = llm && n > 64;
     btn.disabled = disabled;
-    if (memCapped && n > 64) {
-      btn.title = 'stencil above 64 needs the engine fix';
-    } else if (llm && disabled) {
+    if (llm && disabled) {
       btn.title = `disabled for LLM mode — would be ≈ ${formatDuration(llmSizeEstimateSeconds(n))} per generation`;
     } else if (llm && n > 32) {
       btn.title = armedGridSize === n ? 'click again to confirm' : 'click to see a time estimate first';
@@ -1297,7 +1287,7 @@ function runLadder() {
 }
 els.ladderBtn.onclick = () => runLadder();
 
-els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell — per-pixel narrated (default) or batched, same forwards either way. BERT of Life is a small transformer encoder trained from scratch — also 16×16, also one forward per cell, but every token is the raw 0/1 neighbourhood, not text. "9 numbers -> centre" is the same neighbourhood with no tokens at all — an MLP on 9 floats, one forward per cell. "stencil (grid -> grid)" is jacobi2000\'s stencil-masked attention with one channel: the whole grid in one forward pass, no per-cell loop, and it generalises from 16×16 to 32×32 with the same trained weights. Click a cell in the LLM of Life grid to toggle it.';
+els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell — per-pixel narrated (default) or batched, same forwards either way. BERT of Life is a small transformer encoder trained from scratch — also 16×16, also one forward per cell, but every token is the raw 0/1 neighbourhood, not text. "9 numbers -> centre" is the same neighbourhood with no tokens at all — an MLP on 9 floats, one forward per cell. "stencil (grid -> grid)" is a stencil-masked attention layer with one channel: the whole grid in one forward pass, no per-cell loop, and it generalises from 16×16 up through 256×256 with the same trained weights. Click a cell in the LLM of Life grid to toggle it.';
 
 window.__app = {
   ready: true,
@@ -1313,9 +1303,6 @@ window.__app = {
     if (isLlmMode(m) && gridSize > 64) {
       log(`grid size clamped to 32×32 for ${m} mode (128/256 are not offered for the LLM rungs)`);
       gridSize = 32;
-    } else if (isMemCappedMode(m) && gridSize > 64) {
-      log(`grid size clamped to 64×64 for ${m} mode (above 64 needs the engine fix)`);
-      gridSize = 64;
     }
     updateGridButtons();
     setGridSize(gridSize);
@@ -1331,18 +1318,13 @@ window.__app = {
     return mode;
   },
   // Grid size, shared by every mode's classical and model panels. The
-  // per-cell tiny models accept any of 16/32/64/128/256 immediately; the
-  // stencil model disables 128/256 outright (dense n*n attention mask OOMs
-  // above 64 until the engine is fixed); the LLM rungs (llm, llm-a) also
-  // disable 128/256 outright and require a size above 32 to be requested
-  // twice in a row (the first call only logs the time estimate) before it
-  // is applied.
+  // per-cell tiny models and the stencil model (its neighbour-gather mask,
+  // not a dense one, since crates/llm-life's O(9n) rewrite) accept any of
+  // 16/32/64/128/256 immediately; the LLM rungs (llm, llm-a) disable
+  // 128/256 outright and require a size above 32 to be requested twice in a
+  // row (the first call only logs the time estimate) before it is applied.
   setGrid: (n) => {
     if (![16, 32, 64, 128, 256].includes(n)) throw new Error('grid size must be one of 16, 32, 64, 128, 256');
-    if (isMemCappedMode(mode) && n > 64) {
-      log(`${n}×${n} is disabled for stencil mode — needs the engine fix for its dense attention mask`);
-      return gridSize;
-    }
     if (isLlmMode(mode) && n > 64) {
       log(`${n}×${n} is disabled for LLM mode — ≈ ${formatDuration(llmSizeEstimateSeconds(n))} per generation on this machine`);
       return gridSize;
