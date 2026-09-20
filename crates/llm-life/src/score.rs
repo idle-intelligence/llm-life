@@ -17,6 +17,18 @@ pub struct GenScore {
     pub precision: f64,
     /// Alias of `live_recall`: |pred alive ∩ true alive| / |true_live|.
     pub recall: f64,
+    /// Alias of `live_recall`/`recall`, spelled out so a table header can say
+    /// "alive recall" next to "dead recall" without the reader having to know
+    /// they're the same number under three names.
+    pub alive_recall: f64,
+    /// Fraction of true-*dead* cells the model also calls dead (specificity):
+    /// |pred dead ∩ true dead| / |true_dead|. This is the number a dead-cell
+    /// majority can inflate `accuracy` around while alive_recall looks fine —
+    /// it catches the model over-predicting alive (TC's "13 instead of
+    /// 5" case) even when every true-alive cell is still covered.
+    pub dead_recall: f64,
+    /// Alias of `precision`: |pred alive ∩ true alive| / |model_live|.
+    pub alive_precision: f64,
     /// Harmonic mean of precision and recall. 0.0 when both are 0.
     pub f1: f64,
     /// IoU (Jaccard) of the alive sets: |pred ∧ true| / |pred ∨ true|.
@@ -31,6 +43,14 @@ pub struct GenScore {
     pub wrong_cells: usize,
     pub true_live: usize,
     pub model_live: usize,
+    /// True positives: predicted alive, true alive.
+    pub tp: usize,
+    /// False positives: predicted alive, true dead.
+    pub fp: usize,
+    /// False negatives: predicted dead, true alive.
+    pub fn_: usize,
+    /// True negatives: predicted dead, true dead.
+    pub tn: usize,
 }
 
 pub fn score(truth: &Grid, model: &Grid, p_alive: &[f32], generation: usize) -> GenScore {
@@ -64,12 +84,20 @@ pub fn score(truth: &Grid, model: &Grid, p_alive: &[f32], generation: usize) -> 
     } else {
         hit as f64 / model_live as f64
     };
+    let tp = hit;
+    let fp = model_live - hit;
+    let fn_ = true_live - hit;
+    let tn = dead - fp;
+    let dead_recall = if dead == 0 { 1.0 } else { tn as f64 / dead as f64 };
     GenScore {
         generation,
         accuracy: 1.0 - wrong as f64 / n as f64,
         live_recall: recall,
         precision,
         recall,
+        alive_recall: recall,
+        dead_recall,
+        alive_precision: precision,
         f1: if precision + recall == 0.0 {
             0.0
         } else {
@@ -81,6 +109,10 @@ pub fn score(truth: &Grid, model: &Grid, p_alive: &[f32], generation: usize) -> 
         wrong_cells: wrong,
         true_live,
         model_live,
+        tp,
+        fp,
+        fn_,
+        tn,
     }
 }
 
@@ -342,6 +374,37 @@ mod tests {
         assert!((s.precision - 5.0 / 13.0).abs() < 1e-9);
         assert!((s.iou - 5.0 / 13.0).abs() < 1e-9); // union is just model_live here
         assert!(s.iou < 0.4, "13-vs-5 overshoot should read far below 'looks right'");
+    }
+
+    // The owner's exact case, restated for the new per-class fields: 5 true
+    // alive, model predicts 13 alive (8 false positives, 0 false negatives).
+    // alive_recall reads perfect while dead_recall and IoU expose the
+    // overshoot that plain accuracy hides.
+    #[test]
+    fn per_class_fields_expose_the_13_vs_5_overshoot() {
+        let mut true_cells = vec![0u8; 16];
+        for i in 0..5 {
+            true_cells[i] = 1;
+        }
+        let truth = Grid::from_cells(4, 4, true_cells);
+        let mut model_cells = vec![0u8; 16];
+        for i in 0..13 {
+            model_cells[i] = 1;
+        }
+        let model = Grid::from_cells(4, 4, model_cells);
+        let p_alive = vec![0.9f32; 16];
+        let s = score(&truth, &model, &p_alive, 1);
+
+        assert_eq!(s.tp, 5);
+        assert_eq!(s.fp, 8);
+        assert_eq!(s.fn_, 0);
+        assert_eq!(s.tn, 3); // 11 true-dead cells, 8 of them false positives
+
+        assert!((s.alive_recall - 1.0).abs() < 1e-9);
+        assert!((s.alive_precision - 5.0 / 13.0).abs() < 1e-9);
+        assert!(s.dead_recall < 1.0);
+        assert!((s.dead_recall - 3.0 / 11.0).abs() < 1e-9);
+        assert!((s.iou - 5.0 / 13.0).abs() < 1e-9);
     }
 
     #[test]
