@@ -139,11 +139,15 @@ async function handle(id, type, payload, reply) {
         self.postMessage({ type: 'bertCell', index: i, p: v, ms });
       }
       self.postMessage({ type: 'progress', stage: 'threshold' });
-      const pArr = Float32Array.from(p);
-      const thresholdValue = payload.threshold === 'zscore'
-        ? zscoreThreshold(pArr, payload.k ?? 2.0)
-        : otsuThreshold(pArr);
-      const binarized = Array.from(p, (v) => (v > thresholdValue ? 1 : 0));
+      // BERT of Life is a calibrated 2-class classifier trained on the exact
+      // rule, not a repurposed answer-token logit like the LLM variants —
+      // 0.5 is the threshold it was trained and evaluated against
+      // (`bert::train`'s `rollout_iou`), so this rung uses it directly
+      // rather than the label-free Otsu/z-score thresholds the noisy LLM
+      // rungs need. Matches the offline sweep's IoU 1.000
+      // (docs/runs/2026-09-20-bert.md) instead of silently drifting from it.
+      const thresholdValue = 0.5;
+      const binarized = Array.from(p, (v) => (v >= thresholdValue ? 1 : 0));
       self.postMessage({ type: 'progress', stage: 'done' });
       reply(true, {
         pAlive: Array.from(p),
