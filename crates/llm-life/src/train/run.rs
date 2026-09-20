@@ -46,6 +46,12 @@ pub struct TrainArgs {
     /// Stop after this many seconds, whatever `steps` says — the GPU is
     /// shared, so a run has a wall-clock budget, not only a step budget.
     pub max_secs: f64,
+    /// Load this pretrained LoRA file's own `(spec, params)` instead of
+    /// building a fresh zero-initialized adapter from `args.lora`, so a
+    /// checkpoint trained elsewhere (e.g. a variant-A adapter) can be
+    /// evaluated through variant B's whole-grid forward — `--steps 0` then
+    /// scores exactly that checkpoint with no further training.
+    pub adapter: Option<PathBuf>,
 }
 
 /// Everything derived from the tokenizer that the loop needs.
@@ -179,11 +185,18 @@ pub fn run(args: TrainArgs) -> Result<()> {
         p.prefix.len() + args.size * args.size
     );
 
+    let loaded_adapter = args
+        .adapter
+        .as_deref()
+        .map(|path| lora_io::load::<AB>(path, &device))
+        .transpose()?;
+    let lora_spec = loaded_adapter.as_ref().map(|(s, _)| *s).unwrap_or(args.lora);
+
     let load_start = Instant::now();
     let mut model: TrainModel<AB> = load_train_model(
         &args.gguf,
         &[p.dead, p.alive],
-        Some(args.lora),
+        Some(lora_spec),
         &device,
     )?;
     println!(
@@ -193,11 +206,17 @@ pub fn run(args: TrainArgs) -> Result<()> {
         load_start.elapsed().as_secs_f64()
     );
 
-    let mut params: Vec<_> = model
-        .lora_params()
-        .into_iter()
-        .map(|t| t.require_grad())
-        .collect();
+    let mut params: Vec<_> = if let Some((_, loaded_params)) = loaded_adapter {
+        anyhow::ensure!(
+            loaded_params.len() == model.lora_params().len(),
+            "LoRA file has {} matrices, this model wants {}",
+            loaded_params.len(),
+            model.lora_params().len()
+        );
+        loaded_params.into_iter().map(|t| t.require_grad()).collect()
+    } else {
+        model.lora_params().into_iter().map(|t| t.require_grad()).collect()
+    };
     model.set_lora_params(params.clone());
     let n_trainable: usize = params.iter().map(|t| t.dims()[0] * t.dims()[1]).sum();
     println!("{} LoRA matrices, {n_trainable} trainable parameters", params.len());

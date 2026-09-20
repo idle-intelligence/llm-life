@@ -190,6 +190,12 @@ enum Command {
         /// Wall-clock budget in seconds — the GPU is shared.
         #[arg(long, default_value = "1500")]
         max_secs: f64,
+        /// Load this pretrained LoRA file's own rank/alpha/params instead of
+        /// starting from a fresh zero-initialized adapter — combined with
+        /// `--steps 0`, scores an existing checkpoint (from this or another
+        /// variant) through variant B's whole-grid forward with no training.
+        #[arg(long)]
+        adapter: Option<PathBuf>,
     },
     /// Fine-tune variant A with LoRA on the exhaustive 512-case lookup
     /// (CONCEPT.md §11).
@@ -1220,6 +1226,7 @@ fn main() -> Result<()> {
             out,
             run_doc,
             max_secs,
+            adapter,
         } => llm_life::train::run::run(TrainArgs {
             gguf,
             tokenizer,
@@ -1236,6 +1243,7 @@ fn main() -> Result<()> {
             eval_grids,
             out,
             run_doc,
+            adapter,
             max_secs,
         }),
         Command::TrainA {
