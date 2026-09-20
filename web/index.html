@@ -769,10 +769,14 @@ const LLM_MODEL = {
 // `loadCheckpoint` rebuilds the module from these dims before loading the
 // weight bytes. Served from web/, gitignored, like the LoRA files above.
 const BERT_MODEL = {
-  checkpointUrl: './bert-best.bin',
-  dModel: 32,
-  nLayers: 2,
-  nHeads: 2,
+  checkpointUrl: './bert-d16-L1.bin',
+  // The smallest size in the sweep (docs/runs/2026-09-20-bert.md) — 3490
+  // parameters, exact on all 512 cases, IoU 1.000 on the 16x16 rollout. The
+  // bigger sizes (d=32/64) are also exact but not smaller, so this is the
+  // one shipped to the tab.
+  dModel: 16,
+  nLayers: 1,
+  nHeads: 1,
 };
 
 for (const r of document.querySelectorAll('input[name=mode]')) {
@@ -1085,7 +1089,7 @@ function runLadder() {
     { name: '512-entry lookup (JS)', s16: lookupS[16], s32: lookupS[32], s64: lookupS[64], native: '—', iou: '1.000', desc: '9-bit index (8 neighbours + self) into a precomputed 512-entry table' },
     { name: 'LLM per pixel (adapter)', s16: llmSec(16), s32: llmSec(32), s64: llmSec(64), native: '2.5 / 11 / 41', iou: '1.000', desc: 'one forward per cell, packed in chunks of 64, a-norules adapter' },
     { name: 'LLM batched (adapter)', s16: llmSec(16), s32: llmSec(32), s64: llmSec(64), native: '2.5 / 11 / 41', iou: '1.000', desc: 'identical forwards to per-pixel — narration names the batch mechanism' },
-    { name: 'BERT of Life', s16: bertSec(16), s32: bertSec(32), s64: bertSec(64), native: 'see docs/runs/2026-09-20-bert.md', iou: '1.000', desc: 'small transformer encoder (d=32, L=2), one forward per cell in the tab (16² measured, 32²/64² projected), CPU ndarray/native wgpu on the 3080 from the run doc' },
+    { name: 'BERT of Life', s16: bertSec(16), s32: bertSec(32), s64: bertSec(64), native: 'see docs/runs/2026-09-20-bert.md', iou: '1.000', desc: 'transformer encoder, d=16 L=1 H=1, 3490 params, exact on all 512 cases — one forward per cell in the tab (16² measured, 32²/64² projected), native wgpu (3080) + CPU ndarray (laptop) in the run doc' },
     { name: 'whole-board thinking model', s16: null, s32: null, s64: null, native: '—', iou: '—', desc: 'pending: one big model reasons over the whole board as text, needs > 10 GB VRAM' },
   ];
   ladderRows = rows;
