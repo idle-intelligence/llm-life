@@ -47,6 +47,12 @@ pub fn zscore_threshold_js(p_alive: Vec<f32>, k: f64) -> f32 {
 /// the flat part of the s/token curve.
 const CHUNK_CELLS: usize = 64;
 
+/// Rows per batched forward in `BertEngine::stepGrid` / `VecMlpEngine::stepGrid`
+/// — both tiny models, so this is a memory ceiling, not a perf tune: bigger
+/// than any grid the compare page offers (64x64 = 4096 cells) so those pages
+/// never actually split, but a forward stays chunked past that.
+const GRID_BATCH_CHUNK: usize = 4096;
+
 #[wasm_bindgen]
 pub struct LifeEngine {
     device: WgpuDevice,
@@ -492,6 +498,45 @@ impl BertEngine {
         Ok(v[1])
     }
 
+    /// p(alive) for every cell of the grid in one forward pass — the same
+    /// `bert::data::case_at` neighbourhoods `stepCell` uses one at a time,
+    /// gathered into a `[n, 9]` batch instead of a per-cell loop. Toroidal
+    /// like `stepCell` (both go through `Grid::neighbor_indices`). Chunked
+    /// at `GRID_BATCH_CHUNK` rows so a forward stays memory-reasonable even
+    /// past the 64x64 grids this page offers today.
+    #[wasm_bindgen(js_name = stepGrid)]
+    pub async fn step_grid(&self, cells: Vec<u8>) -> Result<Vec<f32>, JsError> {
+        let model = self.model.as_ref().ok_or_else(|| JsError::new("not loaded"))?;
+        if cells.len() != self.width * self.height {
+            return Err(JsError::new("cells length does not match the grid"));
+        }
+        let grid = Grid::from_cells(self.width, self.height, cells);
+        let n = grid.cells().len();
+        let mut out = Vec::with_capacity(n);
+        for start in (0..n).step_by(GRID_BATCH_CHUNK) {
+            let end = (start + GRID_BATCH_CHUNK).min(n);
+            let rows = end - start;
+            let mut toks: Vec<i64> = Vec::with_capacity(rows * 9);
+            for i in start..end {
+                let case = crate::bert::data::case_at(&grid, i);
+                toks.extend(case.iter().map(|&b| b as i64));
+            }
+            let t: Tensor<Wgpu, 2, burn::tensor::Int> =
+                Tensor::from_data(burn::tensor::TensorData::new(toks, [rows, 9]), &self.device);
+            let logits = model.forward(t);
+            let probs = burn::tensor::activation::softmax(logits, 1);
+            let data = probs
+                .into_data_async()
+                .await
+                .map_err(|e| JsError::new(&format!("readback: {e:?}")))?;
+            let v = data
+                .into_vec::<f32>()
+                .map_err(|_| JsError::new("readback: bad dtype"))?;
+            out.extend((0..rows).map(|i| v[2 * i + 1]));
+        }
+        Ok(out)
+    }
+
     #[wasm_bindgen(js_name = dModel)]
     pub fn d_model_js(&self) -> usize {
         self.d_model
@@ -651,6 +696,38 @@ impl VecMlpEngine {
             .map_err(|e| JsError::new(&format!("readback: {e:?}")))?;
         let v = data.into_vec::<f32>().map_err(|_| JsError::new("readback: bad dtype"))?;
         Ok(v[1])
+    }
+
+    /// p(alive) for every cell of the grid in one forward pass — see
+    /// `BertEngine::stepGrid`, same gather/chunk/toroidal treatment.
+    #[wasm_bindgen(js_name = stepGrid)]
+    pub async fn step_grid(&self, cells: Vec<u8>) -> Result<Vec<f32>, JsError> {
+        let model = self.model.as_ref().ok_or_else(|| JsError::new("not loaded"))?;
+        if cells.len() != self.width * self.height {
+            return Err(JsError::new("cells length does not match the grid"));
+        }
+        let grid = Grid::from_cells(self.width, self.height, cells);
+        let n = grid.cells().len();
+        let mut out = Vec::with_capacity(n);
+        for start in (0..n).step_by(GRID_BATCH_CHUNK) {
+            let end = (start + GRID_BATCH_CHUNK).min(n);
+            let rows = end - start;
+            let mut bits: Vec<f32> = Vec::with_capacity(rows * 9);
+            for i in start..end {
+                let case = crate::bert::data::case_at(&grid, i);
+                bits.extend(case.iter().map(|&b| b as f32));
+            }
+            let t: Tensor<Wgpu, 2> = Tensor::from_data(burn::tensor::TensorData::new(bits, [rows, 9]), &self.device);
+            let logits = model.forward(t);
+            let probs = burn::tensor::activation::softmax(logits, 1);
+            let data = probs
+                .into_data_async()
+                .await
+                .map_err(|e| JsError::new(&format!("readback: {e:?}")))?;
+            let v = data.into_vec::<f32>().map_err(|_| JsError::new("readback: bad dtype"))?;
+            out.extend((0..rows).map(|i| v[2 * i + 1]));
+        }
+        Ok(out)
     }
 
     #[wasm_bindgen(js_name = hidden)]
