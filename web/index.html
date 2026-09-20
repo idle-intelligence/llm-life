@@ -266,7 +266,7 @@
         <button id="clear">Clear</button>
         <button id="random">Random</button>
         <button id="glider">Glider</button>
-        <button id="adapter" disabled>adapter: a-norules</button>
+        <button id="adapter" disabled>adapter: no rules</button>
     </div>
     <p class="info" id="mode-note">Click a cell in the LLM of Life grid to toggle it.</p>
     <label class="overlay"><input type="checkbox" id="overlay-palive" /> show p(alive) overlay on the LLM of Life panel (LLM mode only)</label>
@@ -359,11 +359,11 @@
 
 <section>
     <h2>LADDER <span class="sub">— same computation, six ways to pay for it</span></h2>
-    <p class="info">Same board, one generation, seconds. CPU loop and lookup are measured live in this page (JS); the LLM rows are measured here at 16&times;16 (the grid variant A runs) and projected to 32&sup2;/64&sup2; from ms/cell; native is the 3080 running the same adapter through the f32 forward path (docs/runs/2026-09-20-a-rollout.md), a separate machine for scale, not a browser number.</p>
+    <p class="info">Same board, one generation, seconds. CPU loop and lookup are measured live in this page (JS); the LLM rows are measured here at 16&times;16 (the grid variant A runs) and projected to 32&sup2;/64&sup2; from ms/cell; native is a separate desktop GPU running the same adapter through the f32 forward path, for scale — not a browser number.</p>
     <div class="controls" style="margin:12px 0;">
         <button id="ladder-run">measure CPU loop &amp; lookup (this page)</button>
     </div>
-    <pre id="ladder" style="font-family:'IBM Plex Mono',monospace; font-size:12px; border:1px solid var(--border); padding:12px; overflow-x:auto; white-space:pre;">rung                     16&sup2; s/gen   32&sup2; s/gen   64&sup2; s/gen   native (3080)   IoU vs Life   what it computes
+    <pre id="ladder" style="font-family:'IBM Plex Mono',monospace; font-size:12px; border:1px solid var(--border); padding:12px; overflow-x:auto; white-space:pre;">rung                     16&sup2; s/gen   32&sup2; s/gen   64&sup2; s/gen   native (GPU)    IoU vs Life   what it computes
 run the ladder to fill this in&hellip;</pre>
 </section>
 
@@ -987,9 +987,9 @@ async function loadLlm(spec) {
         cellTokensCount = info.cellTokens ?? cellTokensCount;
         if (info.adapter) {
           const label = info.adapter.name.replace(/^lora-/, '').replace(/-\d+$/, '');
-          log(`adapter loaded: ${label} (${(info.adapter.bytes / 1e6).toFixed(1)} MB)`);
+          log(`adapter loaded: ${ADAPTER_DESC[label] ?? label} (${(info.adapter.bytes / 1e6).toFixed(1)} MB)`);
           adapterName = label;
-          els.adapterBtn.textContent = `adapter: ${adapterName}`;
+          els.adapterBtn.textContent = `adapter: ${ADAPTER_SHORT[adapterName] ?? adapterName}`;
         }
         els.adapterBtn.disabled = mode !== 'llm-a';
         return info;
@@ -1052,14 +1052,21 @@ async function loadVecStencil(spec) {
 }
 
 const ADAPTER_URL = { 'a-norules': './lora-a-norules-300.bin', 'a-rules': './lora-a-rules-300.bin' };
+// Visitor-facing labels for the two adapter variants (internal keys above
+// stay as-is; only what's displayed changes).
+const ADAPTER_SHORT = { 'a-norules': 'no rules', 'a-rules': 'with rules' };
+const ADAPTER_DESC = {
+  'a-norules': 'adapter trained without the rules in the prompt',
+  'a-rules': 'adapter trained with the rules in the prompt',
+};
 
 async function setAdapter(name) {
   if (!llmReady) { adapterName = name; return; }
   ensureWorker();
   const info = await ask('loadAdapter', { adapterUrl: ADAPTER_URL[name] });
   adapterName = name;
-  els.adapterBtn.textContent = `adapter: ${adapterName}`;
-  log(`adapter loaded: ${adapterName} (${(info.bytes / 1e6).toFixed(1)} MB)`);
+  els.adapterBtn.textContent = `adapter: ${ADAPTER_SHORT[adapterName] ?? adapterName}`;
+  log(`adapter loaded: ${ADAPTER_DESC[adapterName] ?? adapterName} (${(info.bytes / 1e6).toFixed(1)} MB)`);
   return adapterName;
 }
 
@@ -1217,16 +1224,16 @@ function runLadder() {
   const rows = [
     { name: 'CPU loop (JS, in the page)', s16: loopS[16], s32: loopS[32], s64: loopS[64], native: '—', iou: '1.000', desc: 'plain nested loop over 8 neighbours, one generation, in the tab' },
     { name: '512-entry lookup (JS)', s16: lookupS[16], s32: lookupS[32], s64: lookupS[64], native: '—', iou: '1.000', desc: '9-bit index (8 neighbours + self) into a precomputed 512-entry table' },
-    { name: 'LLM per pixel (adapter)', s16: llmSec(16), s32: llmSec(32), s64: llmSec(64), native: '2.5 / 11 / 41', iou: '1.000', desc: 'one forward per cell, packed in chunks of 64, a-norules adapter' },
+    { name: 'LLM per pixel (adapter)', s16: llmSec(16), s32: llmSec(32), s64: llmSec(64), native: '2.5 / 11 / 41', iou: '1.000', desc: 'one forward per cell, packed in chunks of 64, using the adapter trained without the rules in the prompt' },
     { name: 'LLM batched (adapter)', s16: llmSec(16), s32: llmSec(32), s64: llmSec(64), native: '2.5 / 11 / 41', iou: '1.000', desc: 'identical forwards to per-pixel — narration names the batch mechanism' },
-    { name: 'BERT of Life', s16: bertSec(16), s32: bertSec(32), s64: bertSec(64), native: 'see docs/runs/2026-09-20-bert.md', iou: '1.000', desc: 'transformer encoder, d=16 L=1 H=1, 3490 params, exact on all 512 cases — one forward per cell in the tab (16² measured, 32²/64² projected), native wgpu (3080) + CPU ndarray (laptop) in the run doc' },
-    { name: '9 numbers -> centre', s16: vecMlpSec(16), s32: vecMlpSec(32), s64: vecMlpSec(64), native: 'see docs/runs/2026-09-20-vector.md', iou: '0.31 (not exact)', desc: 'MLP baseline (9->16->2), no embedding table — one forward per cell; did not converge to the exact rule in the training budget (docs/runs/2026-09-20-vector.md)' },
-    { name: 'stencil (grid -> grid)', s16: vecStencilSec(16), s32: vecStencilSec(32), s64: vecStencilSec(64), native: 'see docs/runs/2026-09-20-vector.md', iou: '1.000', desc: 'jacobi2000 stencil-masked attention, one channel, d=16 L=1 H=1, 3329 params — whole grid in ONE forward pass, generalises 16²->32² with the same weights' },
+    { name: 'BERT of Life', s16: bertSec(16), s32: bertSec(32), s64: bertSec(64), native: '—', iou: '1.000', desc: 'transformer encoder, d=16 L=1 H=1, 3490 params, exact on all 512 cases — one forward per cell in the tab (16² measured, 32²/64² projected)' },
+    { name: '9 numbers -> centre', s16: vecMlpSec(16), s32: vecMlpSec(32), s64: vecMlpSec(64), native: '—', iou: '0.31 (not exact)', desc: 'MLP baseline (9->16->2), no embedding table — one forward per cell; did not converge to the exact rule in the training budget' },
+    { name: 'stencil (grid -> grid)', s16: vecStencilSec(16), s32: vecStencilSec(32), s64: vecStencilSec(64), native: '—', iou: '1.000', desc: 'jacobi2000 stencil-masked attention, one channel, d=16 L=1 H=1, 3329 params — whole grid in ONE forward pass, generalises 16²->32² with the same weights' },
     { name: 'whole-board thinking model', s16: null, s32: null, s64: null, native: '—', iou: '—', desc: 'pending: one big model reasons over the whole board as text, needs > 10 GB VRAM' },
   ];
   ladderRows = rows;
   const pad = (s, n) => (String(s).length >= n ? String(s) + ' ' : String(s).padEnd(n));
-  const lines = [pad('rung', 28) + pad('16² s/gen', 13) + pad('32² s/gen', 13) + pad('64² s/gen', 13) + pad('native (3080)', 16) + pad('IoU vs Life', 13) + 'what it computes'];
+  const lines = [pad('rung', 28) + pad('16² s/gen', 13) + pad('32² s/gen', 13) + pad('64² s/gen', 13) + pad('native (GPU)', 16) + pad('IoU vs Life', 13) + 'what it computes'];
   for (const r of rows) {
     lines.push(pad(r.name, 28) + pad(fmt(r.s16), 13) + pad(fmt(r.s32), 13) + pad(fmt(r.s64), 13) + pad(r.native, 16) + pad(r.iou, 13) + r.desc);
   }
@@ -1235,7 +1242,7 @@ function runLadder() {
 }
 els.ladderBtn.onclick = () => runLadder();
 
-els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell — per-pixel narrated (default) or batched, same forwards either way. BERT of Life is a small transformer encoder trained from scratch (docs/runs/2026-09-20-bert.md) — also 16×16, also one forward per cell, but every token is the raw 0/1 neighbourhood, not text. "9 numbers -> centre" is the same neighbourhood with no tokens at all — an MLP on 9 floats, one forward per cell. "stencil (grid -> grid)" is jacobi2000\'s stencil-masked attention with one channel: the whole grid in one forward pass, no per-cell loop, and it generalises from 16×16 to 32×32 with the same trained weights (docs/runs/2026-09-20-vector.md). Click a cell in the LLM of Life grid to toggle it.';
+els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell — per-pixel narrated (default) or batched, same forwards either way. BERT of Life is a small transformer encoder trained from scratch — also 16×16, also one forward per cell, but every token is the raw 0/1 neighbourhood, not text. "9 numbers -> centre" is the same neighbourhood with no tokens at all — an MLP on 9 floats, one forward per cell. "stencil (grid -> grid)" is jacobi2000\'s stencil-masked attention with one channel: the whole grid in one forward pass, no per-cell loop, and it generalises from 16×16 to 32×32 with the same trained weights. Click a cell in the LLM of Life grid to toggle it.';
 
 window.__app = {
   ready: true,
