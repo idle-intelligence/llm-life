@@ -320,6 +320,14 @@
             <div class="metric-label">IoU</div>
         </div>
         <div class="metric">
+            <div class="metric-value" id="p-alive-recall">1.000</div>
+            <div class="metric-label">alive recall</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="p-dead-recall">1.000</div>
+            <div class="metric-label">dead recall</div>
+        </div>
+        <div class="metric">
             <div class="metric-value" id="p-wrong">0</div>
             <div class="metric-label">wrong cells</div>
         </div>
@@ -393,6 +401,8 @@ const els = {
   sec: document.getElementById('p-sec'),
   acc: document.getElementById('p-acc'),
   iou: document.getElementById('p-iou'),
+  aliveRecall: document.getElementById('p-alive-recall'),
+  deadRecall: document.getElementById('p-dead-recall'),
   wrong: document.getElementById('p-wrong'),
   f1: document.getElementById('p-f1'),
   thresh: document.getElementById('p-thresh'),
@@ -452,7 +462,7 @@ let app, truth, playing = false, timer = null, lastSec = null;
 // model's p(alive) — `app`'s own cells are always the *binarized* grid (the
 // thing that is actually compared against true Life and fed forward), and
 // the overlay checkbox only changes what gets painted.
-let mode = 'classical', lastP = null, generation = 0, lastAccuracy = 1, lastIou = 1, lastF1 = 1, lastWrong = 0;
+let mode = 'classical', lastP = null, generation = 0, lastAccuracy = 1, lastIou = 1, lastF1 = 1, lastWrong = 0, lastAliveRecall = 1, lastDeadRecall = 1;
 let lastChunks = null, lastTokens = null;
 // `generating` is true for the duration of one in-flight LLM generation
 // (request sent, awaiting the worker's reply). A grid-size change requested
@@ -609,6 +619,13 @@ function render() {
   const precision = modelLive === 0 ? (trueLive === 0 ? 1 : 0) : inter / modelLive;
   const recall = trueLive === 0 ? 1 : inter / trueLive;
   const f1 = (precision + recall) === 0 ? 0 : 2 * precision * recall / (precision + recall);
+  // dead_recall (specificity): the number accuracy alone hides when dead
+  // cells dominate — see crate::score::score's `dead_recall`.
+  const trueDead = W * H - trueLive;
+  const fp = modelLive - inter;
+  const tn = trueDead - fp;
+  const deadRecall = trueDead === 0 ? 1 : tn / trueDead;
+  const aliveRecall = recall;
   paint(ctx.diff, diff);
   els.gen.textContent = generation;
   els.live.textContent = app.live_count();
@@ -626,8 +643,12 @@ function render() {
   const acc = 100 * lastAccuracy;
   els.acc.textContent = acc.toFixed(2) + '%';
   els.iou.textContent = iou.toFixed(3);
+  els.aliveRecall.textContent = aliveRecall.toFixed(3);
+  els.deadRecall.textContent = deadRecall.toFixed(3);
   els.wrong.textContent = wrong;
   els.f1.textContent = f1.toFixed(3);
+  lastAliveRecall = aliveRecall;
+  lastDeadRecall = deadRecall;
 }
 
 // True for every mode that runs through the worker/engine (LLM variants A/B
@@ -1013,7 +1034,7 @@ async function llmStepOnce() {
   }
   render();
   setStatus('ready', 'Ready');
-  logReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (game of life ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)} · IoU ${lastIou.toFixed(2)} · wrong ${lastWrong}`);
+  logReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (game of life ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)} · IoU ${lastIou.toFixed(3)} · alive recall ${lastAliveRecall.toFixed(3)} · dead recall ${lastDeadRecall.toFixed(3)} · wrong ${lastWrong}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1162,6 +1183,8 @@ window.__app = {
   accuracy: () => lastAccuracy,
   iou: () => lastIou,
   f1: () => lastF1,
+  aliveRecall: () => lastAliveRecall,
+  deadRecall: () => lastDeadRecall,
   wrongCells: () => lastWrong,
   // Label-free binarization of p(alive) — Otsu (default) or z-score, k
   // optional (default 2.0). No UI control: CLAUDE.md "Demo" bars settings
