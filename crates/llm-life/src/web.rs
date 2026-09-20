@@ -334,4 +334,12 @@ impl LifeEngine {
     pub fn packed_tokens(&self) -> usize {
         self.prefix.len() + self.width * self.height
     }
+
+    /// Token length of one variant A per-cell prompt (the 512 prompts all
+    /// tokenize to the same length: the format is fixed digits). Used by the
+    /// narration strip's "N-token prompt" line.
+    #[wasm_bindgen(js_name = cellTokens)]
+    pub fn cell_tokens_js(&self) -> usize {
+        self.cell_tokens
+    }
 }
