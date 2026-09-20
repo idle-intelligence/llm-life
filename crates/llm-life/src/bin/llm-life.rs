@@ -796,8 +796,8 @@ fn run_pictures(
         println!("\n=== seed {seed_name} ===");
         summary.push_str(&format!(
             "## seed {seed_name}\n\n\
-             | gen | accuracy | live recall | acc (median) | live recall (median) | confidence gap | true live | model live | s/gen |\n\
-             |---|---|---|---|---|---|---|---|---|\n"
+             | gen | accuracy | IoU | live recall | acc (median) | live recall (median) | confidence gap | true live | model live | s/gen |\n\
+             |---|---|---|---|---|---|---|---|---|---|\n"
         ));
         let mut input = seed_grid(seed_name, size, density)?;
         for gen in 1..=generations {
@@ -808,12 +808,12 @@ fn run_pictures(
             let s = score(&truth, &model_grid, &p, gen);
             let m = score(&truth, &med_grid, &p, gen);
             println!(
-                "gen {gen:2}: acc={:.4} live_recall={:.4} | median acc={:.4} live_recall={:.4} | gap={:+.4} true_live={} model_live={} {:.2}s",
-                s.accuracy, s.live_recall, m.accuracy, m.live_recall, s.confidence_gap, s.true_live, s.model_live, secs
+                "gen {gen:2}: acc={:.4} iou={:.4} live_recall={:.4} | median acc={:.4} live_recall={:.4} | gap={:+.4} true_live={} model_live={} {:.2}s",
+                s.accuracy, s.iou, s.live_recall, m.accuracy, m.live_recall, s.confidence_gap, s.true_live, s.model_live, secs
             );
             summary.push_str(&format!(
-                "| {gen} | {:.4} | {:.4} | {:.4} | {:.4} | {:+.4} | {} | {} | {:.2} |\n",
-                s.accuracy, s.live_recall, m.accuracy, m.live_recall, s.confidence_gap, s.true_live, s.model_live, secs
+                "| {gen} | {:.4} | {:.4} | {:.4} | {:.4} | {:.4} | {:+.4} | {} | {} | {:.2} |\n",
+                s.accuracy, s.iou, s.live_recall, m.accuracy, m.live_recall, s.confidence_gap, s.true_live, s.model_live, secs
             ));
 
             if gen == 1 {
