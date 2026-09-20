@@ -20,7 +20,7 @@ use std::time::Instant;
 
 use super::data::{grid_cases, split_512};
 use super::model::{BertConfig, BertOfLife, LookupTable, MlpConfig, MlpOfLife};
-use crate::score::score;
+use crate::score::{score, GenScore};
 
 type AB = Autodiff<Wgpu>;
 /// Inference-only backend: `.valid()` on an `AutodiffModule` returns a
@@ -68,21 +68,20 @@ fn accuracy<B: Backend>(logits: &Tensor<B, 2>, labels: &[u8]) -> f64 {
     ok as f64 / labels.len() as f64
 }
 
-/// p(alive) per cell of a 16x16 grid from `[n, 2]` logits, plus the IoU
-/// rollout for 5 generations at one seed, teacher-forced (each generation
-/// starts from true Life, matching `docs/runs/2026-09-20-a-rollout.md`'s
-/// convention).
-fn rollout_iou(logits_fn: impl Fn(&[([u8; 9], u8)]) -> Vec<f32>, rule: &Rule, seed: u64) -> Vec<f64> {
+/// p(alive) per cell of a 16x16 grid from `[n, 2]` logits, plus the full
+/// per-generation score (IoU, alive/dead recall, confusion counts) for 5
+/// generations at one seed, teacher-forced (each generation starts from true
+/// Life, matching `docs/runs/2026-09-20-a-rollout.md`'s convention).
+fn rollout_score(logits_fn: impl Fn(&[([u8; 9], u8)]) -> Vec<f32>, rule: &Rule, seed: u64) -> Vec<GenScore> {
     let mut grid = life::Grid::random(16, 16, seed, 0.28);
     let mut out = Vec::with_capacity(5);
-    for _gen in 1..=5 {
+    for gen in 1..=5 {
         let truth = grid.step(rule);
         let cases = grid_cases(&grid, rule);
         let p = logits_fn(&cases);
         let pred_cells: Vec<u8> = p.iter().map(|&v| (v >= 0.5) as u8).collect();
         let pred_grid = life::Grid::from_cells(16, 16, pred_cells);
-        let s = score(&truth, &pred_grid, &p, 1);
-        out.push(s.iou);
+        out.push(score(&truth, &pred_grid, &p, gen));
         grid = truth;
     }
     out
@@ -92,8 +91,8 @@ pub struct BertResult {
     pub params: usize,
     pub steps_to_512: Option<usize>,
     pub held_out_acc: f64,
-    /// 15 IoU values: seeds 1..=3, generations 1..=5 each.
-    pub iou_per_gen: Vec<f64>,
+    /// 15 scores: seeds 1..=3, generations 1..=5 each.
+    pub scores: Vec<GenScore>,
 }
 
 /// Train one BERT-of-Life size to convergence on the 512-case lookup, report
@@ -148,9 +147,9 @@ pub fn train_bert(
     let valid_model = model.valid();
     let held_out_acc = accuracy(&valid_model.forward(held_t), &held_y);
 
-    let mut iou_per_gen = Vec::new();
+    let mut scores = Vec::new();
     for seed_n in 1..=3u64 {
-        iou_per_gen.extend(rollout_iou(
+        scores.extend(rollout_score(
             |cases| {
                 let (t, _) = tokens_of::<IB>(cases, &device);
                 let logits = valid_model.forward(t);
@@ -174,14 +173,14 @@ pub fn train_bert(
         params,
         steps_to_512,
         held_out_acc,
-        iou_per_gen,
+        scores,
     })
 }
 
 /// The one-layer MLP baseline on the raw 9 bits ("the honest floor" — a model
 /// with no encoder structure at all). Returns `(params, steps_to_512,
-/// held_out_acc, iou_per_gen)`.
-pub fn train_mlp(hidden: usize, steps: usize, lr: f64, out: &PathBuf) -> Result<(usize, Option<usize>, f64, Vec<f64>)> {
+/// held_out_acc, scores)`.
+pub fn train_mlp(hidden: usize, steps: usize, lr: f64, out: &PathBuf) -> Result<(usize, Option<usize>, f64, Vec<GenScore>)> {
     let rule = Rule::life();
     let device = WgpuDevice::default();
     let cfg = MlpConfig { hidden };
@@ -213,9 +212,9 @@ pub fn train_mlp(hidden: usize, steps: usize, lr: f64, out: &PathBuf) -> Result<
     let valid = model.valid();
     let held_acc = accuracy(&valid.forward(held_t), &held_y);
 
-    let mut iou_per_gen = Vec::new();
+    let mut scores = Vec::new();
     for seed_n in 1..=3u64 {
-        iou_per_gen.extend(rollout_iou(
+        scores.extend(rollout_score(
             |cases| {
                 let (t, _) = bits_of::<IB>(cases, &device);
                 let logits = valid.forward(t);
@@ -234,18 +233,18 @@ pub fn train_mlp(hidden: usize, steps: usize, lr: f64, out: &PathBuf) -> Result<
     let bytes = recorder.record(model.into_record(), ())?;
     std::fs::write(out, &bytes)?;
 
-    Ok((params, steps_to_512, held_acc, iou_per_gen))
+    Ok((params, steps_to_512, held_acc, scores))
 }
 
 /// The zero-parameter lookup floor: exact by construction (it *is* the
 /// rule), included so its IoU rollout row exists next to the trained ones.
-/// Returns `(params = 0, held_out_acc = 1.0, iou_per_gen)`.
-pub fn eval_lookup() -> (usize, f64, Vec<f64>) {
+/// Returns `(params = 0, held_out_acc = 1.0, scores)`.
+pub fn eval_lookup() -> (usize, f64, Vec<GenScore>) {
     let rule = Rule::life();
     let table = LookupTable::from_rule(&rule);
-    let mut iou_per_gen = Vec::new();
+    let mut scores = Vec::new();
     for seed_n in 1..=3u64 {
-        iou_per_gen.extend(rollout_iou(
+        scores.extend(rollout_score(
             |cases| {
                 cases
                     .iter()
@@ -265,5 +264,5 @@ pub fn eval_lookup() -> (usize, f64, Vec<f64>) {
             seed_n,
         ));
     }
-    (0, 1.0, iou_per_gen)
+    (0, 1.0, scores)
 }

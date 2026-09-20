@@ -847,8 +847,8 @@ fn run_pictures(
         println!("\n=== seed {seed_name} ===");
         summary.push_str(&format!(
             "## seed {seed_name}\n\n\
-             | gen | accuracy | IoU | live recall | acc (median) | live recall (median) | confidence gap | true live | model live | s/gen |\n\
-             |---|---|---|---|---|---|---|---|---|---|\n"
+             | gen | accuracy | IoU | alive recall | dead recall | alive precision | TP | FP | FN | TN | acc (median) | live recall (median) | confidence gap | true live | model live | s/gen |\n\
+             |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
         ));
         let mut input = seed_grid(seed_name, size, density)?;
         for gen in 1..=generations {
@@ -859,12 +859,14 @@ fn run_pictures(
             let s = score(&truth, &model_grid, &p, gen);
             let m = score(&truth, &med_grid, &p, gen);
             println!(
-                "gen {gen:2}: acc={:.4} iou={:.4} live_recall={:.4} | median acc={:.4} live_recall={:.4} | gap={:+.4} true_live={} model_live={} {:.2}s",
-                s.accuracy, s.iou, s.live_recall, m.accuracy, m.live_recall, s.confidence_gap, s.true_live, s.model_live, secs
+                "gen {gen:2}: acc={:.4} iou={:.4} alive_recall={:.4} dead_recall={:.4} alive_precision={:.4} tp={} fp={} fn={} tn={} | median acc={:.4} live_recall={:.4} | gap={:+.4} true_live={} model_live={} {:.2}s",
+                s.accuracy, s.iou, s.alive_recall, s.dead_recall, s.alive_precision, s.tp, s.fp, s.fn_, s.tn,
+                m.accuracy, m.live_recall, s.confidence_gap, s.true_live, s.model_live, secs
             );
             summary.push_str(&format!(
-                "| {gen} | {:.4} | {:.4} | {:.4} | {:.4} | {:.4} | {:+.4} | {} | {} | {:.2} |\n",
-                s.accuracy, s.iou, s.live_recall, m.accuracy, m.live_recall, s.confidence_gap, s.true_live, s.model_live, secs
+                "| {gen} | {:.4} | {:.4} | {:.4} | {:.4} | {:.4} | {} | {} | {} | {} | {:.4} | {:.4} | {:+.4} | {} | {} | {:.2} |\n",
+                s.accuracy, s.iou, s.alive_recall, s.dead_recall, s.alive_precision, s.tp, s.fp, s.fn_, s.tn,
+                m.accuracy, m.live_recall, s.confidence_gap, s.true_live, s.model_live, secs
             ));
 
             if gen == 1 {
@@ -1299,38 +1301,51 @@ fn train_bert_sweep(out: &Path, run_doc: &Path, steps: usize, lr: f64, seed: u64
 
     let start = Instant::now();
     let mut table = String::from(
-        "| model | params | steps to 512/512 | held-out acc (64 cases) | IoU 16\u{b2} gen 1..5 (seed 1) | IoU 16\u{b2} gen 1..5 (seed 2) | IoU 16\u{b2} gen 1..5 (seed 3) |\n\
-         |---|---|---|---|---|---|---|\n",
+        "| model | params | steps to 512/512 | held-out acc (64 cases) | IoU 16\u{b2} gen 1..5 (seed 1) | IoU 16\u{b2} gen 1..5 (seed 2) | IoU 16\u{b2} gen 1..5 (seed 3) | alive recall gen 1..5 (seed 1/2/3) | dead recall gen 1..5 (seed 1/2/3) |\n\
+         |---|---|---|---|---|---|---|---|---|\n",
     );
 
     let fmt_iou = |v: &[f64]| -> String {
         v.iter().map(|x| format!("{x:.3}")).collect::<Vec<_>>().join(",")
     };
+    let fmt_field = |s: &[llm_life::score::GenScore], f: fn(&llm_life::score::GenScore) -> f64| -> String {
+        [&s[0..5], &s[5..10], &s[10..15]]
+            .iter()
+            .map(|seed_scores| seed_scores.iter().map(|g| format!("{:.3}", f(g))).collect::<Vec<_>>().join(","))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
 
     println!("=== lookup (zero-parameter floor) ===");
-    let (lp, lacc, liou) = eval_lookup();
+    let (lp, lacc, lscores) = eval_lookup();
+    let liou: Vec<f64> = lscores.iter().map(|s| s.iou).collect();
     table.push_str(&format!(
-        "| lookup (512-entry table) | {lp} | 0 (exact by construction) | {lacc:.4} | {} | {} | {} |\n",
-        fmt_iou(&liou[0..5]), fmt_iou(&liou[5..10]), fmt_iou(&liou[10..15])
+        "| lookup (512-entry table) | {lp} | 0 (exact by construction) | {lacc:.4} | {} | {} | {} | {} | {} |\n",
+        fmt_iou(&liou[0..5]), fmt_iou(&liou[5..10]), fmt_iou(&liou[10..15]),
+        fmt_field(&lscores, |g| g.alive_recall), fmt_field(&lscores, |g| g.dead_recall)
     ));
 
     println!("=== mlp baseline ===");
-    let (mp, msteps, macc, miou) = train_mlp(16, steps, lr, &out.join("mlp-16.bin"))?;
+    let (mp, msteps, macc, mscores) = train_mlp(16, steps, lr, &out.join("mlp-16.bin"))?;
+    let miou: Vec<f64> = mscores.iter().map(|s| s.iou).collect();
     table.push_str(&format!(
-        "| MLP (9->16->2) | {mp} | {} | {macc:.4} | {} | {} | {} |\n",
+        "| MLP (9->16->2) | {mp} | {} | {macc:.4} | {} | {} | {} | {} | {} |\n",
         msteps.map(|s| s.to_string()).unwrap_or_else(|| format!(">{steps}")),
-        fmt_iou(&miou[0..5]), fmt_iou(&miou[5..10]), fmt_iou(&miou[10..15])
+        fmt_iou(&miou[0..5]), fmt_iou(&miou[5..10]), fmt_iou(&miou[10..15]),
+        fmt_field(&mscores, |g| g.alive_recall), fmt_field(&mscores, |g| g.dead_recall)
     ));
 
     for (d, l, h) in [(16usize, 1usize, 1usize), (32, 2, 2), (64, 2, 2)] {
         println!("=== bert d={d} L={l} H={h} ===");
         let r = train_bert(d, l, h, steps, lr, seed, &out.join(format!("bert-d{d}-L{l}.bin")))?;
+        let riou: Vec<f64> = r.scores.iter().map(|s| s.iou).collect();
         table.push_str(&format!(
-            "| BERT d={d} L={l} H={h} | {} | {} | {:.4} | {} | {} | {} |\n",
+            "| BERT d={d} L={l} H={h} | {} | {} | {:.4} | {} | {} | {} | {} | {} |\n",
             r.params,
             r.steps_to_512.map(|s| s.to_string()).unwrap_or_else(|| format!(">{steps}")),
             r.held_out_acc,
-            fmt_iou(&r.iou_per_gen[0..5]), fmt_iou(&r.iou_per_gen[5..10]), fmt_iou(&r.iou_per_gen[10..15])
+            fmt_iou(&riou[0..5]), fmt_iou(&riou[5..10]), fmt_iou(&riou[10..15]),
+            fmt_field(&r.scores, |g| g.alive_recall), fmt_field(&r.scores, |g| g.dead_recall)
         ));
     }
 
@@ -1387,6 +1402,10 @@ fn rescore(dir: &Path, tag: &str, seed: &str) -> Result<()> {
     println!(
         "{tag} {seed}: acc={:.4} iou={:.4} hamming={} f1={:.4} precision={:.4} recall={:.4} true_live={} model_live={}",
         s.accuracy, s.iou, s.wrong_cells, s.f1, s.precision, s.recall, s.true_live, s.model_live,
+    );
+    println!(
+        "  alive_recall={:.4} dead_recall={:.4} alive_precision={:.4} | tp={} fp={} fn={} tn={}",
+        s.alive_recall, s.dead_recall, s.alive_precision, s.tp, s.fp, s.fn_, s.tn,
     );
 
     println!("  per-case recall (from the input grid, B3/S23):");
