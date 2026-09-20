@@ -179,6 +179,29 @@ async function handle(id, type, payload, reply) {
         tokens: n * 9,
         seconds: (performance.now() - t0) / 1000,
       });
+    } else if (type === 'step' && payload.variant === 'bert-batched') {
+      // Same weights, same per-cell neighbourhoods as the row above, but
+      // gathered into one [n, 9] batch and run as a single forward — this is
+      // the number CONCEPT.md's "one batch" framing actually means, not the
+      // per-cell loop's wall-clock total.
+      const t0 = performance.now();
+      if (!bertGrid || bertGrid.width !== payload.width || bertGrid.height !== payload.height) {
+        bertEngine.setGrid(payload.width, payload.height);
+        bertGrid = { width: payload.width, height: payload.height };
+      }
+      const cells = new Uint8Array(payload.cells);
+      self.postMessage({ type: 'progress', stage: 'forward' });
+      const p = await bertEngine.stepGrid(cells);
+      const ms = performance.now() - t0;
+      self.postMessage({ type: 'bertGrid', cells: cells.length, ms });
+      self.postMessage({ type: 'progress', stage: 'threshold' });
+      const thresholdValue = 0.5;
+      const binarized = Array.from(p, (v) => (v >= thresholdValue ? 1 : 0));
+      self.postMessage({ type: 'progress', stage: 'done' });
+      reply(true, {
+        pAlive: Array.from(p), binarized, thresholdValue,
+        chunks: 1, tokens: cells.length * 9, seconds: (performance.now() - t0) / 1000,
+      });
     } else if (type === 'step' && payload.variant === 'vec-mlp') {
       // (i) 9 numbers -> centre, no tokens: one forward per cell through the
       // MLP baseline, narrated the same way BERT of Life's per-cell mode is.
@@ -204,6 +227,26 @@ async function handle(id, type, payload, reply) {
       reply(true, {
         pAlive: Array.from(p), binarized, thresholdValue,
         chunks: n, tokens: n * 9, seconds: (performance.now() - t0) / 1000,
+      });
+    } else if (type === 'step' && payload.variant === 'vec-mlp-batched') {
+      // Same weights as the per-cell row above, one [n, 9] batch instead.
+      const t0 = performance.now();
+      if (!vecMlpGrid || vecMlpGrid.width !== payload.width || vecMlpGrid.height !== payload.height) {
+        vecMlpEngine.setGrid(payload.width, payload.height);
+        vecMlpGrid = { width: payload.width, height: payload.height };
+      }
+      const cells = new Uint8Array(payload.cells);
+      self.postMessage({ type: 'progress', stage: 'forward' });
+      const p = await vecMlpEngine.stepGrid(cells);
+      const ms = performance.now() - t0;
+      self.postMessage({ type: 'vecMlpGrid', cells: cells.length, ms });
+      self.postMessage({ type: 'progress', stage: 'threshold' });
+      const thresholdValue = 0.5;
+      const binarized = Array.from(p, (v) => (v >= thresholdValue ? 1 : 0));
+      self.postMessage({ type: 'progress', stage: 'done' });
+      reply(true, {
+        pAlive: Array.from(p), binarized, thresholdValue,
+        chunks: 1, tokens: cells.length * 9, seconds: (performance.now() - t0) / 1000,
       });
     } else if (type === 'step' && payload.variant === 'vec-stencil') {
       // (ii) whole grid -> whole grid, one channel: one forward pass, no
