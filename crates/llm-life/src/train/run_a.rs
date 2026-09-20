@@ -90,7 +90,7 @@ pub fn all_cases(rule: &Rule) -> Vec<([u8; 8], u8, u8)> {
 /// per-cell prompt set (the model was never shown a prompt starting at
 /// column 0 of a fresh line during pretraining, but it also never saw one
 /// mid-prefix without a separator, so this keeps the prefix boundary clean).
-fn tokenize_case(tok: &Tokenizer, nb: &[u8; 8], self_state: u8) -> Result<Vec<u32>> {
+pub fn tokenize_case(tok: &Tokenizer, nb: &[u8; 8], self_state: u8) -> Result<Vec<u32>> {
     let text = format!("\n{}", variant_a::cell_prompt(nb, self_state));
     tok.encode(&text, false)
 }
@@ -101,7 +101,15 @@ fn tokenize_case(tok: &Tokenizer, nb: &[u8; 8], self_state: u8) -> Result<Vec<u3
 /// prefix in full); the only piece missing for a from-scratch forward
 /// (training has no persistent KV cache) is the causal block for the
 /// prefix's own rows.
-fn full_sequence(prefix: &[u32], chunk: &Chunk, device: &WgpuDevice) -> (Vec<u32>, Vec<u32>, Tensor<AB, 2, Bool>) {
+///
+/// Generic over the backend so both the autodiff training/eval loop (`AB`)
+/// and a plain inference `TrainModel<Wgpu>` (`llm-life picture-a --adapter`)
+/// share this one packing function.
+pub fn full_sequence<B: burn::prelude::Backend>(
+    prefix: &[u32],
+    chunk: &Chunk,
+    device: &B::Device,
+) -> (Vec<u32>, Vec<u32>, Tensor<B, 2, Bool>) {
     let p = prefix.len();
     let t = chunk.tokens.len();
     let total = p + t;

@@ -18,7 +18,7 @@ use llm_life::train::load::{load_train_model, LoraSpec};
 use llm_life::train::lora_io;
 use llm_life::train::model::TrainModel;
 use llm_life::train::run::{TrainArgs};
-use llm_life::train::run_a::RunAArgs;
+use llm_life::train::run_a::{self, RunAArgs};
 use llm_wasm::gguf::Q4ModelLoader;
 use llm_wasm::kv::KvCache;
 use llm_wasm::model::{ForwardSpec, LlmModel, SparseMask};
@@ -108,6 +108,18 @@ enum Command {
         /// Filename prefix for this attempt's pictures and summary.
         #[arg(long, default_value = "a")]
         tag: String,
+        /// Run the f32 training model with this LoRA adapter applied,
+        /// instead of the Q4 engine with no adapter. This is how
+        /// `artifacts/lora-a-{rules,norules}-300.bin` get scored on real
+        /// grids: the same forward the fine-tune was evaluated with
+        /// (`train::run_a::evaluate_a`), not the base model.
+        #[arg(long)]
+        adapter: Option<PathBuf>,
+        /// The adapter's prefix had no rule text (`lora-a-norules-*.bin`).
+        /// Must match how the adapter file was trained or its LoRA weights
+        /// are being applied under the wrong prompt.
+        #[arg(long)]
+        norules: bool,
     },
     /// Time one full forward pass at several sizes, to see how it scales.
     ///
@@ -405,6 +417,112 @@ impl Stepper for TrainRunner {
              prefix: {} tokens (rules only)\n",
             self.lora.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "none".into()),
             self.prefix.len(),
+        )
+    }
+}
+
+/// Variant A's f32-forward twin of `TrainRunner`: packed per-cell prompts
+/// (`variant_a::pack_chunk`), forwarded from scratch each chunk against
+/// `TrainModel<Wgpu>` with an optional LoRA adapter applied — the exact
+/// forward `train::run_a::evaluate_a` uses to score a fine-tune, run here on
+/// real 16x16/32x32 grids instead of the training eval's own grid set.
+struct TrainRunnerA {
+    model: TrainModel<burn::backend::Wgpu>,
+    prefix: Vec<u32>,
+    tok: Tokenizer,
+    chunk_cells: usize,
+    lora: Option<PathBuf>,
+    norules: bool,
+}
+
+impl TrainRunnerA {
+    fn new(
+        gguf: &Path,
+        tokenizer: &Path,
+        rule: &Rule,
+        lora: Option<&Path>,
+        norules: bool,
+        chunk_cells: usize,
+        device: &WgpuDevice,
+    ) -> Result<Self> {
+        let tok = Tokenizer::from_json(&std::fs::read(tokenizer).context("read tokenizer.json")?)?;
+        let p = run_a::prompt_a(tokenizer, rule, norules)?;
+        let loaded = lora
+            .map(|path| lora_io::load::<burn::backend::Wgpu>(path, device))
+            .transpose()?;
+        let spec: Option<LoraSpec> = loaded.as_ref().map(|(s, _)| *s);
+        let mut model: TrainModel<burn::backend::Wgpu> =
+            load_train_model(gguf, &[p.dead, p.alive], spec, device)?;
+        if let Some((_, params)) = loaded {
+            anyhow::ensure!(
+                params.len() == model.lora_params().len(),
+                "LoRA file has {} matrices, this model wants {}",
+                params.len(),
+                model.lora_params().len()
+            );
+            model.set_lora_params(params);
+        }
+        println!(
+            "f32 forward (variant A): {} layers, hidden {}, adapter {}, prefix {}",
+            model.config.num_layers,
+            model.config.hidden_size,
+            lora.map(|p| p.display().to_string()).unwrap_or_else(|| "none".into()),
+            if norules { "norules" } else { "rules" },
+        );
+        Ok(TrainRunnerA {
+            model,
+            prefix: p.prefix,
+            tok,
+            chunk_cells,
+            lora: lora.map(|p| p.to_path_buf()),
+            norules,
+        })
+    }
+}
+
+impl Stepper for TrainRunnerA {
+    fn step(&self, grid: &Grid) -> Result<(Vec<f32>, f64)> {
+        let n = grid.cells().len();
+        let mut p = vec![0.0f32; n];
+        let mut secs = 0.0;
+        for first in (0..n).step_by(self.chunk_cells) {
+            let cells: Vec<usize> = (first..(first + self.chunk_cells).min(n)).collect();
+            let chunk = variant_a::pack_chunk(
+                &cells,
+                |c| {
+                    let nb: Vec<u8> = grid
+                        .neighbor_indices(c)
+                        .iter()
+                        .map(|&j| grid.cells()[j])
+                        .collect();
+                    let arr: [u8; 8] = nb.try_into().unwrap();
+                    run_a::tokenize_case(&self.tok, &arr, grid.cells()[c]).unwrap()
+                },
+                self.prefix.len(),
+            );
+            let (tokens, positions, mask) =
+                run_a::full_sequence::<burn::backend::Wgpu>(&self.prefix, &chunk, self.model.device());
+            let start = Instant::now();
+            let logits = self.model.forward(&tokens, &positions, &mask)?;
+            let data = logits.into_data().into_vec::<f32>().unwrap();
+            secs += start.elapsed().as_secs_f64();
+            for (cell, v) in variant_a::p_alive_chunk(&data[self.prefix.len() * 2..], &chunk) {
+                p[cell] = v;
+            }
+        }
+        Ok((p, secs))
+    }
+
+    fn header(&self) -> String {
+        format!(
+            "positions: restart at the prefix for every cell\n\
+             mask: block-diagonal — prefix (causal) + the cell's own prompt\n\
+             head: sliced to the two answer tokens\n\
+             forward: f32 training model (pure Burn ops), no persistent KV cache — full prefix+chunk forward every chunk\n\
+             adapter: {}, prefix: {} tokens ({})\n",
+            self.lora.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "none".into()),
+            self.prefix.len(),
+            if self.norules { "norules" } else { "rules" },
         )
     }
 }
@@ -881,22 +999,26 @@ fn main() -> Result<()> {
             chunk_cells,
             fewshot,
             tag,
+            adapter,
+            norules,
         } => {
-            let runner = RunnerA::new(&gguf, &tokenizer, &rule, chunk_cells, fewshot, &device)?;
-            println!("{} chunks per generation", runner.chunks(size * size));
-            run_pictures(
-                &runner,
-                "Variant A — packed per-cell prompts, native",
-                &tag,
-                &gguf,
-                &rule,
-                size,
-                generations,
-                &seeds,
-                density,
-                &out,
-                freerun,
-            )
+            let title = "Variant A — packed per-cell prompts, native";
+            if adapter.is_some() {
+                anyhow::ensure!(!fewshot, "--fewshot is not wired into the f32 forward");
+                let runner =
+                    TrainRunnerA::new(&gguf, &tokenizer, &rule, adapter.as_deref(), norules, chunk_cells, &device)?;
+                run_pictures(
+                    &runner, title, &tag, &gguf, &rule, size, generations, &seeds, density, &out,
+                    freerun,
+                )
+            } else {
+                let runner = RunnerA::new(&gguf, &tokenizer, &rule, chunk_cells, fewshot, &device)?;
+                println!("{} chunks per generation", runner.chunks(size * size));
+                run_pictures(
+                    &runner, title, &tag, &gguf, &rule, size, generations, &seeds, density, &out,
+                    freerun,
+                )
+            }
         }
         Command::BenchForward {
             gguf,
