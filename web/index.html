@@ -208,24 +208,6 @@
         margin-top: 2px;
     }
 
-    .ladder-wrap { overflow-x: auto; }
-    .ladder-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 12px;
-    }
-    .ladder-table th, .ladder-table td {
-        border: 1px solid var(--border);
-        padding: 4px 8px;
-        text-align: left;
-        white-space: nowrap;
-    }
-    .ladder-table td.desc { white-space: normal; }
-    .ladder-table .proj { color: var(--faint); }
-    .rungs p { margin-top: 10px; }
-    .rungs p:first-child { margin-top: 0; }
-
     footer {
         border-top: 1px solid var(--border);
         padding-top: 24px;
@@ -382,43 +364,8 @@
 </section>
 
 <section>
-    <h2>LADDER <span class="sub">— same computation, six ways to pay for it</span></h2>
-    <p class="info">Same board, one generation, seconds. The button below runs the five local rungs (CPU loop, lookup, BERT of Life, 9 numbers -&gt; centre, stencil) live in this page at 16&sup2;/32&sup2;/64&sup2; on the same random board; the two LLM rows come from the last LLM generation run above, measured at 16&sup2; and projected from ms/cell above that; native is a separate desktop GPU running the same adapter through the f32 forward path, for scale — not a browser number.</p>
-    <div class="controls" style="margin:12px 0;">
-        <button id="ladder-run">measure every rung (this page)</button>
-    </div>
-    <div class="ladder-wrap">
-        <table class="ladder-table" id="ladder">
-            <thead>
-                <tr>
-                    <th>rung</th>
-                    <th>16&sup2; s/gen</th>
-                    <th>32&sup2; s/gen</th>
-                    <th>64&sup2; s/gen</th>
-                    <th>native (GPU)</th>
-                    <th>IoU vs Life</th>
-                    <th>what it computes</th>
-                </tr>
-            </thead>
-            <tbody id="ladder-body"></tbody>
-        </table>
-    </div>
-    <p class="info" id="ladder-llm-hint">load an LLM rung above to measure the two LLM rows.</p>
-    <p class="info" id="ladder-legend" style="display:none;">&asymp; projected from the measured 16&sup2; ms per cell.</p>
-</section>
-
-<section>
-    <h2>THE RUNGS</h2>
-    <div class="rungs">
-        <p><strong>CPU loop</strong> reads the eight neighbours of every cell with a plain nested loop and counts how many are alive, then applies the original Game of Life rule: a live cell survives with two or three live neighbours, a dead cell is born with exactly three. It has no parameters — it is the definition of the rule, not a model of it — and every other rung on this page is measured against its result.</p>
-        <p><strong>512-entry lookup</strong> packs the same eight neighbours plus the cell itself into a nine-bit number and reads the answer out of a table built once, with all five hundred and twelve possible neighbourhoods precomputed. It has no parameters beyond that table. At the board sizes measured here it costs about the same as the loop above — a single memory read is not obviously cheaper than eight additions until the board is large enough that memory traffic, rather than arithmetic, decides which one wins.</p>
-        <p><strong>LLM per pixel (adapter)</strong> reads one cell's eight neighbours and its own state as a short templated sentence, appended to a shared rules prefix, and asks a half-billion-parameter language model, adjusted with a small trained adapter, to answer with the next state. Every cell gets its own forward pass through the whole model, chunked sixty-four at a time — by far the most expensive way to compute this rule on the page.</p>
-        <p><strong>LLM batched (adapter)</strong> runs the identical forward passes as the row above it — same model, same adapter, same chunks of sixty-four cells — and reaches exactly the same answers. The only difference is what gets written to the log while it runs: this row narrates the shared prefix and the batch mechanism instead of naming one cell at a time, so its cost is the same as the row above it.</p>
-        <p><strong>BERT of Life</strong> is a small transformer encoder, trained from scratch on the rule instead of on language, with one attention layer sixteen numbers wide and thirty-five hundred parameters in total. Each cell's nine neighbourhood values become tokens read by the encoder, which reads out a single answer from the position for the centre cell, and it gets every one of the five hundred and twelve possible neighbourhoods exactly right. It costs far less than either LLM row above it — thousands of parameters instead of hundreds of millions — while still doing one forward pass per cell.</p>
-        <p><strong>9 numbers -&gt; centre</strong> drops tokens altogether: the same nine neighbourhood values enter a small two-layer network as plain numbers, fourteen hundred and forty-two parameters in all, and it also answers every one of the five hundred and twelve neighbourhoods correctly. Removing the embedding and attention machinery that BERT of Life still carries makes this the cheaper of the two per-cell models, one forward per cell either way.</p>
-        <p><strong>Stencil (grid -&gt; grid)</strong> reads the whole board at once instead of one cell at a time: each cell's value becomes a small vector, and one attention layer lets every cell see only its eight grid neighbours, so no position needs to be told to the model beyond that mask. With three thousand three hundred and twenty-nine parameters it scores every case correctly at one board size and then, using the same trained weights, at a board four times as large — it generalises rather than being retrained. Because it takes one pass over the whole board rather than one pass per cell, it is the cheapest of the model rungs here by a wide margin.</p>
-        <p><strong>Whole-board thinking model</strong> is the rung that is not built yet: one very large language model would read the entire board as text and write out the next one directly, with no per-cell structure at all. It needs more memory than a browser tab can give it — more than ten gigabytes — so it would have to run elsewhere, and a single generation would be expected to take minutes rather than milliseconds: by far the most expensive way to compute this rule.</p>
-    </div>
+    <h2>LADDER</h2>
+    <p class="info">the full comparison lives on the <a href="compare/">compare page</a>.</p>
 </section>
 
 <footer>
@@ -442,9 +389,8 @@ let gridSize = 64;
 let armedGridSize = null;
 // Last measured variant-B (whole-grid) generation, used to project the time
 // estimate for a size not yet run. Variant A's per-cell estimate instead
-// uses `lastMsPerCell`, already tracked for the ladder.
+// uses `lastMsPerCell`, tracked below for the compare page.
 let lastLlmBSec = null, lastLlmBSize = null;
-let nativeLadderData = null;
 const GENS_PER_SEC = 4;   // deliberately slow: you are meant to watch it
 
 const els = {
@@ -479,10 +425,6 @@ const els = {
   mspercell: document.getElementById('p-mspercell'),
   cellspersec: document.getElementById('p-cellspersec'),
   proj64: document.getElementById('p-proj64'),
-  ladderBtn: document.getElementById('ladder-run'),
-  ladderBody: document.getElementById('ladder-body'),
-  ladderLlmHint: document.getElementById('ladder-llm-hint'),
-  ladderLegend: document.getElementById('ladder-legend'),
 };
 const canvases = {
   model: document.getElementById('c-model'),
@@ -1003,7 +945,6 @@ resync();
 updateGridButtons();
 setStatus('ready', 'Ready');
 debugLog(`ready — ${W}×${H}, rule ${app.rulestring()}, ${GENS_PER_SEC} generations/s`);
-nativeLadderData = await fetchNativeLadderData();
 
 els.play.onclick = () => setPlaying(!playing);
 els.step.onclick = () => { setPlaying(false); stepOnce(); };
@@ -1254,261 +1195,6 @@ async function llmStepOnce() {
   logRunReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (game of life ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)} · IoU ${lastIou.toFixed(3)} · alive recall ${lastAliveRecall.toFixed(3)} · dead recall ${lastDeadRecall.toFixed(3)} · wrong ${lastWrong}`);
 }
 
-// ---------------------------------------------------------------------------
-// LADDER — CPU loop and 512-entry lookup measured live in this page (JS,
-// no wasm); LLM rows projected from the last llm-a generation's ms/cell;
-// native and IoU are cited from a desktop GPU run (a-norules: IoU 1.000 at
-// every generation, every seed, 16²/32²/64²).
-// ---------------------------------------------------------------------------
-function jsLifeStepLoop(cells, w, h) {
-  const out = new Uint8Array(w * h);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let n = 0;
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          if (dx === 0 && dy === 0) continue;
-          n += cells[((y + dy + h) % h) * w + ((x + dx + w) % w)];
-        }
-      }
-      const c = cells[y * w + x];
-      out[y * w + x] = (c ? (n === 2 || n === 3) : n === 3) ? 1 : 0;
-    }
-  }
-  return out;
-}
-
-let lookupTable = null;
-function buildLookupTable() {
-  const t = new Uint8Array(512);
-  for (let k = 0; k < 512; k++) {
-    let n = 0;
-    for (let b = 0; b < 8; b++) if ((k >> b) & 1) n++;
-    const self = (k >> 8) & 1;
-    t[k] = (self ? (n === 2 || n === 3) : n === 3) ? 1 : 0;
-  }
-  return t;
-}
-function jsLifeStepLookup(cells, w, h, table) {
-  const out = new Uint8Array(w * h);
-  for (let i = 0; i < w * h; i++) {
-    const x = i % w, y = Math.floor(i / w);
-    const xm = (x + w - 1) % w, xp = (x + 1) % w, ym = (y + h - 1) % h, yp = (y + 1) % h;
-    const k = cells[ym * w + xm] | (cells[ym * w + x] << 1) | (cells[ym * w + xp] << 2) |
-      (cells[y * w + xm] << 3) | (cells[y * w + xp] << 4) |
-      (cells[yp * w + xm] << 5) | (cells[yp * w + x] << 6) | (cells[yp * w + xp] << 7) |
-      (cells[i] << 8);
-    out[i] = table[k];
-  }
-  return out;
-}
-function timeIt(fn, reps) {
-  const t0 = performance.now();
-  for (let i = 0; i < reps; i++) fn();
-  return (performance.now() - t0) / reps / 1000; // seconds/call
-}
-
-const LADDER_SIZES = [16, 32, 64];
-
-// Row order and static metadata for the ladder table — measured values live
-// in `ladderValues`/`ladderProjected`, keyed the same way, so a re-render
-// never changes row count or order (no layout jump while filling).
-const LADDER_ROWS = [
-  { key: 'cpu', name: 'CPU loop (JS, in the page)', iou: '1.000', desc: 'plain nested loop over 8 neighbours, one generation, in the page' },
-  { key: 'lookup', name: '512-entry lookup (JS)', iou: '1.000', desc: '9-bit index (8 neighbours + self) into a precomputed 512-entry table' },
-  { key: 'llm-per-pixel', name: 'LLM per pixel (adapter)', iou: '1.000', desc: 'one forward per cell, packed in chunks of 64, using the adapter trained without the rules in the prompt' },
-  { key: 'llm-batched', name: 'LLM batched (adapter)', iou: '1.000', desc: 'identical forwards to per-pixel — narration names the batch mechanism' },
-  { key: 'bert', name: 'BERT of Life', iou: '1.000', desc: 'transformer encoder, d=16 L=1 H=1, 3490 params, exact on all 512 cases — one forward per cell' },
-  { key: 'vec-mlp', name: '9 numbers -> centre', iou: '1.000', desc: 'MLP (9->32->32->2), 1442 params, no embedding table — one forward per cell, exact on all 512 neighbourhood cases' },
-  { key: 'vec-stencil', name: 'stencil (grid -> grid)', iou: '1.000', desc: 'a stencil-masked attention layer, one channel, d=16 L=1 H=1, 3329 params — whole grid in ONE forward pass, generalises 16²->32² with the same weights' },
-  { key: 'thinking', name: 'whole-board thinking model', displayName: 'whole-board thinking model (not built)', iou: '—', desc: 'pending: one big model reasons over the whole board as text, needs > 10 GB VRAM' },
-];
-
-function emptyLadderValues() {
-  const v = {};
-  for (const r of LADDER_ROWS) v[r.key] = { 16: null, 32: null, 64: null };
-  return v;
-}
-function emptyLadderProjected() {
-  const v = {};
-  for (const r of LADDER_ROWS) v[r.key] = { 16: false, 32: false, 64: false };
-  return v;
-}
-let ladderValues = emptyLadderValues();
-let ladderProjected = emptyLadderProjected();
-
-async function fetchNativeLadderData() {
-  try {
-    const r = await fetch('./data/ladder-native.json');
-    if (!r.ok) return null;
-    return await r.json();
-  } catch (e) {
-    return null;
-  }
-}
-
-function fmtSec(v) {
-  if (v == null) return '—';
-  if (v < 1e-3) return v.toExponential(2);
-  if (v < 1) return v.toFixed(4);
-  return v.toFixed(2);
-}
-
-function nativeCellsJoined(rowName) {
-  const row = nativeLadderData && nativeLadderData.rows ? nativeLadderData.rows[rowName] : null;
-  if (!row) return '—';
-  return [16, 32, 64].map((n) => (row[String(n)] != null ? String(row[String(n)]) : '—')).join(' / ');
-}
-
-function renderLadderTable() {
-  const rowsHtml = LADDER_ROWS.map((row) => {
-    const vals = ladderValues[row.key];
-    const proj = ladderProjected[row.key];
-    const cellHtml = (n) => {
-      const text = fmtSec(vals[n]);
-      return vals[n] != null && proj[n] ? `<span class="proj">&asymp; ${text}</span>` : text;
-    };
-    return `<tr><td>${row.displayName || row.name}</td><td>${cellHtml(16)}</td><td>${cellHtml(32)}</td><td>${cellHtml(64)}</td><td>${nativeCellsJoined(row.name)}</td><td>${row.iou}</td><td class="desc">${row.desc}</td></tr>`;
-  }).join('');
-  els.ladderBody.innerHTML = rowsHtml;
-}
-
-function medianOf3(arr) {
-  const s = arr.slice().sort((a, b) => a - b);
-  return s[1];
-}
-
-// Runs generations of whatever mode/grid/board is already set up and returns
-// the median of 3 if the first is under 2s, otherwise just that first one —
-// stable numbers for the cheap rungs without tripling the slow ones (BERT /
-// stencil at 64²).
-async function measureGenerations() {
-  await window.__app.step(1);
-  const first = window.__app.secondsPerGeneration();
-  if (first >= 2) return first;
-  const secs = [first];
-  for (let i = 0; i < 2; i++) {
-    await window.__app.step(1);
-    secs.push(window.__app.secondsPerGeneration());
-  }
-  return medianOf3(secs);
-}
-
-const LOCAL_MODEL_SPECS = {
-  bert: { ready: () => window.__app.bertReady(), load: () => window.__app.loadBert(BERT_MODEL) },
-  'vec-mlp': { ready: () => window.__app.vecMlpReady(), load: () => window.__app.loadVecMlp(VEC_MLP_MODEL) },
-  'vec-stencil': { ready: () => window.__app.vecStencilReady(), load: () => window.__app.loadVecStencil(VEC_STENCIL_MODEL) },
-};
-
-async function measureLocalModelRung(modeKey, rowKey, label) {
-  window.__app.setMode(modeKey);
-  const spec = LOCAL_MODEL_SPECS[modeKey];
-  if (!spec.ready()) {
-    setStatus('loading', `loading ${label} for the ladder…`);
-    await spec.load();
-  }
-  for (const n of LADDER_SIZES) {
-    setStatus('generating', `measuring ${label} at ${n}²…`);
-    window.__app.setGrid(n);
-    window.__app.randomize(1, 0.28);
-    ladderValues[rowKey][n] = await measureGenerations();
-    logRun(`ladder: ${label} ${n}² = ${fmtSec(ladderValues[rowKey][n])} s/gen`);
-    renderLadderTable();
-  }
-}
-
-async function measureLlmRows() {
-  window.__app.setMode('llm-a');
-  window.__app.setGrid(16);
-  window.__app.randomize(1, 0.28);
-
-  window.__app.setNarrationStyle('perpixel');
-  setStatus('generating', 'measuring LLM per pixel at 16²…');
-  await window.__app.step(1);
-  ladderValues['llm-per-pixel'][16] = window.__app.secondsPerGeneration();
-  const perPixelMsPerCell = window.__app.msPerCell();
-  ladderValues['llm-per-pixel'][32] = perPixelMsPerCell * 32 * 32 / 1000;
-  ladderValues['llm-per-pixel'][64] = perPixelMsPerCell * 64 * 64 / 1000;
-  ladderProjected['llm-per-pixel'] = { 16: false, 32: true, 64: true };
-  logRun(`ladder: LLM per pixel 16² = ${fmtSec(ladderValues['llm-per-pixel'][16])} s/gen (32²/64² projected)`);
-  renderLadderTable();
-
-  window.__app.setNarrationStyle('batched');
-  setStatus('generating', 'measuring LLM batched at 16²…');
-  await window.__app.step(1);
-  ladderValues['llm-batched'][16] = window.__app.secondsPerGeneration();
-  const batchedMsPerCell = window.__app.msPerCell();
-  ladderValues['llm-batched'][32] = batchedMsPerCell * 32 * 32 / 1000;
-  ladderValues['llm-batched'][64] = batchedMsPerCell * 64 * 64 / 1000;
-  ladderProjected['llm-batched'] = { 16: false, 32: true, 64: true };
-  logRun(`ladder: LLM batched 16² = ${fmtSec(ladderValues['llm-batched'][16])} s/gen (32²/64² projected)`);
-  renderLadderTable();
-}
-
-let ladderRunning = false;
-async function runFullLadder() {
-  if (ladderRunning) return;
-  ladderRunning = true;
-  els.ladderBtn.disabled = true;
-  const prevMode = mode, prevGridSize = gridSize;
-  const prevCells = Array.from(app.cells());
-  setPlaying(false);
-  if (!lookupTable) lookupTable = buildLookupTable();
-  try {
-    window.__app.setMode('classical');
-    for (const n of LADDER_SIZES) {
-      setStatus('generating', `measuring CPU loop and lookup at ${n}²…`);
-      window.__app.setGrid(n);
-      window.__app.randomize(1, 0.28);
-      const board = Uint8Array.from(window.__app.grid());
-      const reps = n <= 32 ? 2000 : 400;
-      ladderValues.cpu[n] = timeIt(() => jsLifeStepLoop(board, n, n), reps);
-      ladderValues.lookup[n] = timeIt(() => jsLifeStepLookup(board, n, n, lookupTable), reps);
-      logRun(`ladder: CPU loop ${n}² = ${fmtSec(ladderValues.cpu[n])} s/gen · lookup ${n}² = ${fmtSec(ladderValues.lookup[n])} s/gen`);
-      renderLadderTable();
-    }
-
-    await measureLocalModelRung('bert', 'bert', 'BERT of Life');
-    await measureLocalModelRung('vec-mlp', 'vec-mlp', '9 numbers -> centre');
-    await measureLocalModelRung('vec-stencil', 'vec-stencil', 'stencil (grid -> grid)');
-
-    if (window.__app.llmReady()) {
-      await measureLlmRows();
-      els.ladderLlmHint.style.display = 'none';
-      els.ladderLegend.style.display = '';
-    } else {
-      els.ladderLlmHint.style.display = '';
-      els.ladderLegend.style.display = 'none';
-    }
-  } finally {
-    window.__app.setMode(prevMode);
-    window.__app.setGrid(prevGridSize);
-    // LLM modes above 32² require setGrid to be called twice (the first call
-    // only arms a time estimate) — call again if the first didn't take.
-    if (window.__app.width !== prevGridSize) window.__app.setGrid(prevGridSize);
-    // Restore the board content too, if the grid ended up back at the size
-    // it started at (setGrid is a no-op when the size hasn't changed, so the
-    // measurement's last random board would otherwise be left on screen).
-    if (window.__app.width === prevGridSize) {
-      window.__app.clear();
-      for (let i = 0; i < prevCells.length; i++) {
-        if (prevCells[i]) window.__app.toggle(i % prevGridSize, Math.floor(i / prevGridSize));
-      }
-    }
-    setStatus('ready', 'Ready');
-    els.ladderBtn.disabled = false;
-    ladderRunning = false;
-  }
-}
-els.ladderBtn.onclick = () => runFullLadder();
-
-// Skeleton render at boot: all rows present with "—" placeholders (plus
-// native numbers, if the file loaded) so the table never changes row count
-// or column count while a measurement run fills it in.
-renderLadderTable();
-els.ladderLlmHint.style.display = llmReady ? 'none' : '';
-els.ladderLegend.style.display = 'none';
-
 els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B runs the whole 64×64 grid in one forward; variant A drops to 16×16 and asks the model one question per cell — per-pixel narrated (default) or batched, same forwards either way. BERT of Life is a small transformer encoder trained from scratch — also 16×16, also one forward per cell, but every token is the raw 0/1 neighbourhood, not text. "9 numbers -> centre" is the same neighbourhood with no tokens at all — an MLP on 9 floats, one forward per cell. "stencil (grid -> grid)" is a stencil-masked attention layer with one channel: the whole grid in one forward pass, no per-cell loop, and it generalises from 16×16 up through 256×256 with the same trained weights. Click a cell in the LLM of Life grid to toggle it.';
 
 window.__app = {
@@ -1634,8 +1320,6 @@ window.__app = {
   loadVecMlp,
   loadVecStencil,
   setAdapter,
-  runFullLadder: () => runFullLadder(),
-  ladderValues: () => JSON.parse(JSON.stringify(ladderValues)),
 };
 </script>
 </body>
