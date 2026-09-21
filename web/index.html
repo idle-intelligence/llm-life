@@ -509,7 +509,7 @@ function setStatus(state, text) {
   els.statusText.textContent = text;
   // Mirror run progress next to the worlds, where the visitor is looking.
   const gs = document.getElementById('grid-status');
-  if (gs) gs.textContent = /cell|generation|forecast|done|stopped/i.test(text) ? text : '';
+  if (gs && /cell|generation|stopped/i.test(text)) gs.textContent = text;
 }
 
 // Console-only detail (model/adapter/checkpoint loading, seed edits, grid
@@ -771,6 +771,8 @@ function render() {
   const aliveRecall = recall;
   paint(ctx.diff, diff);
   els.gen.textContent = generation;
+  const gs = document.getElementById('grid-status');
+  if (gs && !/cell/i.test(gs.textContent)) gs.textContent = generation > 0 ? `generation ${generation}` : '';
   els.msGen.textContent = lastSec === null ? '-' : (lastSec * 1000).toFixed(1);
   const cellsPerSec = (lastSec && lastSec > 0) ? (W * H / lastSec) : null;
   els.cellsSec.textContent = cellsPerSec === null ? '-' : cellsPerSec.toFixed(0);
