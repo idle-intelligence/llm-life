@@ -707,7 +707,7 @@ async function runEveryRung() {
       renderLadderTable();
 
       setStatus('generating', 'running the LLM per cell, trained, batched...');
-      results['llm-percell-batched'] = await measureWorkerStep('a', board);
+      results['llm-percell-batched'] = await measureWorkerStep('a', board, { liveKey: 'llm-percell-batched' });
       results['llm-percell-batched'].correctCount = countMatches(results['llm-percell-batched'].binarized, trueNext);
       results['llm-percell-batched'].total = total;
       lastResults = results;
