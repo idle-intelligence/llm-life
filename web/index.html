@@ -767,7 +767,7 @@ function render() {
   paint(ctx.diff, diff);
   els.gen.textContent = generation;
   const gs = document.getElementById('grid-status');
-  if (gs && !/cell/i.test(gs.textContent)) gs.textContent = `generation ${generation}`;
+  if (gs && !/cell|loading/i.test(gs.textContent)) gs.textContent = `generation ${generation}`;
   els.msGen.textContent = lastSec === null ? '-' : (lastSec * 1000).toFixed(1);
   const cellsPerSec = (lastSec && lastSec > 0) ? (W * H / lastSec) : null;
   els.cellsSec.textContent = cellsPerSec === null ? '-' : cellsPerSec.toFixed(0);
@@ -808,6 +808,11 @@ function updateStepPlayEnabled() {
   const title = ready ? '' : 'loading the model, then it will step';
   els.play.title = title;
   els.step.title = title;
+  const gs = document.getElementById('grid-status');
+  if (gs) {
+    if (!ready) gs.textContent = 'loading the model, Play and Step wake up when it is ready';
+    else if (/loading the model/.test(gs.textContent)) gs.textContent = `generation ${generation}`;
+  }
 }
 
 async function stepOnce() {
