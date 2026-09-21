@@ -214,11 +214,16 @@
         line-height: 1.4;
     }
     p.panel-desc.method-desc { font-size: 16px; line-height: 1.55; color: var(--muted, #555); }
-    .method-row { display: flex; gap: 28px; align-items: flex-start; }
+    .method-row {
+        --row-w: min(100vw - 32px, 900px);
+        display: flex; gap: 32px; align-items: flex-start;
+        width: var(--row-w);
+        margin-left: calc(50% - var(--row-w) / 2);
+    }
     .method-row #method-choice { flex: 0 0 300px; }
     .method-row #method-desc { flex: 1 1 0; min-width: 0; margin-top: 2px; }
     @media (max-width: 700px) {
-        .method-row { flex-direction: column; gap: 10px; }
+        .method-row { flex-direction: column; gap: 10px; width: 100%; margin-left: 0; }
         .method-row #method-choice { flex: none; }
     }
     .method-grid input[type="radio"] { margin-top: 3px; cursor: pointer; }
