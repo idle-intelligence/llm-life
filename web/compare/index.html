@@ -217,7 +217,16 @@
         color: var(--muted);
     }
 
-    .ladder-wrap { overflow-x: auto; }
+    /* The table breaks out of the text column like the worlds on the demo
+       page: as wide as the viewport allows (up to 1080 px), scrolling inside
+       itself only on phones. */
+    .ladder-wrap {
+        --wrap-w: min(100vw - 32px, 1080px);
+        width: var(--wrap-w);
+        margin-left: calc(50% - var(--wrap-w) / 2);
+        overflow-x: auto;
+    }
+    .ladder-wrap table { width: 100%; }
     .ladder-table {
         width: 100%;
         border-collapse: collapse;
