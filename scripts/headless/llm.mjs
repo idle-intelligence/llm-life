@@ -3,7 +3,7 @@
 // per generation and agreement with true Life on the same grid.
 //
 // The page now loads its model itself (web/models is a symlink to
-// ~/Code/idle-intelligence/models), so only one server is needed:
+// the local models directory), so only one server is needed:
 //   python3 web/serve.py
 function fail(msg) {
   console.error(msg);

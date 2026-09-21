@@ -7,17 +7,17 @@ command (plus a `128` row, now a default `--sizes` entry).
 
 machine: Apple M2, macOS 26.3.1, Metal via Burn 0.20 / wgpu.
 llm-web commit: `0198acd`, llm-life commit: `72726c6`.
-model: `~/Code/idle-intelligence/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf`
+model: `qwen2.5-0.5b-instruct-q4_0.gguf`
 (24 layers, hidden 896, 14 heads / 2 KV heads, intermediate 4864, vocab
 151936, ctx 32768)
-tokenizer: `~/Code/idle-intelligence/models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json`
+tokenizer: `tokenizer.json`
 
 command:
 
 ```
 ./target/release/llm-life bench-forward \
-  --gguf  ~/Code/idle-intelligence/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf \
-  --tokenizer ~/Code/idle-intelligence/models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json
+  --gguf  qwen2.5-0.5b-instruct-q4_0.gguf \
+  --tokenizer tokenizer.json
 ```
 
 Defaults: `--sizes 16,32,45,64,128 --chunks 16,32,64,128 --reps 3

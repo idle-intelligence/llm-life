@@ -1,6 +1,6 @@
 # Variant B — stencil mask, native
 
-model: ~/models/gguf/Qwen2.5-0.5B-GGUF/Qwen2.5-0.5B.Q4_0.gguf
+model: Qwen2.5-0.5B.Q4_0.gguf
 rule: B3/S23
 grid: 64x64 (torus)
 mode: teacher-forced (each generation starts from true Life)

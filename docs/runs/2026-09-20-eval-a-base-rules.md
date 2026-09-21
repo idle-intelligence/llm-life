@@ -1,7 +1,7 @@
 # Variant A LoRA fine-tune — a-rules (B3/S23)
 
 machine: Darwin 25.3.0 arm64
-model: ~/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf
+model: qwen2.5-0.5b-instruct-q4_0.gguf
 rule: B3/S23
 adapter: a-rules (rules in the prefix)
 LoRA: rank 8, alpha 16, q/k/v/o

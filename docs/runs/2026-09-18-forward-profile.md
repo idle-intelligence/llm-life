@@ -15,8 +15,8 @@ command:
 
 ```
 ./target/release/llm-life bench-forward \
-  --gguf ~/Code/idle-intelligence/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf \
-  --tokenizer ~/Code/idle-intelligence/models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json \
+  --gguf qwen2.5-0.5b-instruct-q4_0.gguf \
+  --tokenizer tokenizer.json \
   --sizes 32,64 --chunks 16 --reps 1 --profile
 ```
 

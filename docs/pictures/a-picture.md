@@ -1,6 +1,6 @@
 # Variant A — packed per-cell prompts, native
 
-model: ~/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf
+model: qwen2.5-0.5b-instruct-q4_0.gguf
 rule: B3/S23
 grid: 64x64 (torus)
 mode: teacher-forced (each generation starts from true Life)

@@ -3,17 +3,17 @@
 machine: Apple M2, macOS 26.3.1, Metal via Burn 0.20 / wgpu. **GPU uncontended**
 (no other GPU job running; these timings are not provisional).
 commit: `3e3a193`
-model: `~/Code/idle-intelligence/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf`
+model: `qwen2.5-0.5b-instruct-q4_0.gguf`
 (Qwen2.5-0.5B-Instruct: 24 layers, hidden 896, 14 heads / 2 KV heads, intermediate 4864, vocab 151936, ctx 32768)
-tokenizer: `~/Code/idle-intelligence/models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json`
+tokenizer: `tokenizer.json`
 
 command:
 
 ```
 cargo build --release --bin llm-life
 ./target/release/llm-life bench-forward \
-  --gguf  ~/Code/idle-intelligence/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf \
-  --tokenizer ~/Code/idle-intelligence/models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json
+  --gguf  qwen2.5-0.5b-instruct-q4_0.gguf \
+  --tokenizer tokenizer.json
 ```
 
 Defaults: `--sizes 16,32,45,64 --chunks 16,32,64,128 --reps 3 --density 0.28`, no
