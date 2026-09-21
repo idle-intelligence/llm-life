@@ -39,7 +39,7 @@ where, if anywhere, is the crossover.
 | 2048 | 4194304 | FAILED | — | — | — | — | — |
 | 4096 | 16777216 | FAILED | — | — | — | — | — |
 
-Source: `/tmp`.
+Source: the headless run's log.
 
 ## Results — Apple M2 (Metal)
 
@@ -51,7 +51,7 @@ Source: `/tmp`.
 | 2048 | 4194304 | 2985.2156 | 18.5621 | 1.4050 | 225.9608 | 160.83 | 0 |
 | 4096 | 16777216 | FAILED | — | — | — | — | — |
 
-Source: `/tmp`.
+Source: the headless run's log.
 
 ## Observations
 

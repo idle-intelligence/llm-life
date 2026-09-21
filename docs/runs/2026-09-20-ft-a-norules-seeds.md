@@ -1,7 +1,7 @@
 # Variant A LoRA fine-tune — a-norules (B2/S)
 
 machine: Linux 6.18.45-1-MANJARO x86_64
-model: /box/models/qwen2.5-0.5b-instruct-q4_0.gguf
+model: qwen2.5-0.5b-instruct-q4_0.gguf
 rule: B2/S
 adapter: a-norules (no rule text in the prefix)
 LoRA: rank 8, alpha 16, q/k/v/o
