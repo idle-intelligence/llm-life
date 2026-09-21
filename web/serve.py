@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Dev server for web/, stdlib only.
 
-Cross-origin isolation headers are set because LLM mode needs WebGPU in a
-Worker; classical mode doesn't care.
+No SharedArrayBuffer use in web/, so no COOP/COEP headers -- this matches
+how GitHub Pages serves the same tree.
 
 Usage: python3 web/serve.py [--port 8010] [--bind 127.0.0.1]
 """
@@ -16,9 +16,9 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
+    extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, ".wasm": "application/wasm"}
+
     def end_headers(self):
-        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
-        self.send_header("Cross-Origin-Embedder-Policy", "credentialless")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
