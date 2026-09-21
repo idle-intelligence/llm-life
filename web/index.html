@@ -270,7 +270,7 @@
         white-space: pre;
         line-height: 1.6;
         height: 9.6em;
-        overflow: hidden;
+        overflow-y: auto;
     }
 </style>
 </head>
@@ -310,6 +310,14 @@
     </div>
 </section>
 
+<section id="calls-section" style="display:none">
+    <h2>settings <span class="sub">· calls</span></h2>
+    <div class="method-grid" id="calls-choice">
+        <label><input type="radio" name="calls" value="percell" checked /> one cell per call</label>
+        <label><input type="radio" name="calls" value="batched" /> 64 cells per call</label>
+    </div>
+</section>
+
 <section>
     <h2>settings <span class="sub">· grid</span></h2>
     <div class="controls" id="grid-choice">
@@ -331,10 +339,6 @@
 
 <section>
     <h2>input</h2>
-    <div class="controls" id="narration-choice" style="display:none; margin-bottom:12px;">
-        <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="radio" name="narration" value="perpixel" checked /> per-pixel narrated</label>
-        <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="radio" name="narration" value="batched" /> batched</label>
-    </div>
     <div class="controls">
         <button id="play" class="primary">Play</button>
         <button id="step">Step</button>
@@ -434,7 +438,7 @@ const els = {
   aliveNote: document.getElementById('p-alive-note'),
   overlayBtn: document.getElementById('overlay-btn'),
   methodDesc: document.getElementById('method-desc'),
-  narrationChoice: document.getElementById('narration-choice'),
+  callsSection: document.getElementById('calls-section'),
   narrationWrap: document.getElementById('narrationWrap'),
   narrationLog: document.getElementById('narrationLog'),
   narrationCounter: document.getElementById('narrationCounter'),
@@ -484,11 +488,11 @@ let generating = false, pendingGridSize = null, pendingReset = null;
 // (window.__app.setThreshold), never a visible setting.
 let thresholdName = 'otsu', thresholdK = 2.0, lastThresholdValue = null;
 
-// Narration style (per-cell mode only). Both styles run the identical
+// Calls setting (LLM per cell mode only). Both settings run the identical
 // forwards (the engine only exposes chunk-level calls -- one forward per
 // 64-cell chunk); they differ only in how the same chunk results are
-// presented in the narration strip.
-let narrationStyle = 'perpixel';
+// presented in the narration strip and the status counter.
+let narrationStyle = 'percell';
 let cellTokensCount = null;
 let bertNumLayers = null;
 let narrationLines = [];
@@ -547,8 +551,9 @@ function resetNarrationForGen() {
 
 function narrationPush(line) {
   narrationLines.push(line);
-  if (narrationLines.length > 6) narrationLines.shift();
+  if (narrationLines.length > 500) narrationLines.shift();
   els.narrationLog.textContent = narrationLines.join('\n');
+  els.narrationLog.scrollTop = els.narrationLog.scrollHeight;
 }
 
 function handleChunkNarration({ firstCell, pAlive, ms }) {
@@ -570,9 +575,12 @@ function handleChunkNarration({ firstCell, pAlive, ms }) {
       const row0 = `${nb[0]}${nb[1]}${nb[2]}`, row1 = `${nb[3]}${self}${nb[4]}`, row2 = `${nb[5]}${nb[6]}${nb[7]}`;
       narrationPush(`cell (${r},${c}) - neighbourhood ${row0}/${row1}/${row2} - ${cellTokensCount}-token prompt - answer ${answer} (p ${conf.toFixed(2)}) - ${msPerCell.toFixed(0)} ms`);
       cellsNarrated++;
+      const genLabel = generation + 1;
+      setStatus('generating', `cell ${cellsNarrated} / ${cellsThisGen}`);
     }
   }
   const genLabel = generation + 1;
+  if (narrationStyle === 'batched') setStatus('generating', `cells ${cellsNarrated} / ${cellsThisGen}`);
   narrationPush(`cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`);
   els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`;
 }
@@ -905,7 +913,7 @@ for (const btn of document.querySelectorAll('.gridsize-btn')) {
   btn.addEventListener('click', () => window.__app.setGrid(Number(btn.dataset.size)));
 }
 
-for (const r of document.querySelectorAll('input[name=narration]')) {
+for (const r of document.querySelectorAll('input[name=calls]')) {
   r.addEventListener('change', () => {
     if (!r.checked) return;
     window.__app.setNarrationStyle(r.value);
@@ -1147,7 +1155,7 @@ async function llmStepOnce() {
     gridCellsForStep = Array.from(app.cells());
     resetNarrationForGen();
   }
-  const ticker = setInterval(() => {
+  const ticker = mode === 'llm-a' ? null : setInterval(() => {
     const elapsed = (performance.now() - t0) / 1000;
     setStatus('generating', `generation ${genLabel}: ${genPhase}... ${elapsed.toFixed(1)} s`);
   }, 250);
@@ -1228,8 +1236,8 @@ window.__app = {
     els.modelSize.textContent = MODE_INFO[m].size;
     els.engine.textContent = MODE_INFO[m].engine;
     const isA = m === 'llm-a', isB = m === 'llm';
-    els.narrationChoice.style.display = isA ? '' : 'none';
-    els.narrationWrap.style.display = isPerCellNarrated(m) ? '' : 'none';
+    els.callsSection.style.display = isA ? '' : 'none';
+    els.narrationWrap.style.display = isA ? '' : 'none';
     els.overlayBtn.style.display = isLlmMode(m) ? '' : 'none';
     els.aliveNote.style.display = isLlmMode(m) ? '' : 'none';
     els.adapterSection.style.display = isLlmMode(m) ? '' : 'none';
@@ -1305,9 +1313,9 @@ window.__app = {
   isPlaying: () => playing,
   narrationStyle: () => narrationStyle,
   setNarrationStyle: (s) => {
-    if (s !== 'perpixel' && s !== 'batched') throw new Error("narration style must be 'perpixel' or 'batched'");
+    if (s !== 'percell' && s !== 'batched') throw new Error("calls setting must be 'percell' or 'batched'");
     narrationStyle = s;
-    for (const r of document.querySelectorAll('input[name=narration]')) r.checked = r.value === s;
+    for (const r of document.querySelectorAll('input[name=calls]')) r.checked = r.value === s;
     return narrationStyle;
   },
   narrationLines: () => narrationLines.slice(),
