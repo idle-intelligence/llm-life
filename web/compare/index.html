@@ -292,13 +292,13 @@
 <section>
     <h2>output <span class="sub">· methods</span></h2>
     <div class="method-notes">
-        <p><strong>Game of Life (rule)</strong> - the classical rule, one pass over the grid.</p>
-        <p><strong>lookup table</strong> - the same rule as a 512-entry table indexed by the 9 neighbourhood bits.</p>
-        <p><strong>9 numbers to centre</strong> - a 2-layer MLP over the 9 cell values, 1,442 parameters, exact on all 512 neighbourhoods.</p>
-        <p><strong>BERT of Life</strong> - a one-layer transformer encoder over the 9 cells as tokens, 3,490 parameters, exact on all 512 neighbourhoods.</p>
-        <p><strong>stencil, grid to grid</strong> - one attention layer over the whole grid, each cell masked to its 3x3 stencil, 3,329 parameters; trained at 16x16, exact with the same weights up to 256x256.</p>
-        <p><strong>LLM per cell</strong> - Qwen2.5-0.5B with a LoRA adapter, asked one cell at a time.</p>
-        <p><strong>LLM whole grid</strong> - Qwen2.5-0.5B with a LoRA adapter, the whole grid in one prompt, one token per cell.</p>
+        <p><strong>Game of Life (rule)</strong> - Conway's rule: a live cell with two or three live neighbours stays alive, a dead cell with exactly three comes alive, every other cell dies or stays dead. A for loop over the grid on the CPU, one pass per generation.</p>
+        <p><strong>lookup table</strong> - the same rule as a 512-entry table indexed by the 9 neighbourhood bits. The fastest way to compute it, and the thing every model below is measured against.</p>
+        <p><strong>LLM per cell</strong> - a stupid idea: give a language model the rules and one cell's neighbours, ask if it lives or dies. Off the shelf it gets 215 of 512 neighbourhoods right; fine-tuned, all 512.</p>
+        <p><strong>BERT of Life</strong> - alive or dead is a classification. What would a BERT do? A one-layer encoder over the 9 cells as tokens, 3,490 parameters, exact.</p>
+        <p><strong>9 numbers to centre</strong> - drop the language model, keep the approach. A 2-layer MLP over the 9 cell values, 1,442 parameters, exact.</p>
+        <p><strong>LLM whole grid</strong> - cell by cell is stupid. Ask the model for the whole grid in one prompt, one token per cell.</p>
+        <p><strong>stencil (grid to grid)</strong> - the whole grid in one pass, no language model: one attention layer where each cell only sees its 3x3 stencil. 3,329 parameters, trained at 16x16, exact with the same weights at 256x256.</p>
     </div>
 </section>
 
