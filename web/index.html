@@ -267,6 +267,12 @@
         margin-top: 2px;
     }
     #narrationWrap { margin-top: 16px; }
+    .narration-label {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 11px;
+        color: var(--faint);
+        margin-bottom: 6px;
+    }
     #narrationLog {
         font-family: 'IBM Plex Mono', monospace;
         font-size: 12px;
@@ -277,6 +283,7 @@
         line-height: 1.6;
         height: 9.6em;
         overflow-y: auto;
+        overflow-x: auto;
     }
 </style>
 </head>
@@ -375,9 +382,8 @@
         <div class="panel"><canvas id="c-diff" width="64" height="64"></canvas><div class="caption">diff</div></div>
     </div>
     <div id="narrationWrap" style="display:none;">
-        <div class="metric-label" style="margin-bottom:6px;">narration</div>
+        <div class="narration-label">narration</div>
         <div id="narrationLog"></div>
-        <div id="narrationCounter" class="info" style="margin-top:6px;"></div>
     </div>
 </section>
 
@@ -409,7 +415,7 @@
             <div class="metric-label">engine</div>
         </div>
     </div>
-    <p class="panel-desc" id="p-alive-note" style="display:none">The model's answer per cell is a probability; cells are painted alive above the automatic threshold.</p>
+    <p class="panel-desc" id="p-alive-note" style="display:none">The model answers with a probability; a cell is painted alive when alive is the more likely answer.</p>
     <p class="info">The full comparison is on the <a href="compare/">compare page</a>.</p>
 </section>
 
@@ -458,7 +464,6 @@ const els = {
   callsSection: document.getElementById('calls-section'),
   narrationWrap: document.getElementById('narrationWrap'),
   narrationLog: document.getElementById('narrationLog'),
-  narrationCounter: document.getElementById('narrationCounter'),
   adapterSection: document.getElementById('adapter-section'),
   adapterAChoice: document.getElementById('adapter-a-choice'),
   adapterBChoice: document.getElementById('adapter-b-choice'),
@@ -585,7 +590,9 @@ function neighborBitsAt(cellsArr, w, h, idx) {
   return [at(xm, ym), at(x, ym), at(xp, ym), at(xm, y), at(xp, y), at(xm, yp), at(x, yp), at(xp, yp)];
 }
 
+let narrationEpoch = 0;
 function resetNarrationForGen() {
+  narrationEpoch++;
   narrationLines = [];
   els.narrationLog.textContent = '';
   cellsNarrated = 0;
@@ -600,33 +607,50 @@ function narrationPush(line) {
   els.narrationLog.scrollTop = els.narrationLog.scrollHeight;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// (row,col), the three rows of the 3x3 neighbourhood, the answer, its
+// probability, the forward time -- one line, short enough to never clip at
+// the 680px column.
+function cellNarrationLine(cellIdx, p, ms) {
+  const r = Math.floor(cellIdx / W), c = cellIdx % W;
+  const nb = neighborBitsAt(gridCellsForStep, W, H, cellIdx);
+  const self = gridCellsForStep[cellIdx] !== 0 ? 1 : 0;
+  const answer = p >= 0.5 ? 1 : 0;
+  const conf = answer === 1 ? p : 1 - p;
+  const row0 = `${nb[0]}${nb[1]}${nb[2]}`, row1 = `${nb[3]}${self}${nb[4]}`, row2 = `${nb[5]}${nb[6]}${nb[7]}`;
+  return `(${r},${c})  ${row0} ${row1} ${row2}  → ${answer}  p ${conf.toFixed(2)}  ${ms.toFixed(0)} ms`;
+}
+
+// Reveal chain for the "64 cells per call" mode: the worker posts one message
+// per chunk (all 64 answers at once), but the log still reads cell by cell,
+// so the 64 lines are pushed one at a time with a short delay between them.
+// `narrationEpoch` guards against a chunk from a generation that got Cleared
+// mid-reveal still trickling lines into the next generation's log.
+let narrationRevealChain = Promise.resolve();
+
 function handleChunkNarration({ firstCell, pAlive, ms }) {
   const chunkSize = pAlive.length;
   chunkTimingsMs.push({ ms, chunkSize });
   if (narrationStyle === 'batched') {
-    narrationPush(`prefix shared - batch ${chunkSize} cells x ${cellTokensCount} tokens - one forward ${ms.toFixed(0)} ms - ${chunkSize} answers read back`);
-    cellsNarrated += chunkSize;
-  } else {
     const msPerCell = ms / chunkSize;
-    for (let k = 0; k < chunkSize; k++) {
-      const cellIdx = firstCell + k;
-      const r = Math.floor(cellIdx / W), c = cellIdx % W;
-      const nb = neighborBitsAt(gridCellsForStep, W, H, cellIdx);
-      const self = gridCellsForStep[cellIdx] !== 0 ? 1 : 0;
-      const p = pAlive[k];
-      const answer = p >= 0.5 ? 1 : 0;
-      const conf = answer === 1 ? p : 1 - p;
-      const row0 = `${nb[0]}${nb[1]}${nb[2]}`, row1 = `${nb[3]}${self}${nb[4]}`, row2 = `${nb[5]}${nb[6]}${nb[7]}`;
-      narrationPush(`cell (${r},${c}) - neighbourhood ${row0}/${row1}/${row2} - ${cellTokensCount}-token prompt - answer ${answer} (p ${conf.toFixed(2)}) - ${msPerCell.toFixed(0)} ms`);
-      cellsNarrated++;
-      const genLabel = generation + 1;
-      setStatus('generating', `cell ${cellsNarrated} / ${cellsThisGen}`);
-    }
+    const epoch = narrationEpoch;
+    narrationRevealChain = narrationRevealChain.then(async () => {
+      for (let k = 0; k < chunkSize; k++) {
+        if (epoch !== narrationEpoch) return;
+        narrationPush(cellNarrationLine(firstCell + k, pAlive[k], msPerCell));
+        cellsNarrated++;
+        setStatus('generating', `cell ${cellsNarrated} / ${cellsThisGen}`);
+        await sleep(15);
+      }
+    });
+  } else {
+    narrationPush(cellNarrationLine(firstCell, pAlive[0], ms));
+    cellsNarrated++;
+    setStatus('generating', `cell ${cellsNarrated} / ${cellsThisGen}`);
   }
-  const genLabel = generation + 1;
-  if (narrationStyle === 'batched') setStatus('generating', `cells ${cellsNarrated} / ${cellsThisGen}`);
-  narrationPush(`cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`);
-  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`;
 }
 
 function handleBertCellNarration({ index, p, ms }) {
@@ -636,9 +660,6 @@ function handleBertCellNarration({ index, p, ms }) {
   const conf = answer === 1 ? p : 1 - p;
   narrationPush(`cell (${r},${c}) - 9 tokens - encoder ${bertNumLayers} layers - answer ${answer} (p ${conf.toFixed(2)}) - ${ms.toFixed(2)} ms`);
   cellsNarrated++;
-  const genLabel = generation + 1;
-  narrationPush(`cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`);
-  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`;
 }
 
 function handleVecMlpCellNarration({ index, p, ms }) {
@@ -646,17 +667,12 @@ function handleVecMlpCellNarration({ index, p, ms }) {
   const r = Math.floor(index / W), c = index % W;
   narrationPush(`cell (${r},${c}) - 9 numbers - MLP ${VEC_MLP_MODEL.hidden}x${VEC_MLP_MODEL.hidden} - 1442 params - ${ms.toFixed(2)} ms`);
   cellsNarrated++;
-  const genLabel = generation + 1;
-  narrationPush(`cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`);
-  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`;
 }
 
 function handleVecStencilNarration({ cells, ms }) {
   chunkTimingsMs.push({ ms, chunkSize: cells });
   narrationPush(`whole grid - ${cells} cells - stencil attention - one pass - ${ms.toFixed(1)} ms`);
   cellsNarrated = cells;
-  const genLabel = generation + 1;
-  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`;
 }
 
 let bertMsPerCell = null, vecMlpMsPerCell = null, vecStencilMsPerCell = null;
@@ -863,7 +879,11 @@ function applyReset(type, opts = {}) {
 
 function requestReset(type, opts) {
   setPlaying(false);
-  if (generating) { pendingReset = { type, opts }; return; }
+  if (generating) {
+    pendingReset = { type, opts };
+    if (worker) worker.postMessage({ type: 'stop' });
+    return;
+  }
   applyReset(type, opts);
 }
 
@@ -944,7 +964,8 @@ function isLlmMode(m) {
 function formatDuration(seconds) {
   if (seconds == null || !isFinite(seconds)) return 'an unknown time';
   if (seconds < 60) return `${seconds.toFixed(0)} s`;
-  return `${(seconds / 60).toFixed(1)} min`;
+  if (seconds < 3600) return `${(seconds / 60).toFixed(1)} min`;
+  return `${(seconds / 3600).toFixed(1)} h`;
 }
 
 // Rough, this-machine estimate for a size the LLM rungs haven't run at yet:
@@ -955,7 +976,13 @@ function llmSizeEstimateSeconds(n) {
   const cells = n * n;
   if (mode === 'llm-a' && lastMsPerCell != null) return (lastMsPerCell / 1000) * cells;
   if (mode === 'llm' && lastLlmBSec != null && lastLlmBSize) return lastLlmBSec * cells / (lastLlmBSize * lastLlmBSize);
-  return cells * 0.15; // no measurement yet: rough fallback
+  return cells * 0.13; // no measurement yet: rough fallback
+}
+
+// LLM per cell (one forward per cell) works at any grid size; LLM whole grid
+// only has adapters trained at 16 and 32.
+function llmMaxSize(m) {
+  return m === 'llm-a' ? 256 : 32;
 }
 
 function updateGridButtons() {
@@ -963,14 +990,20 @@ function updateGridButtons() {
   for (const btn of document.querySelectorAll('.gridsize-btn')) {
     const n = Number(btn.dataset.size);
     btn.classList.toggle('primary', n === gridSize);
-    const disabled = llm && n > 64;
-    btn.disabled = disabled;
-    if (llm && disabled) {
-      btn.title = `disabled for LLM mode: about ${formatDuration(llmSizeEstimateSeconds(n))} per generation`;
-    } else if (llm && n > 32) {
-      btn.title = armedGridSize === n ? 'click again to confirm' : 'click to see a time estimate first';
-    } else {
+    if (!llm) {
+      btn.disabled = false;
       btn.title = '';
+      continue;
+    }
+    const maxSize = llmMaxSize(mode);
+    const disabled = n > maxSize;
+    btn.disabled = disabled;
+    if (mode === 'llm') {
+      btn.title = disabled ? 'no adapter trained at this size' : '';
+    } else {
+      btn.title = armedGridSize === n
+        ? 'click again to confirm'
+        : `${n}x${n}, about ${formatDuration(llmSizeEstimateSeconds(n))} per generation`;
     }
   }
 }
@@ -1040,7 +1073,7 @@ function ask(type, payload) {
 
 function ensureWorker() {
   if (worker) return;
-  worker = new Worker('./worker.js?v=2026-09-22b', { type: 'module' });
+  worker = new Worker('./worker.js?v=2026-09-22c', { type: 'module' });
   worker.onmessage = (e) => {
     const { id, ok, result, type, stage, fraction } = e.data;
     if (type === 'chunk') {
@@ -1250,7 +1283,15 @@ async function llmStepOnce() {
   } catch (e) {
     clearInterval(ticker);
     generating = false;
-    if (pendingReset) { const r = pendingReset; pendingReset = null; applyReset(r.type, r.opts); }
+    if (pendingReset) {
+      // Aborted by a Clear/Random/Glider mid-generation (worker.js's per-cell
+      // loop saw the 'stop' message and threw), not a real failure.
+      const r = pendingReset;
+      pendingReset = null;
+      applyReset(r.type, r.opts);
+      setStatus('ready', 'Ready');
+      return;
+    }
     setStatus('error', 'generation failed');
     debugLog(`generation ${genLabel}: failed - ${e.message}`);
     throw e;
@@ -1303,9 +1344,12 @@ window.__app = {
     lastSec = null;
     lastP = null;
     armedGridSize = null;
-    if (isLlmMode(m) && gridSize > 64) {
-      debugLog(`grid size clamped to 32x32 for ${m} mode`);
-      gridSize = 32;
+    if (isLlmMode(m)) {
+      const maxSize = llmMaxSize(m);
+      if (gridSize > maxSize) {
+        debugLog(`grid size clamped to ${maxSize}x${maxSize} for ${m} mode`);
+        gridSize = maxSize;
+      }
     }
     updateGridButtons();
     setGridSize(gridSize);
@@ -1327,18 +1371,23 @@ window.__app = {
   },
   setGrid: (n) => {
     if (![16, 32, 64, 128, 256].includes(n)) throw new Error('grid size must be one of 16, 32, 64, 128, 256');
-    if (isLlmMode(mode) && n > 64) {
-      debugLog(`${n}x${n} is disabled for LLM mode - about ${formatDuration(llmSizeEstimateSeconds(n))} per generation on this machine`);
-      return gridSize;
-    }
-    if (isLlmMode(mode) && n > 32) {
-      if (armedGridSize !== n) {
-        armedGridSize = n;
-        debugLog(`${n}x${n} about ${formatDuration(llmSizeEstimateSeconds(n))} per generation on this machine - call setGrid(${n}) again to confirm`);
-        updateGridButtons();
+    if (isLlmMode(mode)) {
+      const maxSize = llmMaxSize(mode);
+      if (n > maxSize) {
+        debugLog(`${n}x${n} is disabled for ${mode} mode`);
         return gridSize;
       }
-      armedGridSize = null;
+      if (n > 32) {
+        if (armedGridSize !== n) {
+          armedGridSize = n;
+          debugLog(`${n}x${n} about ${formatDuration(llmSizeEstimateSeconds(n))} per generation on this machine - call setGrid(${n}) again to confirm`);
+          updateGridButtons();
+          return gridSize;
+        }
+        armedGridSize = null;
+      } else {
+        armedGridSize = null;
+      }
     } else {
       armedGridSize = null;
     }
