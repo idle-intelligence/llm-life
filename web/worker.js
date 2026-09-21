@@ -282,9 +282,25 @@ async function handle(id, type, payload, reply) {
       }
       const cells = new Uint8Array(payload.cells);
       let p;
-      if (payload.variant === 'a') {
-        // Variant A is one forward per chunk of cells against the resident
-        // prefix, so unlike variant B it has a natural progress granularity.
+      if (payload.variant === 'a' && payload.calls === 'percell') {
+        // One cell per call: a real forward per cell (LifeEngine::stepCellA,
+        // a chunk of one against the same resident prefix stepChunkA uses),
+        // not a 64-cell chunk narrated one line at a time.
+        const n = cells.length;
+        p = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          const cellT0 = performance.now();
+          const v = await engine.stepCellA(cells, i);
+          const ms = performance.now() - cellT0;
+          self.postMessage({
+            type: 'chunk', chunkIndex: i, chunkCount: n, firstCell: i,
+            pAlive: [v], ms,
+          });
+          p[i] = v;
+        }
+      } else if (payload.variant === 'a') {
+        // 64 cells per call: one forward per chunk of cells against the
+        // resident prefix.
         const n = engine.chunkCount();
         p = new Float32Array(cells.length);
         let at = 0;
@@ -294,9 +310,7 @@ async function handle(id, type, payload, reply) {
           const ms = performance.now() - chunkT0;
           // One message per chunk carrying everything the narration strip
           // needs: the per-cell p(alive) this chunk actually computed and
-          // the chunk's own forward time. The engine only exposes chunk-level
-          // calls (one forward per 64-cell chunk), so "per cell" narration
-          // and timing are derived from this: chunk time / chunk size.
+          // the chunk's own forward time.
           self.postMessage({
             type: 'chunk', chunkIndex: i, chunkCount: n, firstCell: at,
             pAlive: Array.from(q), ms,
@@ -332,8 +346,14 @@ async function handle(id, type, payload, reply) {
         pAlive: Array.from(p),
         binarized,
         thresholdValue,
-        chunks: payload.variant === 'a' ? engine.chunkCount() : 1,
-        tokens: payload.variant === 'a' ? engine.tokensPerGenerationA() : engine.packedTokens(),
+        chunks: payload.variant === 'a'
+          ? (payload.calls === 'percell' ? cells.length : engine.chunkCount())
+          : 1,
+        tokens: payload.variant === 'a'
+          ? (payload.calls === 'percell'
+            ? cells.length * (engine.prefixTokensA() + engine.cellTokens())
+            : engine.tokensPerGenerationA())
+          : engine.packedTokens(),
         seconds: (performance.now() - t0) / 1000,
       });
     } else if (type === 'gridInfo') {

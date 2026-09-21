@@ -488,10 +488,10 @@ let generating = false, pendingGridSize = null, pendingReset = null;
 // (window.__app.setThreshold), never a visible setting.
 let thresholdName = 'otsu', thresholdK = 2.0, lastThresholdValue = null;
 
-// Calls setting (LLM per cell mode only). Both settings run the identical
-// forwards (the engine only exposes chunk-level calls -- one forward per
-// 64-cell chunk); they differ only in how the same chunk results are
-// presented in the narration strip and the status counter.
+// Calls setting (LLM per cell mode only). 'percell' issues one real forward
+// per cell (LifeEngine::stepCellA); 'batched' issues one forward per
+// 64-cell chunk (LifeEngine::stepChunkA) -- both narrated by the same
+// handleChunkNarration, since a 'percell' chunk message just has chunkSize 1.
 let narrationStyle = 'percell';
 let cellTokensCount = null;
 let bertNumLayers = null;
@@ -1228,6 +1228,7 @@ async function llmStepOnce() {
       height: H,
       threshold: thresholdName,
       k: thresholdK,
+      calls: narrationStyle,
     });
   } catch (e) {
     clearInterval(ticker);
