@@ -668,6 +668,8 @@ function handleChunkNarration({ firstCell, pAlive, ms }) {
         setStatus('generating', `cell ${cellsNarrated} / ${cellsThisGen}`);
         await sleep(15);
       }
+      // The reveal can outlast the step itself; settle the status once it drains.
+      if (epoch === narrationEpoch && cellsNarrated >= cellsThisGen && !playing) setStatus('ready', 'Ready');
     });
   } else {
     narrationPush(cellNarrationLine(firstCell, pAlive[0], ms));
