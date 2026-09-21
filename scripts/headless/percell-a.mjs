@@ -27,8 +27,12 @@ const browser = await chromium.launch({
   args: ['--use-gl=swiftshader', '--use-angle=swiftshader', '--enable-unsafe-webgpu', '--enable-features=WebGPU', '--ignore-gpu-blocklist'],
 });
 const page = await browser.newPage();
-page.on('console', (m) => console.log(`[page:${m.type()}] ${m.text()}`));
-page.on('pageerror', (e) => console.log(`[pageerror] ${e}`));
+const consoleErrors = [];
+page.on('console', (m) => {
+  console.log(`[page:${m.type()}] ${m.text()}`);
+  if (m.type() === 'error') consoleErrors.push(m.text());
+});
+page.on('pageerror', (e) => { console.log(`[pageerror] ${e}`); consoleErrors.push(String(e)); });
 
 await page.goto(URL_, { waitUntil: 'load' });
 await page.waitForFunction(() => window.__app && window.__app.ready, null, { timeout: 60_000 });
@@ -43,6 +47,7 @@ console.log(`loaded in ${((Date.now() - t0) / 1000).toFixed(1)}s`, JSON.stringif
 
 await page.evaluate(() => {
   window.__app.setMode('llm-a');
+  window.__app.setGrid(16);
   window.__app.setNarrationStyle('percell');
   window.__app.randomize(1, 0.28);
 });
@@ -90,7 +95,7 @@ if (cellCounterValues.length < 3) {
 }
 
 // --- batched sanity: confirm 64-per-call path still works -----------------
-await page.evaluate(() => { window.__app.randomize(2, 0.28); window.__app.setNarrationStyle('batched'); });
+await page.evaluate(() => { window.__app.setGrid(16); window.__app.randomize(2, 0.28); window.__app.setNarrationStyle('batched'); });
 const batched = await page.evaluate(async () => {
   await window.__app.step(1);
   return {
@@ -101,8 +106,9 @@ const batched = await page.evaluate(async () => {
 }, { timeout: TIMEOUT });
 console.log(`batched generation: ${batched.seconds.toFixed(1)}s IoU=${batched.iou.toFixed(4)}`);
 
-const errors = await page.evaluate(() => window.__pageErrors || []);
-console.log('page errors:', errors);
+console.log(`console/page errors: ${consoleErrors.length}`);
+for (const e of consoleErrors) console.log('  ' + e);
 
 await browser.close();
+if (consoleErrors.length > 0) throw new Error(`${consoleErrors.length} console/page error(s) during the run`);
 console.log('OK');
