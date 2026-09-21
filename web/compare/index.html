@@ -319,7 +319,8 @@
 </footer>
 
 <script type="module">
-import init, { LifeApp } from '../pkg/life.js';
+import init, { LifeApp } from '../pkg/life.js?v=2026-09-23';
+import { MODEL_URLS } from '../models.js';
 
 let size = 32;
 let app = null;
@@ -455,18 +456,18 @@ function ask(type, payload) {
 }
 
 const LLM_MODEL = {
-  ggufUrl: './models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf',
-  tokenizerUrl: './models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json',
-  adapterUrl: './lora-a-norules-300.bin',
+  ggufUrl: MODEL_URLS.gguf,
+  tokenizerUrl: MODEL_URLS.tokenizer,
+  adapterUrl: MODEL_URLS.loraANorules,
 };
 // The whole-grid row has its own adapter, trained per grid size -- swapped in
 // right before that row runs, and swapped back to LLM_MODEL.adapterUrl at
 // the start of the per-cell row so a rerun always starts from the right
 // adapter regardless of what the previous run left loaded.
-const B_ADAPTER_BY_SIZE = { 16: './lora-b-16-s3-300.bin', 32: './lora-b-32.bin' };
-const BERT_MODEL = { checkpointUrl: './bert-d16-L1.bin', dModel: 16, nLayers: 1, nHeads: 1 };
-const VEC_MLP_MODEL = { checkpointUrl: './mlp2-32-lrfix.bin', hidden: 32 };
-const VEC_STENCIL_MODEL = { checkpointUrl: './stencil-d16-L1.bin', dModel: 16, nLayers: 1, nHeads: 1 };
+const B_ADAPTER_BY_SIZE = { 16: MODEL_URLS.loraB16, 32: MODEL_URLS.loraB32 };
+const BERT_MODEL = { checkpointUrl: MODEL_URLS.bert, dModel: 16, nLayers: 1, nHeads: 1 };
+const VEC_MLP_MODEL = { checkpointUrl: MODEL_URLS.vecMlp, hidden: 32 };
+const VEC_STENCIL_MODEL = { checkpointUrl: MODEL_URLS.vecStencil, dModel: 16, nLayers: 1, nHeads: 1 };
 
 async function ensureBert() {
   if (bertReady) return;

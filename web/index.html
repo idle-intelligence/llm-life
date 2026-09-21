@@ -445,7 +445,8 @@
 </footer>
 
 <script type="module">
-import init, { LifeApp } from './pkg/life.js';
+import init, { LifeApp } from './pkg/life.js?v=2026-09-23';
+import { MODEL_URLS } from './models.js';
 
 // One grid size, shared by every mode's classical and model panels alike
 // (16/32/64/128/256, chosen in "settings . grid"). The per-cell tiny models
@@ -941,27 +942,27 @@ async function logGridInfo(n) {
 }
 
 const LLM_MODEL = {
-  ggufUrl: './models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf',
-  tokenizerUrl: './models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json',
+  ggufUrl: MODEL_URLS.gguf,
+  tokenizerUrl: MODEL_URLS.tokenizer,
   // Runtime LoRA (llm_wasm::lora), applied onto the base Q4 model after
-  // load -- not an offline GGUF merge. Served from web/, gitignored.
-  adapterUrl: './lora-a-norules-300.bin',
+  // load -- not an offline GGUF merge.
+  adapterUrl: MODEL_URLS.loraANorules,
 };
 
 const BERT_MODEL = {
-  checkpointUrl: './bert-d16-L1.bin',
+  checkpointUrl: MODEL_URLS.bert,
   dModel: 16,
   nLayers: 1,
   nHeads: 1,
 };
 
 const VEC_MLP_MODEL = {
-  checkpointUrl: './mlp2-32-lrfix.bin',
+  checkpointUrl: MODEL_URLS.vecMlp,
   hidden: 32,
 };
 
 const VEC_STENCIL_MODEL = {
-  checkpointUrl: './stencil-d16-L1.bin',
+  checkpointUrl: MODEL_URLS.vecStencil,
   dModel: 16,
   nLayers: 1,
   nHeads: 1,
@@ -1238,7 +1239,7 @@ async function loadVecStencil(spec) {
   return vecStencilLoading;
 }
 
-const ADAPTER_URL = { 'a-norules': './lora-a-norules-300.bin', 'a-rules': './lora-a-rules-300.bin' };
+const ADAPTER_URL = { 'a-norules': MODEL_URLS.loraANorules, 'a-rules': MODEL_URLS.loraARules };
 function adapterStateForUrl(url) {
   if (url.includes('norules')) return 'a-norules';
   if (url.includes('lora-a-rules')) return 'a-rules';
@@ -1247,7 +1248,7 @@ function adapterStateForUrl(url) {
 
 // The whole-grid rung has its own adapter, trained per grid size -- not the
 // per-cell adapter. No adapter has been trained at 64x64 yet.
-const B_ADAPTER_BY_SIZE = { 16: './lora-b-16-s3-300.bin', 32: './lora-b-32.bin' };
+const B_ADAPTER_BY_SIZE = { 16: MODEL_URLS.loraB16, 32: MODEL_URLS.loraB32 };
 let bAdapterAvailable = true;
 
 // Reloads the base Q4 weights with no LoRA applied -- the only way to get a
