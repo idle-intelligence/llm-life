@@ -288,7 +288,7 @@
             <tbody id="ladder-body"></tbody>
         </table>
     </div>
-    <p class="info" id="llm-hint">load the LLM above to measure the two LLM rows.</p>
+    <p class="info" id="llm-hint">load the LLM above to measure the LLM rows, or "run every method" will load it.</p>
     <div class="thumbs" id="thumbs"></div>
 </section>
 
@@ -420,12 +420,18 @@ function countMatches(a, b) {
 // relative path so its own fetches (checkpoints, gguf, tokenizer) still
 // resolve against web/, unchanged.
 // ---------------------------------------------------------------------------
+// Set while a per-cell 'step' is in flight for a rung whose row should show
+// a live time estimate (the LLM per-cell rows, which run one forward per
+// cell and can take a while at 32x32) -- fed every 'chunk' message the
+// worker emits for that call, cleared once the call resolves.
+let liveChunkHandler = null;
 function ensureWorker() {
   if (worker) return;
   worker = new Worker('../worker.js', { type: 'module' });
   worker.onmessage = (e) => {
     const { id, ok, result, type } = e.data;
-    if (type === 'chunk' || type === 'bertCell' || type === 'vecMlpCell' || type === 'bertGrid' || type === 'vecMlpGrid' || type === 'vecStencilGrid' || type === 'progress') return;
+    if (type === 'chunk') { if (liveChunkHandler) liveChunkHandler(e.data); return; }
+    if (type === 'bertCell' || type === 'vecMlpCell' || type === 'bertGrid' || type === 'vecMlpGrid' || type === 'vecStencilGrid' || type === 'progress') return;
     const p = pending.get(id);
     if (!p) return;
     pending.delete(id);
@@ -517,8 +523,11 @@ function drawBoard() {
 const RUNGS = [
   { key: 'cpu', name: 'Game of Life (rule)', params: 'no parameters' },
   { key: 'lookup', name: 'lookup table', params: '512-entry table' },
-  { key: 'llm-per-pixel', name: 'LLM per cell', params: '0.5B (+ adapter)' },
-  { key: 'llm-onepass', name: 'LLM whole grid', params: '0.5B (+ adapter)' },
+  { key: 'llm-percell-base', name: 'LLM per cell (base)', params: '0.5B (no adapter)' },
+  { key: 'llm-percell-trained', name: 'LLM per cell (trained)', params: '0.5B (+ adapter)' },
+  { key: 'llm-percell-batched', name: 'LLM per cell (trained, batched)', params: '0.5B (+ adapter)' },
+  { key: 'llm-grid-base', name: 'LLM whole grid (base)', params: '0.5B (no adapter)' },
+  { key: 'llm-grid-trained', name: 'LLM whole grid (trained)', params: '0.5B (+ adapter)' },
   { key: 'bert-cell', name: 'BERT of Life', params: '3,490' },
   { key: 'bert-batched', name: 'BERT of Life (batched)', params: '3,490' },
   { key: 'vec-mlp-cell', name: '9 numbers to centre', params: '1,442' },
@@ -537,14 +546,34 @@ function renderLadderTable() {
   }).join('');
 }
 
-async function measureWorkerStep(variant, cells) {
+// opts.calls: 'percell' forwards one cell per call (LifeEngine::stepCellA);
+// omitted, variant 'a' forwards a 64-cell chunk per call instead.
+// opts.liveKey: rung key to show a running time estimate for, updated from
+// each 'chunk' message while the call is in flight (see ensureWorker above).
+function liveEstimateHandler(rowKey, t0) {
+  return (d) => {
+    if (d.chunkIndex % 8 !== 0 && d.chunkIndex !== d.chunkCount - 1) return;
+    const elapsed = (performance.now() - t0) / 1000;
+    const eta = elapsed / ((d.chunkIndex + 1) / d.chunkCount);
+    lastResults[rowKey] = { note: `running... ~${fmtSec(eta)}s est (${d.chunkIndex + 1} / ${d.chunkCount})` };
+    renderLadderTable();
+  };
+}
+async function measureWorkerStep(variant, cells, opts = {}) {
   const payload = { cells: Array.from(cells), variant, width: size, height: size, threshold: 'otsu', k: 2.0 };
-  const first = await ask('step', payload);
-  if (first.seconds >= 2) return first;
-  const runs = [first];
-  for (let i = 0; i < 2; i++) runs.push(await ask('step', payload));
-  runs.sort((a, b) => a.seconds - b.seconds);
-  return runs[1];
+  if (opts.calls) payload.calls = opts.calls;
+  const t0 = performance.now();
+  if (opts.liveKey) liveChunkHandler = liveEstimateHandler(opts.liveKey, t0);
+  try {
+    const first = await ask('step', payload);
+    if (first.seconds >= 2) return first;
+    const runs = [first];
+    for (let i = 0; i < 2; i++) runs.push(await ask('step', payload));
+    runs.sort((a, b) => a.seconds - b.seconds);
+    return runs[1];
+  } finally {
+    liveChunkHandler = null;
+  }
 }
 
 function measureNaive(fn, cells) {
@@ -616,26 +645,64 @@ async function runEveryRung() {
     lastResults = results;
     renderLadderTable();
 
-    if (llmReady) {
-      setStatus('generating', 'running the LLM, per cell...');
-      // Always start from the per-cell rung's own adapter, regardless of
-      // whatever the previous run's whole-grid row left loaded.
+    {
+      // Display order is fixed (base per-cell, trained per-cell, trained
+      // batched, base whole-grid, trained whole-grid), but running it in that
+      // order would mean reloading the base model twice (once for row 3,
+      // again for row 6, since the only way back to base once an adapter is
+      // loaded is a full reload -- there's no 'unloadAdapter' message). So
+      // the two base rows (3 and 6) both run right after the one base load,
+      // out of display order; the table just fills row 6 before rows 4/5
+      // finish. Every other row's weights match its own displayed state.
+      setStatus('generating', llmReady ? 'reloading the LLM, base model...' : 'loading the LLM, base model...');
+      ensureWorker();
+      const { adapterUrl: _unused, ...baseModel } = LLM_MODEL;
+      await ask('load', { ...baseModel, width: size, height: size, rulestring: app.rulestring() });
+      llmReady = true;
+      els.loadLlm.disabled = true;
+      els.loadLlm.textContent = 'LLM loaded';
+      els.llmHint.style.display = 'none';
+
+      setStatus('generating', 'running the LLM per cell, base model...');
+      results['llm-percell-base'] = await measureWorkerStep('a', board, { calls: 'percell', liveKey: 'llm-percell-base' });
+      results['llm-percell-base'].correctCount = countMatches(results['llm-percell-base'].binarized, trueNext);
+      results['llm-percell-base'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
+      setStatus('generating', 'running the LLM whole grid, base model...');
+      results['llm-grid-base'] = await measureWorkerStep('b', board);
+      results['llm-grid-base'].correctCount = countMatches(results['llm-grid-base'].binarized, trueNext);
+      results['llm-grid-base'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
+      setStatus('generating', 'loading the per-cell adapter...');
       await ask('loadAdapter', { adapterUrl: LLM_MODEL.adapterUrl });
-      results['llm-per-pixel'] = await measureWorkerStep('a', board);
-      results['llm-per-pixel'].correctCount = countMatches(results['llm-per-pixel'].binarized, trueNext);
-      results['llm-per-pixel'].total = total;
+
+      setStatus('generating', 'running the LLM per cell, trained, one cell per call...');
+      results['llm-percell-trained'] = await measureWorkerStep('a', board, { calls: 'percell', liveKey: 'llm-percell-trained' });
+      results['llm-percell-trained'].correctCount = countMatches(results['llm-percell-trained'].binarized, trueNext);
+      results['llm-percell-trained'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
+      setStatus('generating', 'running the LLM per cell, trained, batched...');
+      results['llm-percell-batched'] = await measureWorkerStep('a', board);
+      results['llm-percell-batched'].correctCount = countMatches(results['llm-percell-batched'].binarized, trueNext);
+      results['llm-percell-batched'].total = total;
       lastResults = results;
       renderLadderTable();
 
       const bAdapterUrl = B_ADAPTER_BY_SIZE[size];
-      setStatus('generating', 'running the LLM, whole grid...');
+      setStatus('generating', 'running the LLM whole grid, trained...');
       if (bAdapterUrl) {
         await ask('loadAdapter', { adapterUrl: bAdapterUrl });
-        results['llm-onepass'] = await measureWorkerStep('b', board);
-        results['llm-onepass'].correctCount = countMatches(results['llm-onepass'].binarized, trueNext);
-        results['llm-onepass'].total = total;
+        results['llm-grid-trained'] = await measureWorkerStep('b', board);
+        results['llm-grid-trained'].correctCount = countMatches(results['llm-grid-trained'].binarized, trueNext);
+        results['llm-grid-trained'].total = total;
       } else {
-        results['llm-onepass'] = { note: 'no adapter' };
+        results['llm-grid-trained'] = { note: 'no adapter' };
       }
       lastResults = results;
       renderLadderTable();
