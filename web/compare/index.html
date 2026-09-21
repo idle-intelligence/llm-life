@@ -479,7 +479,22 @@ async function ensureVecStencil() {
   vecStencilReady = true;
 }
 
+// WebGPU availability, probed once at load. Every model row runs on the
+// WebGPU engine; without an adapter only the two naive rows run.
+let webGpuAvailable = null;
+const NO_WEBGPU = "doesn't work without WebGPU, yet";
+(async () => {
+  try { webGpuAvailable = !!(navigator.gpu && await navigator.gpu.requestAdapter()); }
+  catch (e) { webGpuAvailable = false; }
+  if (webGpuAvailable === false) {
+    els.loadLlm.disabled = true;
+    els.loadLlm.textContent = NO_WEBGPU;
+    setStatus('ready', NO_WEBGPU + ', the two naive rows still run');
+  }
+})();
+
 els.loadLlm.onclick = async () => {
+  if (webGpuAvailable === false) return;
   if (llmReady || llmLoading) return;
   ensureWorker();
   els.loadLlm.disabled = true;
@@ -644,6 +659,14 @@ async function runEveryRung() {
     results.lookup.total = total;
     lastResults = results;
     renderLadderTable();
+
+    if (webGpuAvailable === false) {
+      for (const r of RUNGS) if (!(r.key in results)) results[r.key] = { note: NO_WEBGPU };
+      lastResults = results;
+      renderLadderTable();
+      setStatus('ready', NO_WEBGPU + ', the two naive rows ran');
+      return;
+    }
 
     {
       // Display order is fixed (base per-cell, trained per-cell, trained
