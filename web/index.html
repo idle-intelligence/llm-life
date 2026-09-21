@@ -534,12 +534,12 @@ let adapterKeyB = 'trained'; // 'base' | 'trained'
 
 function methodDescFor(m) {
   return {
-    classical: 'The classical rule, one pass over the grid. Everything below computes the same thing.',
-    'llm-a': "A stupid idea: give a language model the rules and one cell's neighbours, ask if it lives or dies. Off the shelf it gets 215 of 512 neighbourhoods right; fine-tuned, all 512.",
-    bert: 'Alive or dead is a classification. What would a BERT do? A one-layer encoder over the 9 cells as tokens, 3,490 parameters, exact.',
-    'vec-mlp': 'Drop the language model, keep the approach. A 2-layer MLP over the 9 cell values, 1,442 parameters, exact.',
-    llm: 'Cell by cell is stupid. Ask the model for the whole grid in one prompt, one token per cell.',
-    'vec-stencil': 'Or one attention layer over the whole grid, each cell masked to its 3x3 stencil. 3,329 parameters, trained at 16x16, exact at 256x256.',
+    classical: 'The classical rule, as a for loop.',
+    'llm-a': "A stupid idea: give a language model the rules as text, and the current cell's neighbours state, also as text, and ask if it lives or dies. Of course, it's very slow, and an off the shelf model doesn't work. Fine tuninga small LoRa adapter gets us perfect results, but it's still slow...",
+    bert: "Alive or Dead is a classification. What would a BERT do? A one-layer encoder over the 9 cells as tokens, 3,490 parameters; it works.",
+    'vec-mlp': 'Why do we eve use a language model, can we fit a model that actually learns the rules? A 2-layer MLP over the 9 cell values, 1,442 parameters; it works',
+    llm: "Cell by cell _is_ stupid. Instead, ask the model for the whole grid in one prompt, one token per cell. Or course, it's kinda slow, and it still doesn't work off the shelf. Another LoRa adapter gets us to 100% accuracy.",
+    'vec-stencil': 'Cell by cell is nice, but we can do better: One attention layer over the whole grid, each cell masked to its 3x3 stencil. 3,329 parameters, trained at 16x16, it scales to whatever grid size.',
   }[m] ?? '';
 }
 
