@@ -678,14 +678,9 @@ async function runEveryRung() {
     }
 
     {
-      // Display order is fixed (base per-cell, trained per-cell, trained
-      // batched, base whole-grid, trained whole-grid), but running it in that
-      // order would mean reloading the base model twice (once for row 3,
-      // again for row 6, since the only way back to base once an adapter is
-      // loaded is a full reload -- there's no 'unloadAdapter' message). So
-      // the two base rows (3 and 6) both run right after the one base load,
-      // out of display order; the table just fills row 6 before rows 4/5
-      // finish. Every other row's weights match its own displayed state.
+      // Run order is the display order. Going back to the base model after an
+      // adapter means a full reload (there is no unload); it comes from the
+      // browser cache, a few seconds.
       setStatus('generating', llmReady ? 'reloading the LLM, base model...' : 'loading the LLM, base model...');
       ensureWorker();
       const { adapterUrl: _unused, ...baseModel } = LLM_MODEL;
@@ -699,13 +694,6 @@ async function runEveryRung() {
       results['llm-percell-base'] = await measureWorkerStep('a', board, { calls: 'percell', liveKey: 'llm-percell-base' });
       results['llm-percell-base'].correctCount = countMatches(results['llm-percell-base'].binarized, trueNext);
       results['llm-percell-base'].total = total;
-      lastResults = results;
-      renderLadderTable();
-
-      setStatus('generating', 'running the LLM whole grid, base model...');
-      results['llm-grid-base'] = await measureWorkerStep('b', board);
-      results['llm-grid-base'].correctCount = countMatches(results['llm-grid-base'].binarized, trueNext);
-      results['llm-grid-base'].total = total;
       lastResults = results;
       renderLadderTable();
 
@@ -727,6 +715,15 @@ async function runEveryRung() {
       renderLadderTable();
 
       const bAdapterUrl = B_ADAPTER_BY_SIZE[size];
+      setStatus('generating', 'reloading the LLM, base model...');
+      await ask('load', { ...baseModel, width: size, height: size, rulestring: app.rulestring() });
+      setStatus('generating', 'running the LLM whole grid, base model...');
+      results['llm-grid-base'] = await measureWorkerStep('b', board);
+      results['llm-grid-base'].correctCount = countMatches(results['llm-grid-base'].binarized, trueNext);
+      results['llm-grid-base'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
       setStatus('generating', 'running the LLM whole grid, trained...');
       if (bAdapterUrl) {
         await ask('loadAdapter', { adapterUrl: bAdapterUrl });
