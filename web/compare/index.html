@@ -529,7 +529,7 @@ function renderLadderTable() {
     const res = results[r.key];
     const secText = (res && res.note) ? res.note
       : (res ? fmtSec(res.seconds) : '-');
-    const correctText = res && res.total != null ? `${res.correctCount}/${res.total}` : '-';
+    const correctText = res && res.total != null ? `${res.correctCount} / ${res.total}` : '-';
     return `<tr><td>${r.name}</td><td>${secText}</td><td>${r.params}</td><td>${correctText}</td></tr>`;
   }).join('');
 }
