@@ -395,7 +395,7 @@
 
 <section>
     <h2>output</h2>
-    <p class="panel-desc" id="grid-status" style="margin: 0 0 8px 0; min-height: 1.4em"></p>
+    <p class="panel-desc" id="grid-status" style="margin: 0 0 8px 0; height: 1.5em; line-height: 1.5em; overflow: hidden; white-space: nowrap">generation 0</p>
     <div class="grids">
         <div class="panel"><canvas id="c-model" width="64" height="64"></canvas><div class="caption">model</div></div>
         <div class="panel"><canvas id="c-true" width="64" height="64"></canvas><div class="caption">rule</div></div>
@@ -767,7 +767,7 @@ function render() {
   paint(ctx.diff, diff);
   els.gen.textContent = generation;
   const gs = document.getElementById('grid-status');
-  if (gs && !/cell/i.test(gs.textContent)) gs.textContent = generation > 0 ? `generation ${generation}` : '';
+  if (gs && !/cell/i.test(gs.textContent)) gs.textContent = `generation ${generation}`;
   els.msGen.textContent = lastSec === null ? '-' : (lastSec * 1000).toFixed(1);
   const cellsPerSec = (lastSec && lastSec > 0) ? (W * H / lastSec) : null;
   els.cellsSec.textContent = cellsPerSec === null ? '-' : cellsPerSec.toFixed(0);
