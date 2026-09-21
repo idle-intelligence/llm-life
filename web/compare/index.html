@@ -239,7 +239,10 @@
 <header>
     <p class="org"><img src="apple-touch-icon.png" alt="II">idle intelligence</p>
     <h1>llm-life compare</h1>
-    <p class="tagline">The classical rule and a 512-entry lookup table, next to a language model, two tiny from-scratch models and a stencil-attention model, all computing the same generation from the same starting board. The CPU loop and the lookup table are deliberately naive JavaScript, no Rust, no bit tricks; they are the floor this page measures from, not a benchmark of either one.</p>
+    <p class="tagline">Without going too far into optimizing the cpu/memory paths, we compare (naive) cpu, (naive) 512-entry lookup table, with a language model, two tiny from-scratch models and a stencil-attention model, all computing the same generation from the same starting board.<br>
+    When Moore's law no longer holds up, we need to find creative ways to spend more compute to achieve the same results.<br>
+    This started as a (stupid) experiment: What if we ask an LLM to play Game of Life, cell by cell?<br>
+    In the end, we answer some interesting questions.</p>
     <p class="repo">
         <a href="../">llm-life demo</a> - <a href="https://github.com/idle-intelligence/llm-life">github.com/idle-intelligence/llm-life</a>
     </p>
