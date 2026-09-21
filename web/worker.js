@@ -1,7 +1,7 @@
 // All inference runs here: the main thread does UI only.
 //
 // The worker fetches the GGUF in chunks and pushes them into the engine
-// (`appendModelShard`) rather than handing it one giant ArrayBuffer — the
+// (`appendModelShard`) rather than handing it one giant ArrayBuffer - the
 // engine reads through a sharded cursor for exactly this reason. The dev
 // server (web/serve.py, stdlib http.server) doesn't support Range requests,
 // so this streams the single GET response and slices it into chunks itself.
@@ -12,7 +12,7 @@ let engine = null;
 // messages at the same size doesn't call it redundantly.
 let engineGrid = null;
 
-// BERT of Life — a separate, much smaller wasm-bindgen engine (no GGUF, no
+// BERT of Life - a separate, much smaller wasm-bindgen engine (no GGUF, no
 // tokenizer, no KV cache), loaded independently of `engine` above.
 let bertEngine = null;
 let bertGrid = null;
@@ -56,7 +56,7 @@ async function fetchChunks(url, onProgress) {
 }
 
 // Every `LifeEngine` method call (constructor aside) is chained through this
-// single promise so two can never run concurrently — wasm-bindgen throws
+// single promise so two can never run concurrently - wasm-bindgen throws
 // "recursive use of an object detected" if the page (or a stale in-flight
 // call) lets two overlap. Each queued task catches its own errors and
 // replies for its own message id, so one failure never breaks the chain for
@@ -97,9 +97,9 @@ async function handle(id, type, payload, reply) {
       for (const c of chunks) engine.appendModelShard(c);
       const tokenizerJson = await (await fetch(payload.tokenizerUrl)).text();
       await engine.load(tokenizerJson, payload.rulestring);
-      // Runtime LoRA (llm_wasm::lora — not the offline GGUF merge): applies
+      // Runtime LoRA (llm_wasm::lora - not the offline GGUF merge): applies
       // q/k/v/o deltas onto the already-loaded base Q4 model, no reload.
-      // Optional — if `adapterUrl` isn't set, the engine is byte-for-byte
+      // Optional - if `adapterUrl` isn't set, the engine is byte-for-byte
       // the base model.
       let adapter = null;
       if (payload.adapterUrl) {
@@ -107,7 +107,7 @@ async function handle(id, type, payload, reply) {
         const name = payload.adapterUrl.split('/').pop().replace(/\.bin$/, '');
         // Variant A's resident prefix must match how this adapter was
         // trained/evaluated (`norules_prefix()` vs `rules_prefix()`, no
-        // few-shot) — `LifeEngine::loadAdapter` rebuilds it from this flag.
+        // few-shot) - `LifeEngine::loadAdapter` rebuilds it from this flag.
         engine.loadAdapter(bytes, name.includes('norules'));
         adapter = { name, bytes: bytes.length };
       }
@@ -134,7 +134,7 @@ async function handle(id, type, payload, reply) {
       vecStencilEngine.loadCheckpoint(bytes, payload.dModel, payload.nLayers, payload.nHeads);
       reply(true, { dModel: vecStencilEngine.dModel(), numLayers: vecStencilEngine.numLayers() });
     } else if (type === 'loadAdapter') {
-      // Swap the runtime LoRA adapter without a full model reload — replaces
+      // Swap the runtime LoRA adapter without a full model reload - replaces
       // whatever adapter is currently applied (LifeEngine::loadAdapter does
       // not stack).
       const bytes = new Uint8Array(await (await fetch(payload.adapterUrl)).arrayBuffer());
@@ -142,7 +142,7 @@ async function handle(id, type, payload, reply) {
       engine.loadAdapter(bytes, name.includes('norules'));
       reply(true, { name, bytes: bytes.length });
     } else if (type === 'step' && payload.variant === 'bert') {
-      // BERT of Life: a separate, much smaller engine — one forward per
+      // BERT of Life: a separate, much smaller engine - one forward per
       // cell, no chunking (the model is tiny enough that per-cell round
       // trips are still fast), one 'bertCell' narration message per cell.
       const t0 = performance.now();
@@ -162,7 +162,7 @@ async function handle(id, type, payload, reply) {
       }
       self.postMessage({ type: 'progress', stage: 'threshold' });
       // BERT of Life is a calibrated 2-class classifier trained on the exact
-      // rule, not a repurposed answer-token logit like the LLM variants —
+      // rule, not a repurposed answer-token logit like the LLM variants -
       // 0.5 is the threshold it was trained and evaluated against
       // (`bert::train`'s `rollout_iou`), so this rung uses it directly
       // rather than the label-free Otsu/z-score thresholds the noisy LLM
@@ -181,7 +181,7 @@ async function handle(id, type, payload, reply) {
       });
     } else if (type === 'step' && payload.variant === 'bert-batched') {
       // Same weights, same per-cell neighbourhoods as the row above, but
-      // gathered into one [n, 9] batch and run as a single forward — this is
+      // gathered into one [n, 9] batch and run as a single forward - this is
       // the number CONCEPT.md's "one batch" framing actually means, not the
       // per-cell loop's wall-clock total.
       const t0 = performance.now();
@@ -250,7 +250,7 @@ async function handle(id, type, payload, reply) {
       });
     } else if (type === 'step' && payload.variant === 'vec-stencil') {
       // (ii) whole grid -> whole grid, one channel: one forward pass, no
-      // per-cell loop — the narration strip gets exactly one line.
+      // per-cell loop - the narration strip gets exactly one line.
       const t0 = performance.now();
       if (!vecStencilGrid || vecStencilGrid.width !== payload.width || vecStencilGrid.height !== payload.height) {
         vecStencilEngine.setGrid(payload.width, payload.height);
@@ -273,7 +273,7 @@ async function handle(id, type, payload, reply) {
       const t0 = performance.now();
       // The engine packs for whatever grid it was last told about; variant B
       // runs at 64x64 and variant A at 16x16 off the same loaded weights.
-      // Only call setGrid when the size actually changed — redundant calls
+      // Only call setGrid when the size actually changed - redundant calls
       // are dropped, and since this runs inside the serialized queue it
       // never overlaps a step already in flight.
       if (!engineGrid || engineGrid.width !== payload.width || engineGrid.height !== payload.height) {
@@ -307,14 +307,14 @@ async function handle(id, type, payload, reply) {
       } else {
         // engine.step() (crates/llm-life/src/web.rs) is a single async call that
         // packs the grid, tokenizes, runs the forward pass and reads the logits
-        // back with no phase hooks — so 'forward' here covers all three; we
+        // back with no phase hooks - so 'forward' here covers all three; we
         // can't report them separately without restructuring the engine.
         self.postMessage({ type: 'progress', stage: 'forward' });
         p = await engine.step(cells);
       }
       self.postMessage({ type: 'progress', stage: 'threshold' });
       const pArr = Float32Array.from(p);
-      // Label-free binarization — same code (crate::score) as the native
+      // Label-free binarization - same code (crate::score) as the native
       // `rescore` tool and docs/pictures/README.md, not a JS reimplementation.
       const thresholdValue = payload.threshold === 'zscore'
         ? zscoreThreshold(pArr, payload.k ?? 2.0)

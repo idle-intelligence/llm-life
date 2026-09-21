@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>llm-life — idle intelligence</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Crect width='8' height='8' fill='%23fff'/%3E%3Crect x='2' y='1' width='1' height='1'/%3E%3Crect x='3' y='2' width='1' height='1'/%3E%3Crect x='1' y='3' width='3' height='1'/%3E%3C/svg%3E" />
+<title>llm-life - idle intelligence</title>
+<link rel="icon" href="favicon.ico">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
@@ -40,6 +41,14 @@
         color: var(--muted);
         letter-spacing: 0.02em;
         margin-bottom: 2px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .org img {
+        width: 16px;
+        height: 16px;
+        border-radius: 2px;
     }
     h1 {
         font-family: 'IBM Plex Mono', monospace;
@@ -74,7 +83,9 @@
         color: var(--faint);
         margin-bottom: 12px;
     }
-    section h2 .sub { font-weight: 400; }
+    section h2 .sub {
+        font-weight: 400;
+    }
 
     .status {
         display: flex;
@@ -101,32 +112,12 @@
         50% { opacity: 0.4; }
     }
 
-    #runLog {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 13px;
-        color: var(--muted);
-        border: 1px solid var(--border);
-        padding: 12px;
-        white-space: pre-wrap;
-        line-height: 1.6;
-        height: 8.6em;
-        overflow: hidden;
-    }
-
     .controls {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 12px;
         flex-wrap: wrap;
     }
-    .radios {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        font-size: 14px;
-        margin-bottom: 12px;
-    }
-    .radios label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
     button {
         font-family: 'IBM Plex Mono', monospace;
         font-size: 13px;
@@ -139,8 +130,13 @@
         border-radius: 0;
         transition: border-color 0.15s;
     }
-    button:hover:not(:disabled) { border-color: var(--text); }
-    button:disabled { opacity: 0.3; cursor: not-allowed; }
+    button:hover:not(:disabled) {
+        border-color: var(--text);
+    }
+    button:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+    }
     button.primary {
         background: var(--text);
         color: var(--bg);
@@ -155,22 +151,82 @@
         color: var(--faint);
         margin-top: 12px;
     }
-    label.overlay {
+
+    .model-selector {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+    }
+    .model-selector label {
+        font-family: 'IBM Plex Mono', monospace;
         font-size: 13px;
-        color: var(--muted);
+        color: var(--text);
+        cursor: pointer;
         display: flex;
         align-items: center;
-        gap: 6px;
-        margin-top: 12px;
+        gap: 4px;
+    }
+    .model-selector input[type="radio"] {
+        cursor: pointer;
     }
 
+    footer {
+        border-top: 1px solid var(--border);
+        padding-top: 24px;
+        margin-top: 24px;
+    }
+    footer a {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        color: var(--faint);
+        text-decoration: none;
+    }
+    footer a:hover { color: var(--muted); }
+    footer .credit {
+        font-size: 13px;
+        color: var(--faint);
+        line-height: 1.6;
+        margin-top: 16px;
+    }
+    footer .credit a { text-decoration: underline; color: var(--faint); }
+    footer .credit a:hover { color: var(--muted); }
+
+    /* ---- llm-life-specific: method/adapter radio grids, grid-size and
+       overlay buttons, output canvases, narration strip, performance tiles,
+       panel-desc method blurb. Same variables/sizes as the base style
+       above. ---- */
+    .method-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        margin-bottom: 4px;
+    }
+    @media (min-width: 460px) {
+        .method-grid { grid-template-columns: repeat(2, 1fr); gap: 10px 16px; }
+    }
+    .method-grid label {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        color: var(--text);
+        cursor: pointer;
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        line-height: 1.4;
+    }
+    .method-grid input[type="radio"] { margin-top: 3px; cursor: pointer; }
+    .panel-desc {
+        font-size: 12px;
+        color: var(--faint);
+        margin-top: 10px;
+        line-height: 1.5;
+    }
     .grids {
         display: flex;
         gap: 16px;
+        flex-wrap: wrap;
     }
-    .panel {
-        text-align: center;
-    }
+    .panel { text-align: center; }
     .panel canvas {
         border: 1px solid var(--border);
         image-rendering: pixelated;
@@ -183,14 +239,11 @@
         font-family: 'IBM Plex Mono', monospace;
         font-size: 11px;
         color: var(--faint);
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
         margin-top: 6px;
     }
-
     .metrics-grid {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(3, 1fr);
         gap: 12px;
     }
     .metric { text-align: center; }
@@ -207,64 +260,80 @@
         letter-spacing: 0.04em;
         margin-top: 2px;
     }
-
-    footer {
-        border-top: 1px solid var(--border);
-        padding-top: 24px;
-        margin-top: 24px;
-    }
-    footer a {
+    #narrationWrap { margin-top: 16px; }
+    #narrationLog {
         font-family: 'IBM Plex Mono', monospace;
-        font-size: 13px;
-        color: var(--faint);
-        text-decoration: none;
+        font-size: 12px;
+        color: var(--muted);
+        border: 1px solid var(--border);
+        padding: 10px;
+        white-space: pre;
+        line-height: 1.6;
+        height: 9.6em;
+        overflow: hidden;
     }
-    footer a:hover { color: var(--muted); }
 </style>
 </head>
 <body>
 <header>
-    <p class="org">idle intelligence</p>
+    <p class="org"><img src="apple-touch-icon.png" alt="II">idle intelligence</p>
     <h1>llm-life</h1>
-    <p class="tagline">A language model as the update rule of Conway's Game of Life. Classical mode is a for-loop; LLM of Life mode asks the model what each cell does next and paints its confidence.</p>
+    <p class="tagline">A language model as the update rule of Conway's Game of Life, next to the small models and the classical rule it is measured against.</p>
     <p class="repo">
         <a href="https://github.com/idle-intelligence/llm-life">github.com/idle-intelligence/llm-life</a>
     </p>
 </header>
 
 <section>
-    <h2>STATUS</h2>
-    <div class="status">
-        <span class="status-dot loading" id="statusDot"></span>
-        <span id="statusText">booting…</span>
-    </div>
-</section>
-
-<section>
-    <h2>RUN</h2>
-    <div id="runLog"></div>
-</section>
-
-<section>
-    <h2>INPUT</h2>
-    <div class="radios">
-        <label><input type="radio" name="mode" value="classical" checked /> classical</label>
-        <label><input type="radio" name="mode" value="llm" /> LLM (variant B)</label>
-        <label><input type="radio" name="mode" value="llm-a" /> LLM (variant A)</label>
+    <h2>settings <span class="sub">· method</span></h2>
+    <div class="method-grid">
+        <label><input type="radio" name="mode" value="classical" checked /> Game of Life (rule)</label>
+        <label><input type="radio" name="mode" value="vec-mlp" /> 9 numbers to centre</label>
         <label><input type="radio" name="mode" value="bert" /> BERT of Life</label>
-        <label><input type="radio" name="mode" value="vec-mlp" /> 9 numbers -&gt; centre</label>
-        <label><input type="radio" name="mode" value="vec-stencil" /> stencil (grid -&gt; grid)</label>
+        <label><input type="radio" name="mode" value="vec-stencil" /> stencil, grid to grid</label>
+        <label><input type="radio" name="mode" value="llm-a" /> LLM per cell (0.5B, 430 MB)</label>
+        <label><input type="radio" name="mode" value="llm" /> LLM whole grid (0.5B)</label>
     </div>
-    <div class="controls" id="grid-choice" style="margin-bottom:12px;">
+    <p class="panel-desc" id="method-desc"></p>
+</section>
+
+<section id="adapter-section" style="display:none">
+    <h2>settings <span class="sub">· adapter</span></h2>
+    <div class="method-grid" id="adapter-a-choice" style="display:none">
+        <label><input type="radio" name="adapter-a" value="base" /> base model (no adapter)</label>
+        <label><input type="radio" name="adapter-a" value="rules" /> trained, rules in the prompt</label>
+        <label><input type="radio" name="adapter-a" value="norules" checked /> trained, no rules in the prompt</label>
+    </div>
+    <div class="method-grid" id="adapter-b-choice" style="display:none">
+        <label><input type="radio" name="adapter-b" value="base" /> base model (no adapter)</label>
+        <label><input type="radio" name="adapter-b" value="trained" checked /> trained</label>
+    </div>
+</section>
+
+<section>
+    <h2>settings <span class="sub">· grid</span></h2>
+    <div class="controls" id="grid-choice">
         <button type="button" class="gridsize-btn" data-size="16">16&times;16</button>
         <button type="button" class="gridsize-btn" data-size="32">32&times;32</button>
         <button type="button" class="gridsize-btn primary" data-size="64">64&times;64</button>
         <button type="button" class="gridsize-btn" data-size="128">128&times;128</button>
         <button type="button" class="gridsize-btn" data-size="256">256&times;256</button>
     </div>
-    <div class="radios" id="narration-choice" style="display:none">
-        <label><input type="radio" name="narration" value="perpixel" checked /> per-pixel narrated</label>
-        <label><input type="radio" name="narration" value="batched" /> batched</label>
+</section>
+
+<section>
+    <h2>status</h2>
+    <div class="status">
+        <span class="status-dot loading" id="statusDot"></span>
+        <span id="statusText">booting...</span>
+    </div>
+</section>
+
+<section>
+    <h2>input</h2>
+    <div class="controls" id="narration-choice" style="display:none; margin-bottom:12px;">
+        <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="radio" name="narration" value="perpixel" checked /> per-pixel narrated</label>
+        <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="radio" name="narration" value="batched" /> batched</label>
     </div>
     <div class="controls">
         <button id="play" class="primary">Play</button>
@@ -272,114 +341,70 @@
         <button id="clear">Clear</button>
         <button id="random">Random</button>
         <button id="glider">Glider</button>
-        <button id="adapter" disabled>adapter: no rules</button>
+        <button id="overlay-btn" type="button" style="display:none">show p(alive)</button>
     </div>
-    <p class="info" id="mode-note">Click a cell in the LLM of Life grid to toggle it.</p>
-    <label class="overlay"><input type="checkbox" id="overlay-palive" /> show p(alive) overlay on the LLM of Life panel (LLM mode only)</label>
+    <p class="info">Click a cell in the model grid to toggle it.</p>
 </section>
 
 <section>
-    <h2>OUTPUT</h2>
+    <h2>output</h2>
     <div class="grids">
-        <div class="panel"><canvas id="c-model" width="64" height="64"></canvas><div class="caption">LLM of Life</div></div>
-        <div class="panel"><canvas id="c-true" width="64" height="64"></canvas><div class="caption">Game of Life</div></div>
+        <div class="panel"><canvas id="c-model" width="64" height="64"></canvas><div class="caption">model</div></div>
+        <div class="panel"><canvas id="c-true" width="64" height="64"></canvas><div class="caption">rule</div></div>
         <div class="panel"><canvas id="c-diff" width="64" height="64"></canvas><div class="caption">diff</div></div>
     </div>
-    <div id="narrationWrap" style="display:none; margin-top:16px;">
-        <div class="metric-label" style="margin-bottom:6px;">NARRATION</div>
-        <div id="narrationLog" style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--muted); border:1px solid var(--border); padding:10px; white-space:pre; line-height:1.6; height:9.6em; overflow:hidden;"></div>
+    <div id="narrationWrap" style="display:none;">
+        <div class="metric-label" style="margin-bottom:6px;">narration</div>
+        <div id="narrationLog"></div>
         <div id="narrationCounter" class="info" style="margin-top:6px;"></div>
     </div>
 </section>
 
 <section>
-    <h2>PERFORMANCE</h2>
+    <h2>performance</h2>
     <div class="metrics-grid">
         <div class="metric">
-            <div class="metric-value" id="p-sec">—</div>
-            <div class="metric-label">s / generation</div>
+            <div class="metric-value" id="p-ms-gen">-</div>
+            <div class="metric-label">ms / generation</div>
         </div>
         <div class="metric">
-            <div class="metric-value" id="p-chunks">—</div>
-            <div class="metric-label">chunks</div>
-        </div>
-        <div class="metric">
-            <div class="metric-value" id="p-tok">—</div>
-            <div class="metric-label">tokens / gen</div>
-        </div>
-        <div class="metric">
-            <div class="metric-value" id="p-thresh">—</div>
-            <div class="metric-label">threshold</div>
-        </div>
-        <div class="metric">
-            <div class="metric-value" id="p-live">0</div>
-            <div class="metric-label">LLM live</div>
-        </div>
-        <div class="metric">
-            <div class="metric-value" id="p-true-live">0</div>
-            <div class="metric-label">Game of Life live</div>
-        </div>
-        <div class="metric">
-            <div class="metric-value" id="p-acc">100.00%</div>
-            <div class="metric-label">accuracy</div>
-        </div>
-        <div class="metric">
-            <div class="metric-value" id="p-iou">1.000</div>
-            <div class="metric-label">IoU</div>
-        </div>
-        <div class="metric">
-            <div class="metric-value" id="p-alive-recall">1.000</div>
-            <div class="metric-label">alive recall</div>
-        </div>
-        <div class="metric">
-            <div class="metric-value" id="p-dead-recall">1.000</div>
-            <div class="metric-label">dead recall</div>
+            <div class="metric-value" id="p-cells-sec">-</div>
+            <div class="metric-label">cells / s</div>
         </div>
         <div class="metric">
             <div class="metric-value" id="p-wrong">0</div>
             <div class="metric-label">wrong cells</div>
         </div>
         <div class="metric">
-            <div class="metric-value" id="p-f1">1.000</div>
-            <div class="metric-label">F1</div>
-        </div>
-        <div class="metric">
             <div class="metric-value" id="p-gen">0</div>
             <div class="metric-label">generation</div>
         </div>
         <div class="metric">
-            <div class="metric-value" id="p-mspercell">—</div>
-            <div class="metric-label">ms / cell</div>
+            <div class="metric-value" id="p-model-size">-</div>
+            <div class="metric-label">model size</div>
         </div>
         <div class="metric">
-            <div class="metric-value" id="p-cellspersec">—</div>
-            <div class="metric-label">cells / s</div>
-        </div>
-        <div class="metric">
-            <div class="metric-value" id="p-proj64">—</div>
-            <div class="metric-label">proj. s/gen @ 64&sup2;</div>
+            <div class="metric-value" id="p-engine">-</div>
+            <div class="metric-label">engine</div>
         </div>
     </div>
-    <p class="info">All timings provisional: shared GPU. LLM mode binarizes p(alive) with a label-free threshold (default: Otsu 1979) before painting the LLM of Life panel and feeding it forward as the next generation's input — z-score (mean + k·std) is selectable via <code>window.__app.setThreshold('zscore', k)</code>, no UI setting. Variant B is one forward over the whole 64&times;64 grid; variant A is 16&times;16, one forward per chunk of 64 cells against a few-shot prefix resident in the KV cache.</p>
-</section>
-
-<section>
-    <h2>LADDER</h2>
-    <p class="info">the full comparison lives on the <a href="compare/">compare page</a>.</p>
+    <p class="panel-desc" id="p-alive-note" style="display:none">The model's answer per cell is a probability; cells are painted alive above the automatic threshold.</p>
+    <p class="info">The full comparison is on the <a href="compare/">compare page</a>.</p>
 </section>
 
 <footer>
     <a href="https://idleintelligence.org">idleintelligence.org</a>
+    <p class="credit">Base model Qwen2.5-0.5B-Instruct by the Qwen team (Apache-2.0); adapters and small models by idle intelligence.</p>
 </footer>
 
 <script type="module">
 import init, { LifeApp } from './pkg/life.js';
 
 // One grid size, shared by every mode's classical and model panels alike
-// (16/32/64/128/256, chosen in the INPUT section). The per-cell tiny models
+// (16/32/64/128/256, chosen in "settings . grid"). The per-cell tiny models
 // (MLP, BERT) and the stencil grid->grid model are local and cheap at any of
-// these sizes; the LLM rungs (variant B, variant A) are gated separately —
-// see `setGrid` below — because a real forward pass is the cost, not a
+// these sizes; the LLM rungs (per-cell, whole-grid) are gated separately --
+// see `setGrid` below -- because a real forward pass is the cost, not a
 // lookup table.
 let W = 64, H = 64;
 let gridSize = 64;
@@ -387,44 +412,35 @@ let gridSize = 64;
 // not yet applied); a second click on the same size confirms it. Cleared on
 // any mode switch or on choosing a different size.
 let armedGridSize = null;
-// Last measured variant-B (whole-grid) generation, used to project the time
-// estimate for a size not yet run. Variant A's per-cell estimate instead
-// uses `lastMsPerCell`, tracked below for the compare page.
+// Last measured whole-grid generation, used to project the time estimate for
+// a size not yet run. Per-cell's estimate instead uses `lastMsPerCell`.
 let lastLlmBSec = null, lastLlmBSize = null;
 const GENS_PER_SEC = 4;   // deliberately slow: you are meant to watch it
 
 const els = {
   statusDot: document.getElementById('statusDot'),
   statusText: document.getElementById('statusText'),
-  runLog: document.getElementById('runLog'),
   play: document.getElementById('play'),
   step: document.getElementById('step'),
   clear: document.getElementById('clear'),
   random: document.getElementById('random'),
   glider: document.getElementById('glider'),
   gen: document.getElementById('p-gen'),
-  tok: document.getElementById('p-tok'),
-  chunks: document.getElementById('p-chunks'),
-  live: document.getElementById('p-live'),
-  trueLive: document.getElementById('p-true-live'),
-  sec: document.getElementById('p-sec'),
-  acc: document.getElementById('p-acc'),
-  iou: document.getElementById('p-iou'),
-  aliveRecall: document.getElementById('p-alive-recall'),
-  deadRecall: document.getElementById('p-dead-recall'),
   wrong: document.getElementById('p-wrong'),
-  f1: document.getElementById('p-f1'),
-  thresh: document.getElementById('p-thresh'),
-  overlay: document.getElementById('overlay-palive'),
-  note: document.getElementById('mode-note'),
+  msGen: document.getElementById('p-ms-gen'),
+  cellsSec: document.getElementById('p-cells-sec'),
+  modelSize: document.getElementById('p-model-size'),
+  engine: document.getElementById('p-engine'),
+  aliveNote: document.getElementById('p-alive-note'),
+  overlayBtn: document.getElementById('overlay-btn'),
+  methodDesc: document.getElementById('method-desc'),
   narrationChoice: document.getElementById('narration-choice'),
   narrationWrap: document.getElementById('narrationWrap'),
   narrationLog: document.getElementById('narrationLog'),
   narrationCounter: document.getElementById('narrationCounter'),
-  adapterBtn: document.getElementById('adapter'),
-  mspercell: document.getElementById('p-mspercell'),
-  cellspersec: document.getElementById('p-cellspersec'),
-  proj64: document.getElementById('p-proj64'),
+  adapterSection: document.getElementById('adapter-section'),
+  adapterAChoice: document.getElementById('adapter-a-choice'),
+  adapterBChoice: document.getElementById('adapter-b-choice'),
 };
 const canvases = {
   model: document.getElementById('c-model'),
@@ -442,28 +458,8 @@ function setStatus(state, text) {
   els.statusText.textContent = text;
 }
 
-// RUN panel: fixed height, last ~8 lines of run events (generation timings,
-// ladder measurements), replaced in place — no scroll, no unbounded growth.
-let runLines = [];
-function renderRun() {
-  els.runLog.textContent = runLines.join('\n');
-}
-function logRun(msg) {
-  runLines.unshift(msg);
-  if (runLines.length > 8) runLines.length = 8;
-  renderRun();
-  console.debug('[llm-life]', msg);
-}
-// Replace the current top line instead of pushing a new one — used for the
-// ticking "running…" line so it doesn't spam the panel.
-function logRunReplace(msg) {
-  if (runLines.length === 0) runLines.unshift(msg);
-  else runLines[0] = msg;
-  renderRun();
-  console.debug('[llm-life]', msg);
-}
-// Debug-only detail (model/adapter/checkpoint loading, seed edits, grid info)
-// that never mattered to a visitor — console only, no panel.
+// Console-only detail (model/adapter/checkpoint loading, seed edits, grid
+// info) that never mattered to a visitor -- STATUS stays a single sentence.
 function debugLog(msg) {
   console.debug('[llm-life]', msg);
 }
@@ -473,9 +469,9 @@ function debugLog(msg) {
 // both modes (in classical mode the two are the same object's state).
 let app, truth, playing = false, timer = null, lastSec = null;
 // `mode` picks which update rule fills the model panel; `lastP` is the
-// model's p(alive) — `app`'s own cells are always the *binarized* grid (the
+// model's p(alive) -- `app`'s own cells are always the *binarized* grid (the
 // thing that is actually compared against true Life and fed forward), and
-// the overlay checkbox only changes what gets painted.
+// the overlay button only changes what gets painted.
 let mode = 'classical', lastP = null, generation = 0, lastAccuracy = 1, lastIou = 1, lastF1 = 1, lastWrong = 0, lastAliveRecall = 1, lastDeadRecall = 1;
 let lastChunks = null, lastTokens = null;
 // `generating` is true for the duration of one in-flight LLM generation
@@ -484,34 +480,55 @@ let lastChunks = null, lastTokens = null;
 // generation lands, instead of resizing `app`/`truth` out from under it.
 let generating = false, pendingGridSize = null, pendingReset = null;
 // LLM-mode binarization: label-free, no ground truth involved. Otsu is the
-// default; z-score is reachable only through `window.__app.setThreshold`,
-// never a UI control (CLAUDE.md "Demo": no settings panels).
+// only threshold reachable from the UI; z-score exists only as a test hook
+// (window.__app.setThreshold), never a visible setting.
 let thresholdName = 'otsu', thresholdK = 2.0, lastThresholdValue = null;
 
-// Variant A narration (per-pixel / batched). Both styles run the identical
-// forwards (the engine only exposes chunk-level calls — one forward per
+// Narration style (per-cell mode only). Both styles run the identical
+// forwards (the engine only exposes chunk-level calls -- one forward per
 // 64-cell chunk); they differ only in how the same chunk results are
-// presented in the narration strip. `narrationStyle` is set by the radio (or
-// window.__app.setNarrationStyle) and read when a 'chunk' message arrives
-// mid-generation.
+// presented in the narration strip.
 let narrationStyle = 'perpixel';
-let adapterName = 'a-norules';
 let cellTokensCount = null;
 let bertNumLayers = null;
 let narrationLines = [];
 let cellsNarrated = 0, cellsThisGen = 0, chunkTimingsMs = [];
 let gridCellsForStep = null;
 let lastMsPerCell = null, lastCellsPerSec = null, lastProj64 = null;
+let overlayOn = false;
 
-function narrationPush(line) {
-  narrationLines.push(line);
-  if (narrationLines.length > 6) narrationLines.shift();
-  els.narrationLog.textContent = narrationLines.join('\n');
+// Whichever adapter (or base weights) is currently resident on the LLM
+// engine -- 'base', 'a-norules', 'a-rules', 'b-16' or 'b-32'. Distinct from
+// the two radio selections below, which are what the visitor asked for; the
+// engine can only hold one at a time, and `ensureModeAdapter` reconciles the
+// two whenever the mode, grid size or a radio changes.
+let engineAdapterState = null;
+let adapterKeyA = 'norules'; // 'base' | 'rules' | 'norules'
+let adapterKeyB = 'trained'; // 'base' | 'trained'
+
+function methodDescFor(m) {
+  return {
+    classical: 'The classical rule, one pass over the grid.',
+    'vec-mlp': 'A 2-layer MLP over the 9 cell values, 1,442 parameters, exact on all 512 neighbourhoods.',
+    bert: 'A one-layer transformer encoder over the 9 cells as tokens, 3,490 parameters, exact on all 512 neighbourhoods.',
+    'vec-stencil': 'One attention layer over the whole grid, each cell masked to its 3x3 stencil, 3,329 parameters; trained at 16x16, exact with the same weights up to 256x256.',
+    'llm-a': 'Qwen2.5-0.5B with a LoRA adapter, asked one cell at a time.',
+    llm: 'Qwen2.5-0.5B with a LoRA adapter, the whole grid in one prompt, one token per cell.',
+  }[m] ?? '';
 }
 
-// Moore neighbourhood, toroidal wraparound, NW/N/NE/W/E/SW/S/SE — the same
+const MODE_INFO = {
+  classical: { size: 'no parameters', engine: 'rule (wasm)' },
+  'vec-mlp': { size: '1,442 params', engine: 'MLP (wasm)' },
+  bert: { size: '3,490 params', engine: 'encoder (wasm)' },
+  'vec-stencil': { size: '3,329 params', engine: 'stencil attention (wasm)' },
+  'llm-a': { size: '0.5B params + LoRA', engine: 'Qwen2.5-0.5B (wasm)' },
+  llm: { size: '0.5B params + LoRA', engine: 'Qwen2.5-0.5B (wasm)' },
+};
+
+// Moore neighbourhood, toroidal wraparound, NW/N/NE/W/E/SW/S/SE -- the same
 // order as life::Grid::neighbor_indices (crates/life/src/grid.rs), which is
-// the order variant A's per-cell prompt lists them in.
+// the order the per-cell prompt lists them in.
 function neighborBitsAt(cellsArr, w, h, idx) {
   const x = idx % w, y = Math.floor(idx / w);
   const xm = (x + w - 1) % w, xp = (x + 1) % w;
@@ -528,11 +545,17 @@ function resetNarrationForGen() {
   chunkTimingsMs = [];
 }
 
+function narrationPush(line) {
+  narrationLines.push(line);
+  if (narrationLines.length > 6) narrationLines.shift();
+  els.narrationLog.textContent = narrationLines.join('\n');
+}
+
 function handleChunkNarration({ firstCell, pAlive, ms }) {
   const chunkSize = pAlive.length;
   chunkTimingsMs.push({ ms, chunkSize });
   if (narrationStyle === 'batched') {
-    narrationPush(`prefix shared · batch ${chunkSize} cells × ${cellTokensCount} tokens · one forward ${ms.toFixed(0)} ms · ${chunkSize} answers read back`);
+    narrationPush(`prefix shared - batch ${chunkSize} cells x ${cellTokensCount} tokens - one forward ${ms.toFixed(0)} ms - ${chunkSize} answers read back`);
     cellsNarrated += chunkSize;
   } else {
     const msPerCell = ms / chunkSize;
@@ -545,52 +568,43 @@ function handleChunkNarration({ firstCell, pAlive, ms }) {
       const answer = p >= 0.5 ? 1 : 0;
       const conf = answer === 1 ? p : 1 - p;
       const row0 = `${nb[0]}${nb[1]}${nb[2]}`, row1 = `${nb[3]}${self}${nb[4]}`, row2 = `${nb[5]}${nb[6]}${nb[7]}`;
-      narrationPush(`cell (${r},${c}) · neighbourhood ${row0}/${row1}/${row2} · ${cellTokensCount}-token prompt · answer ${answer} (p ${conf.toFixed(2)}) · ${msPerCell.toFixed(0)} ms`);
+      narrationPush(`cell (${r},${c}) - neighbourhood ${row0}/${row1}/${row2} - ${cellTokensCount}-token prompt - answer ${answer} (p ${conf.toFixed(2)}) - ${msPerCell.toFixed(0)} ms`);
       cellsNarrated++;
     }
   }
   const genLabel = generation + 1;
-  narrationPush(`cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`);
-  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`;
+  narrationPush(`cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`);
+  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`;
 }
 
-// BERT of Life narration: one line per cell, same "cell (r,c)" framing as
-// variant A's per-pixel mode but naming the encoder instead of a token
-// prompt — CONCEPT.md §14's per-rung narration convention applied to this
-// rung: `cell (r,c) · 9 tokens · encoder N layers · answer 1 · 0.08 ms`.
 function handleBertCellNarration({ index, p, ms }) {
   chunkTimingsMs.push({ ms, chunkSize: 1 });
   const r = Math.floor(index / W), c = index % W;
   const answer = p >= 0.5 ? 1 : 0;
   const conf = answer === 1 ? p : 1 - p;
-  narrationPush(`cell (${r},${c}) · 9 tokens · encoder ${bertNumLayers} layers · answer ${answer} (p ${conf.toFixed(2)}) · ${ms.toFixed(2)} ms`);
+  narrationPush(`cell (${r},${c}) - 9 tokens - encoder ${bertNumLayers} layers - answer ${answer} (p ${conf.toFixed(2)}) - ${ms.toFixed(2)} ms`);
   cellsNarrated++;
   const genLabel = generation + 1;
-  narrationPush(`cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`);
-  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`;
+  narrationPush(`cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`);
+  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`;
 }
 
-// (i) "9 numbers -> centre": one line per cell, no tokens — CONCEPT.md
-// §14's narration line for this rung: `cell (r,c) · 9 numbers · MLP 32·32 ·
-// 1442 params · 0.02 ms`.
 function handleVecMlpCellNarration({ index, p, ms }) {
   chunkTimingsMs.push({ ms, chunkSize: 1 });
   const r = Math.floor(index / W), c = index % W;
-  narrationPush(`cell (${r},${c}) · 9 numbers · MLP ${VEC_MLP_MODEL.hidden}·${VEC_MLP_MODEL.hidden} · 1442 params · ${ms.toFixed(2)} ms`);
+  narrationPush(`cell (${r},${c}) - 9 numbers - MLP ${VEC_MLP_MODEL.hidden}x${VEC_MLP_MODEL.hidden} - 1442 params - ${ms.toFixed(2)} ms`);
   cellsNarrated++;
   const genLabel = generation + 1;
-  narrationPush(`cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`);
-  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`;
+  narrationPush(`cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`);
+  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`;
 }
 
-// (ii) "grid -> grid, one channel": one pass computes every cell — one
-// narration line for the whole generation, not one per cell.
 function handleVecStencilNarration({ cells, ms }) {
   chunkTimingsMs.push({ ms, chunkSize: cells });
-  narrationPush(`whole grid · ${cells} cells · stencil attention · one pass · ${ms.toFixed(1)} ms`);
+  narrationPush(`whole grid - ${cells} cells - stencil attention - one pass - ${ms.toFixed(1)} ms`);
   cellsNarrated = cells;
   const genLabel = generation + 1;
-  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} · generation ${genLabel}`;
+  els.narrationCounter.textContent = `cells ${cellsNarrated}/${cellsThisGen} - generation ${genLabel}`;
 }
 
 let bertMsPerCell = null, vecMlpMsPerCell = null, vecStencilMsPerCell = null;
@@ -600,9 +614,8 @@ function finishNarrationPerf() {
   const totalCells = chunkTimingsMs.reduce((s, c) => s + c.chunkSize, 0);
   if (totalCells === 0) return;
   const msPerCell = totalMs / totalCells;
-  // Variant A and BERT of Life each keep their own ms/cell — they are
-  // different engines, so the ladder's LLM and BERT rows must not clobber
-  // each other's last measurement.
+  // Each per-cell rung keeps its own ms/cell -- they are different engines,
+  // so one measurement must not clobber another's.
   if (mode === 'bert') {
     bertMsPerCell = msPerCell;
   } else if (mode === 'vec-mlp') {
@@ -614,9 +627,6 @@ function finishNarrationPerf() {
   }
   lastCellsPerSec = 1000 / msPerCell;
   lastProj64 = msPerCell * 64 * 64 / 1000;
-  els.mspercell.textContent = msPerCell.toFixed(1);
-  els.cellspersec.textContent = lastCellsPerSec.toFixed(1);
-  els.proj64.textContent = lastProj64.toFixed(1);
 }
 
 // Paint a [0,1] float per cell: 0 = white, 1 = black. Binary grids are just
@@ -637,14 +647,12 @@ function paint(c, values) {
 function render() {
   const model = app.cells(); // always the binarized grid, in every mode
   const t = truth.cells();
-  const showOverlay = mode === 'llm' && els.overlay.checked && lastP;
+  const showOverlay = mode === 'llm' && overlayOn && lastP;
   paint(ctx.model, showOverlay ? lastP : model);
   paint(ctx.truth, t);
   const diff = new Float32Array(W * H);
   // Same formulas as crate::score::score (crates/llm-life/src/score.rs),
-  // computed directly here rather than round-tripping through wasm: they
-  // are one-line arithmetic over counts this loop is already accumulating,
-  // unlike Otsu/z-score (genuinely nontrivial, reused from wasm below).
+  // computed directly here rather than round-tripping through wasm.
   let wrong = 0, inter = 0, modelLive = 0, trueLive = 0;
   for (let i = 0; i < W * H; i++) {
     const m = model[i] !== 0, tr = t[i] !== 0;
@@ -660,8 +668,6 @@ function render() {
   const precision = modelLive === 0 ? (trueLive === 0 ? 1 : 0) : inter / modelLive;
   const recall = trueLive === 0 ? 1 : inter / trueLive;
   const f1 = (precision + recall) === 0 ? 0 : 2 * precision * recall / (precision + recall);
-  // dead_recall (specificity): the number accuracy alone hides when dead
-  // cells dominate — see crate::score::score's `dead_recall`.
   const trueDead = W * H - trueLive;
   const fp = modelLive - inter;
   const tn = trueDead - fp;
@@ -669,31 +675,20 @@ function render() {
   const aliveRecall = recall;
   paint(ctx.diff, diff);
   els.gen.textContent = generation;
-  els.live.textContent = app.live_count();
-  els.trueLive.textContent = truth.live_count();
-  els.sec.textContent = lastSec === null ? '—' : lastSec.toFixed(3);
-  els.chunks.textContent = lastChunks === null ? '—' : lastChunks;
-  els.tok.textContent = lastTokens === null ? '—' : lastTokens;
-  els.thresh.textContent = mode === 'llm'
-    ? `${thresholdName}${lastThresholdValue === null ? '' : ` (t=${lastThresholdValue.toFixed(3)})`}`
-    : '—';
+  els.msGen.textContent = lastSec === null ? '-' : (lastSec * 1000).toFixed(1);
+  const cellsPerSec = (lastSec && lastSec > 0) ? (W * H / lastSec) : null;
+  els.cellsSec.textContent = cellsPerSec === null ? '-' : cellsPerSec.toFixed(0);
   lastAccuracy = 1 - wrong / (W * H);
   lastIou = iou;
   lastF1 = f1;
   lastWrong = wrong;
-  const acc = 100 * lastAccuracy;
-  els.acc.textContent = acc.toFixed(2) + '%';
-  els.iou.textContent = iou.toFixed(3);
-  els.aliveRecall.textContent = aliveRecall.toFixed(3);
-  els.deadRecall.textContent = deadRecall.toFixed(3);
   els.wrong.textContent = wrong;
-  els.f1.textContent = f1.toFixed(3);
   lastAliveRecall = aliveRecall;
   lastDeadRecall = deadRecall;
 }
 
-// True for every mode that runs through the worker/engine (LLM variants A/B
-// and BERT of Life) rather than the classical in-page loop.
+// True for every mode that runs through the worker/engine rather than the
+// classical in-page loop.
 function isModelMode(m) {
   return m === 'llm' || m === 'llm-a' || m === 'bert' || m === 'vec-mlp' || m === 'vec-stencil';
 }
@@ -721,14 +716,8 @@ async function stepOnce() {
 
 // LLM modes are completion-driven, not timer-driven: a generation takes
 // seconds, so a fixed-rate timer would fire again while the previous
-// generation's async step is still in flight (the bug this loop fixes).
-// Each iteration awaits one generation, then checks `playing` before asking
-// for the next.
-// Guards against a second loop starting while one is still finishing its
-// current `llmStepOnce()` — pausing doesn't cancel an in-flight generation,
-// so a quick pause/resume could otherwise call `llmStepOnce` twice
-// concurrently on the main thread even though the worker queue keeps the
-// engine calls themselves serialized.
+// generation's async step is still in flight. Each iteration awaits one
+// generation, then checks `playing` before asking for the next.
 let llmLoopActive = false;
 async function llmPlayLoop() {
   if (llmLoopActive) return;
@@ -771,8 +760,6 @@ function resync() {
 }
 
 // Rebuild both grids (and the canvases' pixel sizes) at a new edge length.
-// The CSS size is fixed at 176px, so a 16x16 grid simply draws 11x larger
-// cells — that is what makes variant A's output readable.
 function setGridSize(n) {
   if (W === n) return;
   W = H = n;
@@ -784,10 +771,7 @@ function setGridSize(n) {
 }
 
 // One fresh seed state, shared by the model grid, the true-Life grid and the
-// engine's next input. `requestReset` is what every entry point (buttons and
-// window.__app) calls: if a generation is in flight, the reset is deferred —
-// `llmStepOnce` discards that generation's stale result and applies the
-// reset once it lands, instead of painting over it.
+// engine's next input.
 function applyReset(type, opts = {}) {
   if (type === 'clear') {
     app.clear();
@@ -811,16 +795,13 @@ function requestReset(type, opts) {
   applyReset(type, opts);
 }
 
-// Grid size (LLM mode only): logs the token cost of the new size once the
-// worker confirms it, or a bare size line if the model isn't loaded / the
-// engine call fails.
 async function logGridInfo(n) {
   try {
     const info = await ask('gridInfo', { width: n, height: n });
-    if (info && info.tokens != null) debugLog(`grid: ${n}×${n} · ${info.tokens} tokens/forward · no reload needed`);
-    else debugLog(`grid: ${n}×${n}`);
+    if (info && info.tokens != null) debugLog(`grid: ${n}x${n} - ${info.tokens} tokens/forward`);
+    else debugLog(`grid: ${n}x${n}`);
   } catch (e) {
-    debugLog(`grid: ${n}×${n}`);
+    debugLog(`grid: ${n}x${n}`);
   }
 }
 
@@ -828,38 +809,22 @@ const LLM_MODEL = {
   ggufUrl: './models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf',
   tokenizerUrl: './models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json',
   // Runtime LoRA (llm_wasm::lora), applied onto the base Q4 model after
-  // load — not an offline GGUF merge. Served from web/, gitignored.
+  // load -- not an offline GGUF merge. Served from web/, gitignored.
   adapterUrl: './lora-a-norules-300.bin',
 };
 
-// BERT of Life (CONCEPT.md §11 backlog item): the smallest transformer
-// encoder that is exact on all 512 cases.
-// Config must match the checkpoint's training config — `BertEngine`'s
-// `loadCheckpoint` rebuilds the module from these dims before loading the
-// weight bytes. Served from web/, gitignored, like the LoRA files above.
 const BERT_MODEL = {
   checkpointUrl: './bert-d16-L1.bin',
-  // The smallest size in the sweep — 3490
-  // parameters, exact on all 512 cases, IoU 1.000 on the 16x16 rollout. The
-  // bigger sizes (d=32/64) are also exact but not smaller, so this is the
-  // one shipped to the tab.
   dModel: 16,
   nLayers: 1,
   nHeads: 1,
 };
 
-// (i) "9 numbers -> centre" (CONCEPT.md §12/§14): a 2-layer MLP
-// (`vector::model::Mlp2OfLife`) on the 9 raw neighbourhood bits, no
-// embedding table — exact on all 512 cases.
 const VEC_MLP_MODEL = {
   checkpointUrl: './mlp2-32-lrfix.bin',
   hidden: 32,
 };
 
-// (ii) "grid -> grid, one channel" (CONCEPT.md §12/§14): jacobi2000's
-// stencil-masked attention with one channel — smallest exact size from the
-// sweep: d=16 L=1 H=1, IoU 1.000 at both 16x16 and 32x32 with the same
-// weights.
 const VEC_STENCIL_MODEL = {
   checkpointUrl: './stencil-d16-L1.bin',
   dModel: 16,
@@ -883,6 +848,21 @@ for (const r of document.querySelectorAll('input[name=mode]')) {
   });
 }
 
+for (const r of document.querySelectorAll('input[name="adapter-a"]')) {
+  r.addEventListener('change', async () => {
+    if (!r.checked || generating) return;
+    adapterKeyA = r.value;
+    if (mode === 'llm-a') await ensureModeAdapter().catch((e) => debugLog('adapter sync failed: ' + e.message));
+  });
+}
+for (const r of document.querySelectorAll('input[name="adapter-b"]')) {
+  r.addEventListener('change', async () => {
+    if (!r.checked || generating) return;
+    adapterKeyB = r.value;
+    if (mode === 'llm') await ensureModeAdapter().catch((e) => debugLog('adapter sync failed: ' + e.message));
+  });
+}
+
 function isLlmMode(m) {
   return m === 'llm' || m === 'llm-a';
 }
@@ -894,9 +874,9 @@ function formatDuration(seconds) {
 }
 
 // Rough, this-machine estimate for a size the LLM rungs haven't run at yet:
-// variant A (per-cell) scales off its own ms/cell; variant B (whole grid)
-// scales off its own last measured generation. Neither is exact — it exists
-// to gate the click, not to promise a number.
+// per-cell scales off its own ms/cell; whole-grid scales off its own last
+// measured generation. Neither is exact -- it exists to gate the click, not
+// to promise a number.
 function llmSizeEstimateSeconds(n) {
   const cells = n * n;
   if (mode === 'llm-a' && lastMsPerCell != null) return (lastMsPerCell / 1000) * cells;
@@ -912,7 +892,7 @@ function updateGridButtons() {
     const disabled = llm && n > 64;
     btn.disabled = disabled;
     if (llm && disabled) {
-      btn.title = `disabled for LLM mode — would be ≈ ${formatDuration(llmSizeEstimateSeconds(n))} per generation`;
+      btn.title = `disabled for LLM mode: about ${formatDuration(llmSizeEstimateSeconds(n))} per generation`;
     } else if (llm && n > 32) {
       btn.title = armedGridSize === n ? 'click again to confirm' : 'click to see a time estimate first';
     } else {
@@ -932,9 +912,10 @@ for (const r of document.querySelectorAll('input[name=narration]')) {
   });
 }
 
-els.adapterBtn.onclick = async () => {
-  const next = adapterName === 'a-norules' ? 'a-rules' : 'a-norules';
-  await setAdapter(next);
+els.overlayBtn.onclick = () => {
+  overlayOn = !overlayOn;
+  els.overlayBtn.classList.toggle('primary', overlayOn);
+  render();
 };
 
 await init();
@@ -943,8 +924,11 @@ truth = new LifeApp(W, H);
 app.place_glider(2, 2);
 resync();
 updateGridButtons();
+els.methodDesc.textContent = methodDescFor(mode);
+els.modelSize.textContent = MODE_INFO[mode].size;
+els.engine.textContent = MODE_INFO[mode].engine;
 setStatus('ready', 'Ready');
-debugLog(`ready — ${W}×${H}, rule ${app.rulestring()}, ${GENS_PER_SEC} generations/s`);
+debugLog(`ready - ${W}x${H}, rule ${app.rulestring()}, ${GENS_PER_SEC} generations/s`);
 
 els.play.onclick = () => setPlaying(!playing);
 els.step.onclick = () => { setPlaying(false); stepOnce(); };
@@ -961,8 +945,8 @@ document.getElementById('c-model').addEventListener('click', (e) => {
 });
 
 // ---------------------------------------------------------------------------
-// LLM mode — variant B through the wasm engine, in a Worker (the main thread
-// does UI only).
+// Model modes -- through the wasm engine, in a Worker (the main thread does
+// UI only).
 // ---------------------------------------------------------------------------
 let worker = null, nextId = 1, pending = new Map(), llmReady = false, loading = null;
 let bertReady = false, bertLoading = null;
@@ -1002,8 +986,8 @@ function ensureWorker() {
     }
     if (type === 'progress') {
       if (fraction !== undefined) {
-        // Replaced in place — this is the one-sentence STATUS line, not a
-        // log: "downloading 43%" etc.
+        // Replaced in place -- this is the one-sentence STATUS line, not a
+        // log: "download 43%" etc.
         setStatus('loading', `${stage} ${(fraction * 100).toFixed(0)}%`);
         lastProgressStage = stage;
       } else {
@@ -1021,30 +1005,23 @@ function ensureWorker() {
 async function loadLlm(spec) {
   ensureWorker();
   if (!loading) {
-    setStatus('loading', 'Loading model…');
-    debugLog('loading model into the worker…');
+    setStatus('loading', 'loading model...');
+    debugLog('loading model into the worker...');
     lastProgressStage = null;
     loading = ask('load', { ...spec, width: W, height: H, rulestring: app.rulestring() })
       .then((info) => {
         llmReady = true;
-        const name = spec.ggufUrl.split('/').pop().replace(/\.gguf$/, '');
         setStatus('ready', 'Ready');
-        debugLog(`model loaded: ${name}`);
+        debugLog('model loaded');
         cellTokensCount = info.cellTokens ?? cellTokensCount;
-        if (info.adapter) {
-          const label = info.adapter.name.replace(/^lora-/, '').replace(/-\d+$/, '');
-          debugLog(`adapter loaded: ${ADAPTER_DESC[label] ?? label} (${(info.adapter.bytes / 1e6).toFixed(1)} MB)`);
-          adapterName = label;
-          els.adapterBtn.textContent = `adapter: ${ADAPTER_SHORT[adapterName] ?? adapterName}`;
-        }
-        els.adapterBtn.disabled = mode !== 'llm-a';
-        // The base load always applies variant A's adapter (`spec.adapterUrl`
-        // above); if the mode already selected is variant B, swap to its own
-        // adapter right away instead of leaving A's applied.
+        engineAdapterState = spec.adapterUrl ? adapterStateForUrl(spec.adapterUrl) : 'base';
+        if (info.adapter) debugLog(`adapter loaded: ${info.adapter.name} (${(info.adapter.bytes / 1e6).toFixed(1)} MB)`);
+        // The base load always applies the per-cell adapter (`spec.adapterUrl`
+        // above); reconcile with whichever mode/radio is actually selected.
         ensureModeAdapter().catch((e) => debugLog('adapter sync failed: ' + e.message));
         return info;
       })
-      .catch((e) => { loading = null; setStatus('error', 'Load failed'); debugLog('load failed: ' + e.message); throw e; });
+      .catch((e) => { loading = null; setStatus('error', 'load failed'); debugLog('load failed: ' + e.message); throw e; });
   }
   return loading;
 }
@@ -1052,8 +1029,8 @@ async function loadLlm(spec) {
 async function loadBert(spec) {
   ensureWorker();
   if (!bertLoading) {
-    setStatus('loading', 'Loading BERT of Life…');
-    debugLog('loading BERT of Life checkpoint into the worker…');
+    setStatus('loading', 'loading BERT of Life...');
+    debugLog('loading BERT of Life checkpoint into the worker...');
     bertLoading = ask('loadBert', { ...spec, width: W, height: H })
       .then((info) => {
         bertReady = true;
@@ -1062,7 +1039,7 @@ async function loadBert(spec) {
         debugLog(`BERT of Life loaded: d_model=${info.dModel} layers=${info.numLayers}`);
         return info;
       })
-      .catch((e) => { bertLoading = null; setStatus('error', 'Load failed'); debugLog('load failed: ' + e.message); throw e; });
+      .catch((e) => { bertLoading = null; setStatus('error', 'load failed'); debugLog('load failed: ' + e.message); throw e; });
   }
   return bertLoading;
 }
@@ -1070,8 +1047,8 @@ async function loadBert(spec) {
 async function loadVecMlp(spec) {
   ensureWorker();
   if (!vecMlpLoading) {
-    setStatus('loading', 'Loading vector MLP…');
-    debugLog('loading 9-numbers MLP checkpoint into the worker…');
+    setStatus('loading', 'loading vector MLP...');
+    debugLog('loading 9-numbers MLP checkpoint into the worker...');
     vecMlpLoading = ask('loadVecMlp', { ...spec, width: W, height: H })
       .then((info) => {
         vecMlpReady = true;
@@ -1079,7 +1056,7 @@ async function loadVecMlp(spec) {
         debugLog(`vector MLP loaded: hidden=${info.hidden}`);
         return info;
       })
-      .catch((e) => { vecMlpLoading = null; setStatus('error', 'Load failed'); debugLog('load failed: ' + e.message); throw e; });
+      .catch((e) => { vecMlpLoading = null; setStatus('error', 'load failed'); debugLog('load failed: ' + e.message); throw e; });
   }
   return vecMlpLoading;
 }
@@ -1087,8 +1064,8 @@ async function loadVecMlp(spec) {
 async function loadVecStencil(spec) {
   ensureWorker();
   if (!vecStencilLoading) {
-    setStatus('loading', 'Loading stencil model…');
-    debugLog('loading grid-to-grid stencil checkpoint into the worker…');
+    setStatus('loading', 'loading stencil model...');
+    debugLog('loading grid-to-grid stencil checkpoint into the worker...');
     vecStencilLoading = ask('loadVecStencil', { ...spec, width: W, height: H })
       .then((info) => {
         vecStencilReady = true;
@@ -1096,55 +1073,68 @@ async function loadVecStencil(spec) {
         debugLog(`stencil model loaded: d_model=${info.dModel} layers=${info.numLayers}`);
         return info;
       })
-      .catch((e) => { vecStencilLoading = null; setStatus('error', 'Load failed'); debugLog('load failed: ' + e.message); throw e; });
+      .catch((e) => { vecStencilLoading = null; setStatus('error', 'load failed'); debugLog('load failed: ' + e.message); throw e; });
   }
   return vecStencilLoading;
 }
 
 const ADAPTER_URL = { 'a-norules': './lora-a-norules-300.bin', 'a-rules': './lora-a-rules-300.bin' };
-// Visitor-facing labels for the two adapter variants (internal keys above
-// stay as-is; only what's displayed changes).
-const ADAPTER_SHORT = { 'a-norules': 'no rules', 'a-rules': 'with rules' };
-const ADAPTER_DESC = {
-  'a-norules': 'adapter trained without the rules in the prompt',
-  'a-rules': 'adapter trained with the rules in the prompt',
-};
+function adapterStateForUrl(url) {
+  if (url.includes('norules')) return 'a-norules';
+  if (url.includes('lora-a-rules')) return 'a-rules';
+  return url;
+}
 
-// Variant B (whole grid, one pass) has its own adapter, trained per grid
-// size (docs/runs/2026-09-20-ft-b-16-s3-300.md) — not variant A's per-cell
-// adapter. No adapter has been trained at 64×64 yet.
+// The whole-grid rung has its own adapter, trained per grid size -- not the
+// per-cell adapter. No adapter has been trained at 64x64 yet.
 const B_ADAPTER_BY_SIZE = { 16: './lora-b-16-s3-300.bin', 32: './lora-b-32.bin' };
 let bAdapterAvailable = true;
 
-// Keeps whichever LoRA is on the GPU in sync with the mode/grid-size pair
-// currently selected — variant A's own adapter for 'llm-a', variant B's
-// size-specific adapter for 'llm' — without ever reloading the base model
-// (`LifeEngine::loadAdapter` swaps deltas onto the model already resident).
+// Reloads the base Q4 weights with no LoRA applied -- the only way to get a
+// genuinely unadapted model, since the engine's own loadAdapter call always
+// replaces whatever adapter is resident rather than clearing it. A no-op if
+// the engine is already at base.
+async function ensureBaseModel() {
+  if (engineAdapterState === 'base') return;
+  ensureWorker();
+  setStatus('loading', 'loading base model (no adapter)...');
+  const info = await ask('load', { ggufUrl: LLM_MODEL.ggufUrl, tokenizerUrl: LLM_MODEL.tokenizerUrl, width: W, height: H, rulestring: app.rulestring() });
+  cellTokensCount = info.cellTokens ?? cellTokensCount;
+  engineAdapterState = 'base';
+  setStatus('ready', 'Ready');
+  debugLog('base model loaded, no adapter');
+}
+
+// Keeps whichever LoRA (or base weights) is on the GPU in sync with the
+// mode/grid-size/radio combination currently selected, without ever
+// reloading the base model unless the visitor actually asked for it.
 async function ensureModeAdapter() {
   if (!llmReady) return;
   if (mode === 'llm-a') {
-    await setAdapter(adapterName);
+    if (adapterKeyA === 'base') { await ensureBaseModel(); return; }
+    await setAdapter(adapterKeyA === 'rules' ? 'a-rules' : 'a-norules');
   } else if (mode === 'llm') {
+    if (adapterKeyB === 'base') { await ensureBaseModel(); return; }
     const url = B_ADAPTER_BY_SIZE[gridSize];
     bAdapterAvailable = !!url;
     if (!url) {
-      debugLog(`no adapter trained at ${gridSize}×${gridSize} for variant B`);
+      debugLog(`no adapter trained at ${gridSize}x${gridSize} for the whole-grid rung`);
       return;
     }
     ensureWorker();
     const info = await ask('loadAdapter', { adapterUrl: url });
-    debugLog(`adapter loaded: variant B, ${gridSize}×${gridSize} (${(info.bytes / 1e6).toFixed(1)} MB)`);
+    engineAdapterState = `b-${gridSize}`;
+    debugLog(`adapter loaded: whole grid, ${gridSize}x${gridSize} (${(info.bytes / 1e6).toFixed(1)} MB)`);
   }
 }
 
 async function setAdapter(name) {
-  if (!llmReady) { adapterName = name; return; }
+  if (!llmReady) return name;
   ensureWorker();
   const info = await ask('loadAdapter', { adapterUrl: ADAPTER_URL[name] });
-  adapterName = name;
-  els.adapterBtn.textContent = `adapter: ${ADAPTER_SHORT[adapterName] ?? adapterName}`;
-  debugLog(`adapter loaded: ${ADAPTER_DESC[adapterName] ?? adapterName} (${(info.bytes / 1e6).toFixed(1)} MB)`);
-  return adapterName;
+  engineAdapterState = name;
+  debugLog(`adapter loaded: ${name} (${(info.bytes / 1e6).toFixed(1)} MB)`);
+  return name;
 }
 
 async function llmStepOnce() {
@@ -1152,15 +1142,14 @@ async function llmStepOnce() {
   const t0 = performance.now();
   genPhase = 'running';
   generating = true;
-  setStatus('generating', 'Generating…');
+  setStatus('generating', `generation ${genLabel}: starting...`);
   if (isPerCellNarrated(mode)) {
     gridCellsForStep = Array.from(app.cells());
     resetNarrationForGen();
   }
-  logRun(`generation ${genLabel}: ${genPhase}… 0.0 s`);
   const ticker = setInterval(() => {
     const elapsed = (performance.now() - t0) / 1000;
-    logRunReplace(`generation ${genLabel}: ${genPhase}… ${elapsed.toFixed(1)} s`);
+    setStatus('generating', `generation ${genLabel}: ${genPhase}... ${elapsed.toFixed(1)} s`);
   }, 250);
   let r;
   try {
@@ -1174,14 +1163,11 @@ async function llmStepOnce() {
       k: thresholdK,
     });
   } catch (e) {
-    // Leave the page paused and recoverable: clear the ticker, log one
-    // error line (not a growing spam of them), and drop back to ready so
-    // the next step/play works without a reload.
     clearInterval(ticker);
     generating = false;
     if (pendingReset) { const r = pendingReset; pendingReset = null; applyReset(r.type, r.opts); }
-    setStatus('error', 'Generation failed');
-    logRunReplace(`generation ${genLabel}: failed — ${e.message}`);
+    setStatus('error', 'generation failed');
+    debugLog(`generation ${genLabel}: failed - ${e.message}`);
     throw e;
   }
   clearInterval(ticker);
@@ -1189,12 +1175,11 @@ async function llmStepOnce() {
   if (pendingReset) {
     // A Clear/Random/Glider requested mid-generation: the result that just
     // landed was computed from the pre-reset grid, so it is discarded rather
-    // than painted — the reset applies instead.
+    // than painted -- the reset applies instead.
     const reset = pendingReset;
     pendingReset = null;
     applyReset(reset.type, reset.opts);
     setStatus('ready', 'Ready');
-    logRunReplace(`generation ${genLabel}: discarded — reset applied`);
     return;
   }
   lastSec = (performance.now() - t0) / 1000;
@@ -1204,17 +1189,13 @@ async function llmStepOnce() {
   lastTokens = r.tokens;
   if (isPerCellNarrated(mode)) finishNarrationPerf();
   // The model's *binarized* output (label-free threshold, not 0.5) becomes
-  // the next state it is fed — free-running, not teacher-forced: there is no
-  // teacher-forced mode in the tab. Truth advances independently from its own
-  // history, so the diff panel shows accumulated divergence, not one-step
-  // error.
+  // the next state it is fed -- free-running, not teacher-forced. Truth
+  // advances independently from its own history, so the diff panel shows
+  // accumulated divergence, not one-step error.
   app.set_cells(Uint8Array.from(r.binarized));
   truth.step(1);
   generation++;
   if (mode === 'llm') { lastLlmBSec = lastSec; lastLlmBSize = W; }
-  // A grid-size change requested mid-generation (`window.__app.setGrid`)
-  // was deferred; apply it now that this generation's result has already
-  // landed on the old-sized `app`/`truth`.
   if (pendingGridSize !== null) {
     const n = pendingGridSize;
     pendingGridSize = null;
@@ -1223,10 +1204,7 @@ async function llmStepOnce() {
   }
   render();
   setStatus('ready', 'Ready');
-  logRunReplace(`generation ${genLabel}: ${lastSec.toFixed(1)} s · threshold ${thresholdName} ${lastThresholdValue.toFixed(3)} · live ${app.live_count()} (game of life ${truth.live_count()}) · acc ${lastAccuracy.toFixed(3)} · IoU ${lastIou.toFixed(3)} · alive recall ${lastAliveRecall.toFixed(3)} · dead recall ${lastDeadRecall.toFixed(3)} · wrong ${lastWrong}`);
 }
-
-els.note.textContent = 'LLM modes load the model automatically on first switch. Variant B reads the whole grid as one text prompt and asks the model for one generated token per cell in a single forward, using its own trained adapter (16×16 and 32×32 only — no adapter has been trained at 64×64 yet); variant A drops to 16×16 and asks the model one question per cell, using a separate adapter of its own — per-pixel narrated (default) or batched, same forwards either way. The two variants cost differently for a real reason: one large forward over the whole board versus many small per-cell forwards. BERT of Life is a small transformer encoder trained from scratch — also 16×16, also one forward per cell, but every token is the raw 0/1 neighbourhood, not text. "9 numbers -> centre" is the same neighbourhood with no tokens at all — an MLP on 9 floats, one forward per cell. "stencil (grid -> grid)" is a stencil-masked attention layer with one channel: the whole grid in one forward pass, no per-cell loop, and it generalises from 16×16 up through 256×256 with the same trained weights. Click a cell in the LLM of Life grid to toggle it.';
 
 window.__app = {
   ready: true,
@@ -1240,39 +1218,36 @@ window.__app = {
     lastP = null;
     armedGridSize = null;
     if (isLlmMode(m) && gridSize > 64) {
-      debugLog(`grid size clamped to 32×32 for ${m} mode (128/256 are not offered for the LLM rungs)`);
+      debugLog(`grid size clamped to 32x32 for ${m} mode`);
       gridSize = 32;
     }
     updateGridButtons();
     setGridSize(gridSize);
     resync();
-    const isA = m === 'llm-a';
-    const isBert = m === 'bert';
-    // BERT of Life narrates per-cell like variant A's per-pixel mode, but
-    // has no batched alternative — the narration log shows, the style radio
-    // (perpixel/batched) doesn't.
+    els.methodDesc.textContent = methodDescFor(m);
+    els.modelSize.textContent = MODE_INFO[m].size;
+    els.engine.textContent = MODE_INFO[m].engine;
+    const isA = m === 'llm-a', isB = m === 'llm';
     els.narrationChoice.style.display = isA ? '' : 'none';
     els.narrationWrap.style.display = isPerCellNarrated(m) ? '' : 'none';
-    els.adapterBtn.disabled = !isA || !llmReady;
+    els.overlayBtn.style.display = isLlmMode(m) ? '' : 'none';
+    els.aliveNote.style.display = isLlmMode(m) ? '' : 'none';
+    els.adapterSection.style.display = isLlmMode(m) ? '' : 'none';
+    els.adapterAChoice.style.display = isA ? '' : 'none';
+    els.adapterBChoice.style.display = isB ? '' : 'none';
     ensureModeAdapter().catch((e) => debugLog('adapter sync failed: ' + e.message));
     return mode;
   },
-  // Grid size, shared by every mode's classical and model panels. The
-  // per-cell tiny models and the stencil model (its neighbour-gather mask,
-  // not a dense one, since crates/llm-life's O(9n) rewrite) accept any of
-  // 16/32/64/128/256 immediately; the LLM rungs (llm, llm-a) disable
-  // 128/256 outright and require a size above 32 to be requested twice in a
-  // row (the first call only logs the time estimate) before it is applied.
   setGrid: (n) => {
     if (![16, 32, 64, 128, 256].includes(n)) throw new Error('grid size must be one of 16, 32, 64, 128, 256');
     if (isLlmMode(mode) && n > 64) {
-      debugLog(`${n}×${n} is disabled for LLM mode — ≈ ${formatDuration(llmSizeEstimateSeconds(n))} per generation on this machine`);
+      debugLog(`${n}x${n} is disabled for LLM mode - about ${formatDuration(llmSizeEstimateSeconds(n))} per generation on this machine`);
       return gridSize;
     }
     if (isLlmMode(mode) && n > 32) {
       if (armedGridSize !== n) {
         armedGridSize = n;
-        debugLog(`${n}×${n} ≈ ${formatDuration(llmSizeEstimateSeconds(n))} per generation on this machine — call setGrid(${n}) again to confirm`);
+        debugLog(`${n}x${n} about ${formatDuration(llmSizeEstimateSeconds(n))} per generation on this machine - call setGrid(${n}) again to confirm`);
         updateGridButtons();
         return gridSize;
       }
@@ -1283,9 +1258,6 @@ window.__app = {
     gridSize = n;
     updateGridButtons();
     if (isLlmMode(mode)) ensureModeAdapter().catch((e) => debugLog('adapter sync failed: ' + e.message));
-    // Mid-generation, resizing `app`/`truth` now would apply the in-flight
-    // result (sized for the old grid) to a mismatched grid. Defer instead —
-    // `llmStepOnce` applies it once that generation lands.
     if (generating) {
       pendingGridSize = n;
       debugLog(`grid change queued until generation ${generation + 1} finishes`);
@@ -1313,9 +1285,8 @@ window.__app = {
   aliveRecall: () => lastAliveRecall,
   deadRecall: () => lastDeadRecall,
   wrongCells: () => lastWrong,
-  // Label-free binarization of p(alive) — Otsu (default) or z-score, k
-  // optional (default 2.0). No UI control: CLAUDE.md "Demo" bars settings
-  // panels, so z-score is reachable only here.
+  // Label-free binarization of p(alive) -- Otsu (default) or z-score, k
+  // optional (default 2.0). Test hook only, no visible control.
   threshold: () => ({ name: thresholdName, k: thresholdK, value: lastThresholdValue }),
   setThreshold: (name, k) => {
     if (name !== 'otsu' && name !== 'zscore') throw new Error("threshold must be 'otsu' or 'zscore'");
@@ -1323,7 +1294,7 @@ window.__app = {
     if (k !== undefined) thresholdK = k;
     return { name: thresholdName, k: thresholdK };
   },
-  setOverlay: (on) => { els.overlay.checked = on; render(); },
+  setOverlay: (on) => { overlayOn = on; els.overlayBtn.classList.toggle('primary', overlayOn); render(); },
   toggle: (x, y) => { app.toggle(x, y); resync(); },
   clear: () => requestReset('clear'),
   glider: () => requestReset('glider'),
@@ -1332,8 +1303,6 @@ window.__app = {
   secondsPerGeneration: () => lastSec,
   play: (on) => { setPlaying(on ?? !playing); return playing; },
   isPlaying: () => playing,
-  // Narration (variant A). Both styles run identical forwards; see
-  // `handleChunkNarration`.
   narrationStyle: () => narrationStyle,
   setNarrationStyle: (s) => {
     if (s !== 'perpixel' && s !== 'batched') throw new Error("narration style must be 'perpixel' or 'batched'");
@@ -1345,7 +1314,12 @@ window.__app = {
   msPerCell: () => lastMsPerCell,
   cellsPerSecond: () => lastCellsPerSec,
   projectedSecondsPerGen64: () => lastProj64,
-  adapter: () => adapterName,
+  adapter: () => engineAdapterState,
+  setAdapterChoice: (variant, key) => {
+    if (variant === 'a') { adapterKeyA = key; for (const r of document.querySelectorAll('input[name="adapter-a"]')) r.checked = r.value === key; }
+    else { adapterKeyB = key; for (const r of document.querySelectorAll('input[name="adapter-b"]')) r.checked = r.value === key; }
+    return ensureModeAdapter();
+  },
   bertReady: () => bertReady,
   loadBert,
   vecMlpReady: () => vecMlpReady,
