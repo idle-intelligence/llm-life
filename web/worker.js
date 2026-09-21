@@ -39,7 +39,29 @@ let vecStencilGrid = null;
 
 const CHUNK = 64 * 1024 * 1024;
 
-async function fetchChunks(url, onProgress) {
+// The base GGUF and the tokenizer rarely change and are the two large,
+// slow-to-fetch files (the LoRA adapters and tiny checkpoints are small
+// enough that recaching them on every load is not worth the complexity).
+// Bump the version if either file's contents change.
+const MODEL_CACHE = 'llm-life-model-v1';
+
+function splitIntoChunks(buf) {
+  const chunks = [];
+  for (let off = 0; off < buf.length; off += CHUNK) {
+    chunks.push(buf.subarray(off, off + CHUNK));
+  }
+  return chunks;
+}
+
+async function fetchChunks(url, onProgress, cacheable) {
+  const cache = cacheable ? await caches.open(MODEL_CACHE) : null;
+  if (cache) {
+    const cached = await cache.match(url);
+    if (cached) {
+      onProgress(1);
+      return splitIntoChunks(new Uint8Array(await cached.arrayBuffer()));
+    }
+  }
   const r = await fetch(url);
   if (!r.ok) throw new Error(`GET ${url}: ${r.status}`);
   const total = Number(r.headers.get('content-length'));
@@ -64,7 +86,33 @@ async function fetchChunks(url, onProgress) {
     if (buffered >= CHUNK) flush();
   }
   if (buffered > 0) flush();
+  if (cache) {
+    const total2 = chunks.reduce((n, c) => n + c.length, 0);
+    const merged = new Uint8Array(total2);
+    let off = 0;
+    for (const c of chunks) { merged.set(c, off); off += c.length; }
+    try {
+      await cache.put(url, new Response(merged.buffer, { headers: { 'Content-Type': 'application/octet-stream' } }));
+    } catch (err) {
+      console.warn('[worker] could not cache:', err);
+    }
+  }
   return chunks;
+}
+
+async function cachedFetchText(url) {
+  const cache = await caches.open(MODEL_CACHE);
+  const cached = await cache.match(url);
+  if (cached) return cached.text();
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`GET ${url}: ${r.status}`);
+  const text = await r.text();
+  try {
+    await cache.put(url, new Response(text, { headers: { 'Content-Type': 'application/json' } }));
+  } catch (err) {
+    console.warn('[worker] could not cache:', err);
+  }
+  return text;
 }
 
 // Every `LifeEngine` method call (constructor aside) is chained through this
@@ -115,9 +163,9 @@ async function handle(id, type, payload, reply) {
       engine = new LifeEngine(payload.width, payload.height);
       engineGrid = { width: payload.width, height: payload.height };
       const chunks = await fetchChunks(payload.ggufUrl, (f) =>
-        self.postMessage({ type: 'progress', stage: 'download', fraction: f }));
+        self.postMessage({ type: 'progress', stage: 'download', fraction: f }), true);
       for (const c of chunks) engine.appendModelShard(c);
-      const tokenizerJson = await (await fetch(payload.tokenizerUrl)).text();
+      const tokenizerJson = await cachedFetchText(payload.tokenizerUrl);
       await engine.load(tokenizerJson, payload.rulestring);
       // Runtime LoRA (llm_wasm::lora - not the offline GGUF merge): applies
       // q/k/v/o deltas onto the already-loaded base Q4 model, no reload.
