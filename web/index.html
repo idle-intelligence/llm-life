@@ -817,12 +817,12 @@ function updateStepPlayEnabled() {
   const ready = isModeReady(mode);
   els.play.disabled = !ready;
   els.step.disabled = !ready;
-  const title = ready ? '' : (mode !== 'classical' && webGpuAvailable === false ? 'needs WebGPU' : 'loading the model, then it will step');
+  const title = ready ? '' : (mode !== 'classical' && webGpuAvailable === false ? "doesn't work without WebGPU, yet" : 'loading the model, then it will step');
   els.play.title = title;
   els.step.title = title;
   const gs = document.getElementById('grid-status');
   if (gs) {
-    if (!ready && mode !== 'classical' && webGpuAvailable === false) gs.textContent = 'this method needs WebGPU, which this browser does not have; the rule still runs';
+    if (!ready && mode !== 'classical' && webGpuAvailable === false) gs.textContent = "doesn't work without WebGPU, yet";
     else if (!ready) gs.textContent = 'loading the model, Play and Step wake up when it is ready';
     else if (/loading the model/.test(gs.textContent)) gs.textContent = `generation ${generation}`;
   }
