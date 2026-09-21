@@ -292,7 +292,7 @@ pub fn stencil_neighbors<B: Backend>(width: usize, height: usize, device: &B::De
     Tensor::<B, 1, Int>::from_data(burn::tensor::TensorData::new(data, [n * 9]), device)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "cpu"))]
 mod tests {
     //! Equivalence test for the O(n^2)-mask -> O(9n)-gather rewrite
     //! (docs/runs/2026-09-20-stencil-any-size.md): the dense `[n, n]`
