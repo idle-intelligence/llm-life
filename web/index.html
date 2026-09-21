@@ -1154,6 +1154,7 @@ function ensureWorker() {
 }
 
 async function loadLlm(spec) {
+  if (webGpuAvailable === false) { updateStepPlayEnabled(); return; }
   ensureWorker();
   if (!loading) {
     setStatus('loading', 'loading model...');
@@ -1180,6 +1181,7 @@ async function loadLlm(spec) {
 }
 
 async function loadBert(spec) {
+  if (webGpuAvailable === false) { updateStepPlayEnabled(); return; }
   ensureWorker();
   if (!bertLoading) {
     setStatus('loading', 'loading BERT of Life...');
@@ -1199,6 +1201,7 @@ async function loadBert(spec) {
 }
 
 async function loadVecMlp(spec) {
+  if (webGpuAvailable === false) { updateStepPlayEnabled(); return; }
   ensureWorker();
   if (!vecMlpLoading) {
     setStatus('loading', 'loading vector MLP...');
@@ -1217,6 +1220,7 @@ async function loadVecMlp(spec) {
 }
 
 async function loadVecStencil(spec) {
+  if (webGpuAvailable === false) { updateStepPlayEnabled(); return; }
   ensureWorker();
   if (!vecStencilLoading) {
     setStatus('loading', 'loading stencil model...');
