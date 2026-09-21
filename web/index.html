@@ -386,6 +386,7 @@
 
 <section>
     <h2>output</h2>
+    <p class="panel-desc" id="grid-status" style="margin: 0 0 8px 0; min-height: 1.4em"></p>
     <div class="grids">
         <div class="panel"><canvas id="c-model" width="64" height="64"></canvas><div class="caption">model</div></div>
         <div class="panel"><canvas id="c-true" width="64" height="64"></canvas><div class="caption">rule</div></div>
@@ -492,6 +493,9 @@ const ctx = {
 function setStatus(state, text) {
   els.statusDot.className = 'status-dot ' + state;
   els.statusText.textContent = text;
+  // Mirror run progress next to the worlds, where the visitor is looking.
+  const gs = document.getElementById('grid-status');
+  if (gs) gs.textContent = /cell|generation|forecast|done|stopped/i.test(text) ? text : '';
 }
 
 // Console-only detail (model/adapter/checkpoint loading, seed edits, grid
