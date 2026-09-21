@@ -7,7 +7,7 @@
 // so this streams the single GET response and slices it into chunks itself.
 // Version tag on the engine URLs: browsers keep a wasm module at a fixed path
 // across rebuilds, even through a hard reload. Bump when the engine changes.
-const ENGINE_BUILD = '2026-09-22b';
+const ENGINE_BUILD = '2026-09-22c';
 const { default: init, LifeEngine, BertEngine, VecMlpEngine, VecStencilEngine, initWgpuDevice, otsuThreshold, zscoreThreshold } =
   await import(`./pkg-llm/llm_life.js?v=${ENGINE_BUILD}`);
 
@@ -72,8 +72,16 @@ function enqueue(task) {
   return run;
 }
 
+// Set by a 'stop' message and checked between cells/chunks by the per-cell
+// loops below, so Clear (etc.) mid-generation actually stops issuing
+// forwards instead of just having the page ignore whatever result eventually
+// comes back. Handled outside `enqueue` so it lands immediately rather than
+// waiting behind the in-flight step in the queue.
+let stopRequested = false;
+
 self.onmessage = (e) => {
   const { id, type, payload } = e.data;
+  if (type === 'stop') { stopRequested = true; return; }
   const reply = (ok, result) => self.postMessage({ id, ok, result });
   enqueue(() => handle(id, type, payload, reply));
 };
@@ -290,9 +298,11 @@ async function handle(id, type, payload, reply) {
         // One cell per call: a real forward per cell (LifeEngine::stepCellA,
         // a chunk of one against the same resident prefix stepChunkA uses),
         // not a 64-cell chunk narrated one line at a time.
+        stopRequested = false;
         const n = cells.length;
         p = new Float32Array(n);
         for (let i = 0; i < n; i++) {
+          if (stopRequested) { stopRequested = false; throw new Error('stopped'); }
           const cellT0 = performance.now();
           const v = await engine.stepCellA(cells, i);
           const ms = performance.now() - cellT0;
@@ -305,10 +315,12 @@ async function handle(id, type, payload, reply) {
       } else if (payload.variant === 'a') {
         // 64 cells per call: one forward per chunk of cells against the
         // resident prefix.
+        stopRequested = false;
         const n = engine.chunkCount();
         p = new Float32Array(cells.length);
         let at = 0;
         for (let i = 0; i < n; i++) {
+          if (stopRequested) { stopRequested = false; throw new Error('stopped'); }
           const chunkT0 = performance.now();
           const q = await engine.stepChunkA(cells, i);
           const ms = performance.now() - chunkT0;
