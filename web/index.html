@@ -214,6 +214,13 @@
         line-height: 1.4;
     }
     p.panel-desc.method-desc { font-size: 16px; line-height: 1.55; color: var(--muted, #555); }
+    .method-row { display: flex; gap: 28px; align-items: flex-start; }
+    .method-row #method-choice { flex: 0 0 300px; }
+    .method-row #method-desc { flex: 1 1 0; min-width: 0; margin-top: 2px; }
+    @media (max-width: 700px) {
+        .method-row { flex-direction: column; gap: 10px; }
+        .method-row #method-choice { flex: none; }
+    }
     .method-grid input[type="radio"] { margin-top: 3px; cursor: pointer; }
     blockquote.rules {
         margin: 0 0 8px 0;
@@ -326,6 +333,7 @@
 
 <section>
     <h2>settings <span class="sub">· method</span></h2>
+    <div class="method-row">
     <div class="method-grid" id="method-choice">
         <label><input type="radio" name="mode" value="classical" checked /> Game of Life (rule)</label>
         <label><input type="radio" name="mode" value="llm-a" /> LLM per cell (0.5B, 430 MB)</label>
@@ -335,6 +343,7 @@
         <label><input type="radio" name="mode" value="vec-stencil" /> stencil, grid to grid</label>
     </div>
     <p class="panel-desc method-desc" id="method-desc"></p>
+    </div>
 </section>
 
 <section id="adapter-section" style="display:none">
