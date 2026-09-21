@@ -125,9 +125,7 @@ fn pack_sparse_is_the_same_mask_as_pack() {
 
     for i in 0..t {
         let mut from_sparse = vec![false; t];
-        for j in 0..sparse.prefix_len[i] as usize {
-            from_sparse[j] = true;
-        }
+        from_sparse[..sparse.prefix_len[i] as usize].fill(true);
         for s in 0..sparse.n_keys[i] as usize {
             let key = sparse.keys[i * stride + s] as usize;
             assert!(!from_sparse[key], "row {i} names key {key} twice");

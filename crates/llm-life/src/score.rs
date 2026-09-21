@@ -356,14 +356,10 @@ mod tests {
         // {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12} (13 cells), all of
         // true's cells included (so accuracy alone hides the overshoot).
         let mut true_cells = vec![0u8; 16];
-        for i in 0..5 {
-            true_cells[i] = 1;
-        }
+        true_cells[..5].fill(1);
         let truth = Grid::from_cells(4, 4, true_cells);
         let mut model_cells = vec![0u8; 16];
-        for i in 0..13 {
-            model_cells[i] = 1;
-        }
+        model_cells[..13].fill(1);
         let model = Grid::from_cells(4, 4, model_cells);
         let p_alive = vec![0.9f32; 16];
         let s = score(&truth, &model, &p_alive, 1);
@@ -383,14 +379,10 @@ mod tests {
     #[test]
     fn per_class_fields_expose_the_13_vs_5_overshoot() {
         let mut true_cells = vec![0u8; 16];
-        for i in 0..5 {
-            true_cells[i] = 1;
-        }
+        true_cells[..5].fill(1);
         let truth = Grid::from_cells(4, 4, true_cells);
         let mut model_cells = vec![0u8; 16];
-        for i in 0..13 {
-            model_cells[i] = 1;
-        }
+        model_cells[..13].fill(1);
         let model = Grid::from_cells(4, 4, model_cells);
         let p_alive = vec![0.9f32; 16];
         let s = score(&truth, &model, &p_alive, 1);
@@ -411,7 +403,7 @@ mod tests {
     fn iou_is_one_when_both_alive_sets_are_empty() {
         let truth = Grid::new(4, 4);
         let model = Grid::new(4, 4);
-        let s = score(&truth, &model, &vec![0.1f32; 16], 1);
+        let s = score(&truth, &model, &[0.1f32; 16], 1);
         assert_eq!(s.iou, 1.0);
         assert_eq!(s.f1, 1.0); // precision=recall=1 -> f1=1
     }
