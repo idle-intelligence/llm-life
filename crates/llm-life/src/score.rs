@@ -348,7 +348,7 @@ mod tests {
         assert_eq!(grid.live_count(), 0);
     }
 
-    // The owner's complaint: "99.80% accuracy" with 13 alive predicted vs 5
+    // TC's complaint: "99.80% accuracy" with 13 alive predicted vs 5
     // true feels wrong. IoU, Hamming and F1 are the numbers that catch it.
     #[test]
     fn iou_and_f1_punish_overshooting_a_small_true_set() {
@@ -376,7 +376,7 @@ mod tests {
         assert!(s.iou < 0.4, "13-vs-5 overshoot should read far below 'looks right'");
     }
 
-    // The owner's exact case, restated for the new per-class fields: 5 true
+    // TC's exact case, restated for the new per-class fields: 5 true
     // alive, model predicts 13 alive (8 false positives, 0 false negatives).
     // alive_recall reads perfect while dead_recall and IoU expose the
     // overshoot that plain accuracy hides.

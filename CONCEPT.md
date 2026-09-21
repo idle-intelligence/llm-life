@@ -159,7 +159,7 @@ The project illustrates three fundamentally different ways to compute the same t
 2. **Find the physics** — variant B: attention shaped like the problem (stencil), one small pass per generation; measured in s/generation and per-case rule recall after fine-tuning.
 3. **Brute force with the right data** — variant A: one LLM call per pixel with the 512-entry rule table learned (fine-tune A FIRST: "neighbors are 1 0 1 0 1 1 0 0, I am 1 →" should reach 100%); two adapters, rules in the prompt vs rules learned; and **BERT of Life** (backlog): a generated dataset of every neighborhood, a small encoder classifying 0/1 and which rule fired (underpopulation / survival / overpopulation / reproduction). "At its core, it's a data problem."
 
-Order: fine-tune A → A in the tab with the adapter (the naive one-pixel-per-LLM must run) → thinking-model run on the 3080 → B retrain with a sane schedule (lr 3e-5, best-by-IoU checkpoint; run 1's collapse at step 60 was training dynamics, not B's locality) → BERT of Life.
+Order: fine-tune A → A in the tab with the adapter (the naive one-pixel-per-LLM must run) → thinking-model run on the 3080 → B retrain with a sane schedule (lr 3e-5, best-by-exact-match checkpoint; run 1's collapse at step 60 was training dynamics, not B's locality) → BERT of Life.
 
 ## 12. "One pass", precisely (owner, 2026-09-19 late)
 
