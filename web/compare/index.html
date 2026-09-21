@@ -295,9 +295,9 @@
         <p><strong>Game of Life (rule)</strong> - The classical rule, as a for loop.</p>
         <p><strong>lookup table</strong> - the same rule as a 512-entry table indexed by the 9 neighbourhood bits. The fastest way to compute it, and the thing every model below is measured against.</p>
         <p><strong>LLM per cell</strong> - A stupid idea: give a language model the rules and current cell's state, *as text*, and ask if it lives or dies. Repeat for each and every cell. Of course, it's very slow, and an off the shelf model doesn't work. Fine tuning a small LoRa adapter gets us perfect results, but it's still slow... Does it speed up if we batch the inference?</p>
+        <p><strong>LLM whole grid</strong> - Look, there are many optimisation we could do. That's not the game we are playing. Yet, cell by cell _is_ stupid. Instead, we ask the model for the whole grid in one prompt, one token per cell. It's much faster, but training a 64x64 adapter gets expensive, and 256x256 doesn't fit in this small model's context. Another LoRa adapter gets us to 100% accuracy.</p>
         <p><strong>BERT of Life</strong> - Alive or Dead is a classification. What would a BERT do? A BERT-shaped classifier, one-layer encoder over the 9 cells as tokens, 3,490 parameters trained from scratch; it works.</p>
         <p><strong>9 numbers to centre</strong> - Why do we even use a language model? Can we fit a "modern" model architecture that actually learns the rules? A 2-layer MLP over the 9 cell values, 1,442 parameters; We run it cell by cell, pretty fast, it works.</p>
-        <p><strong>LLM whole grid</strong> - Look, there are many optimisation we could do. That's not the game we are playing. Yet, cell by cell _is_ stupid. Instead, we ask the model for the whole grid in one prompt, one token per cell. It's much faster, but training a 64x64 adapter gets expensive, and 256x256 doesn't fit in this small model's context. Another LoRa adapter gets us to 100% accuracy.</p>
         <p><strong>stencil (grid to grid)</strong> - Cell by cell is nice, but we can do better: One attention layer over the whole grid, each cell masked to its 3x3 stencil. 3,329 parameters, trained at 16x16, it scales to whatever grid size.</p>
     </div>
 </section>
@@ -515,11 +515,11 @@ const RUNGS = [
   { key: 'cpu', name: 'Game of Life (rule)', params: 'no parameters' },
   { key: 'lookup', name: 'lookup table', params: '512-entry table' },
   { key: 'llm-per-pixel', name: 'LLM per cell', params: '0.5B (+ adapter)' },
+  { key: 'llm-onepass', name: 'LLM whole grid', params: '0.5B (+ adapter)' },
   { key: 'bert-cell', name: 'BERT of Life', params: '3,490' },
   { key: 'bert-batched', name: 'BERT of Life (batched)', params: '3,490' },
   { key: 'vec-mlp-cell', name: '9 numbers to centre', params: '1,442' },
   { key: 'vec-mlp-batched', name: '9 numbers to centre (batched)', params: '1,442' },
-  { key: 'llm-onepass', name: 'LLM whole grid', params: '0.5B (+ adapter)' },
   { key: 'vec-stencil', name: 'stencil (grid to grid)', params: '3,329' },
 ];
 
