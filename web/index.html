@@ -558,7 +558,7 @@ let adapterKeyB = 'trained'; // 'base' | 'trained'
 function methodDescFor(m) {
   return {
     classical: 'The classical rule, as a for loop.',
-    'llm-a': "A stupid idea: give a language model the rules and current cell's state, *as text*, and ask if it lives or dies. Repeat for each and every cell. Of course, it's very slow, and an off the shelf model doesn't work. Fine tuning a small LoRa adapter gets us perfect results, but it's still slow... Does it speed up if we batch the inference?",
+    'llm-a': "Give a language model the rules and current cell's state, *as text*, and ask if it lives or dies. Repeat for each and every cell. Of course, it's very slow, and an off the shelf model doesn't work. Fine tuning a small LoRa adapter gets us perfect results, but it's still slow... Does it speed up if we batch the inference?",
     bert: "Alive or Dead is a classification. What would a BERT do? A BERT-shaped classifier, one-layer encoder over the 9 cells as tokens, 3,490 parameters trained from scratch; it works.",
     'vec-mlp': 'Why do we even use a language model? Can we fit a "modern" model architecture that actually learns the rules? A 2-layer MLP over the 9 cell values, 1,442 parameters; We run it cell by cell, pretty fast, it works.',
     llm: "Look, there are many optimisation we could do. That's not the game we are playing. Yet, cell by cell _is_ stupid. Instead, we ask the model for the whole grid in one prompt, one token per cell. It's much faster, but training a 64x64 adapter gets expensive, and 256x256 doesn't fit in this small model's context. Another LoRa adapter gets us to 100% accuracy.",
