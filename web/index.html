@@ -530,6 +530,33 @@ const MODE_INFO = {
   llm: { size: '0.5B params + LoRA', engine: 'Qwen2.5-0.5B (wasm)' },
 };
 
+// Human name for whichever adapter (or base weights) is actually resident on
+// the LLM engine right now -- `engineAdapterState`, set from the worker's own
+// reply after `load`/`loadAdapter`, never guessed from the radio selection.
+function adapterDisplayName(state) {
+  return {
+    base: 'base',
+    'a-norules': 'no rules',
+    'a-rules': 'rules',
+    'b-16': 'whole grid 16',
+    'b-32': 'whole grid 32',
+  }[state] ?? state;
+}
+
+// The PERFORMANCE panel's "engine" tile: for LLM modes this reflects the
+// engine's actual last-loaded adapter, not the mode/radio the visitor
+// selected -- the two can be out of sync while a load or adapter swap is in
+// flight.
+function updateEngineTile() {
+  if (isLlmMode(mode)) {
+    els.engine.textContent = engineAdapterState
+      ? `Qwen2.5-0.5B + ${adapterDisplayName(engineAdapterState)}`
+      : 'Qwen2.5-0.5B (loading...)';
+  } else {
+    els.engine.textContent = MODE_INFO[mode].engine;
+  }
+}
+
 // Moore neighbourhood, toroidal wraparound, NW/N/NE/W/E/SW/S/SE -- the same
 // order as life::Grid::neighbor_indices (crates/life/src/grid.rs), which is
 // the order the per-cell prompt lists them in.
@@ -705,6 +732,26 @@ function isPerCellNarrated(m) {
   return m === 'llm-a' || m === 'bert' || m === 'vec-mlp' || m === 'vec-stencil';
 }
 
+function isModeReady(m) {
+  if (m === 'bert') return bertReady;
+  if (m === 'vec-mlp') return vecMlpReady;
+  if (m === 'vec-stencil') return vecStencilReady;
+  if (m === 'llm' || m === 'llm-a') return llmReady;
+  return true;
+}
+
+// Disables Play/Step while the current mode's model is still loading, so a
+// click during that window is never silently swallowed by stepOnce's own
+// readiness guard -- the button simply isn't clickable yet.
+function updateStepPlayEnabled() {
+  const ready = isModeReady(mode);
+  els.play.disabled = !ready;
+  els.step.disabled = !ready;
+  const title = ready ? '' : 'loading the model, then it will step';
+  els.play.title = title;
+  els.step.title = title;
+}
+
 async function stepOnce() {
   if (isModelMode(mode)) {
     const ready = mode === 'bert' ? bertReady
@@ -859,6 +906,7 @@ for (const r of document.querySelectorAll('input[name=mode]')) {
 for (const r of document.querySelectorAll('input[name="adapter-a"]')) {
   r.addEventListener('change', async () => {
     if (!r.checked || generating) return;
+    setPlaying(false);
     adapterKeyA = r.value;
     if (mode === 'llm-a') await ensureModeAdapter().catch((e) => debugLog('adapter sync failed: ' + e.message));
   });
@@ -866,6 +914,7 @@ for (const r of document.querySelectorAll('input[name="adapter-a"]')) {
 for (const r of document.querySelectorAll('input[name="adapter-b"]')) {
   r.addEventListener('change', async () => {
     if (!r.checked || generating) return;
+    setPlaying(false);
     adapterKeyB = r.value;
     if (mode === 'llm') await ensureModeAdapter().catch((e) => debugLog('adapter sync failed: ' + e.message));
   });
@@ -934,7 +983,8 @@ resync();
 updateGridButtons();
 els.methodDesc.textContent = methodDescFor(mode);
 els.modelSize.textContent = MODE_INFO[mode].size;
-els.engine.textContent = MODE_INFO[mode].engine;
+updateEngineTile();
+updateStepPlayEnabled();
 setStatus('ready', 'Ready');
 debugLog(`ready - ${W}x${H}, rule ${app.rulestring()}, ${GENS_PER_SEC} generations/s`);
 
@@ -1019,14 +1069,16 @@ async function loadLlm(spec) {
     loading = ask('load', { ...spec, width: W, height: H, rulestring: app.rulestring() })
       .then((info) => {
         llmReady = true;
+        updateStepPlayEnabled();
         setStatus('ready', 'Ready');
         debugLog('model loaded');
         cellTokensCount = info.cellTokens ?? cellTokensCount;
         engineAdapterState = spec.adapterUrl ? adapterStateForUrl(spec.adapterUrl) : 'base';
+        updateEngineTile();
         if (info.adapter) debugLog(`adapter loaded: ${info.adapter.name} (${(info.adapter.bytes / 1e6).toFixed(1)} MB)`);
         // The base load always applies the per-cell adapter (`spec.adapterUrl`
         // above); reconcile with whichever mode/radio is actually selected.
-        ensureModeAdapter().catch((e) => debugLog('adapter sync failed: ' + e.message));
+        ensureModeAdapter().then(updateEngineTile).catch((e) => debugLog('adapter sync failed: ' + e.message));
         return info;
       })
       .catch((e) => { loading = null; setStatus('error', 'load failed'); debugLog('load failed: ' + e.message); throw e; });
@@ -1042,6 +1094,7 @@ async function loadBert(spec) {
     bertLoading = ask('loadBert', { ...spec, width: W, height: H })
       .then((info) => {
         bertReady = true;
+        updateStepPlayEnabled();
         bertNumLayers = info.numLayers;
         setStatus('ready', 'Ready');
         debugLog(`BERT of Life loaded: d_model=${info.dModel} layers=${info.numLayers}`);
@@ -1060,6 +1113,7 @@ async function loadVecMlp(spec) {
     vecMlpLoading = ask('loadVecMlp', { ...spec, width: W, height: H })
       .then((info) => {
         vecMlpReady = true;
+        updateStepPlayEnabled();
         setStatus('ready', 'Ready');
         debugLog(`vector MLP loaded: hidden=${info.hidden}`);
         return info;
@@ -1077,6 +1131,7 @@ async function loadVecStencil(spec) {
     vecStencilLoading = ask('loadVecStencil', { ...spec, width: W, height: H })
       .then((info) => {
         vecStencilReady = true;
+        updateStepPlayEnabled();
         setStatus('ready', 'Ready');
         debugLog(`stencil model loaded: d_model=${info.dModel} layers=${info.numLayers}`);
         return info;
@@ -1117,22 +1172,26 @@ async function ensureBaseModel() {
 // mode/grid-size/radio combination currently selected, without ever
 // reloading the base model unless the visitor actually asked for it.
 async function ensureModeAdapter() {
-  if (!llmReady) return;
-  if (mode === 'llm-a') {
-    if (adapterKeyA === 'base') { await ensureBaseModel(); return; }
-    await setAdapter(adapterKeyA === 'rules' ? 'a-rules' : 'a-norules');
-  } else if (mode === 'llm') {
-    if (adapterKeyB === 'base') { await ensureBaseModel(); return; }
-    const url = B_ADAPTER_BY_SIZE[gridSize];
-    bAdapterAvailable = !!url;
-    if (!url) {
-      debugLog(`no adapter trained at ${gridSize}x${gridSize} for the whole-grid rung`);
-      return;
+  try {
+    if (!llmReady) return;
+    if (mode === 'llm-a') {
+      if (adapterKeyA === 'base') { await ensureBaseModel(); return; }
+      await setAdapter(adapterKeyA === 'rules' ? 'a-rules' : 'a-norules');
+    } else if (mode === 'llm') {
+      if (adapterKeyB === 'base') { await ensureBaseModel(); return; }
+      const url = B_ADAPTER_BY_SIZE[gridSize];
+      bAdapterAvailable = !!url;
+      if (!url) {
+        debugLog(`no adapter trained at ${gridSize}x${gridSize} for the whole-grid rung`);
+        return;
+      }
+      ensureWorker();
+      const info = await ask('loadAdapter', { adapterUrl: url });
+      engineAdapterState = `b-${gridSize}`;
+      debugLog(`adapter loaded: whole grid, ${gridSize}x${gridSize} (${(info.bytes / 1e6).toFixed(1)} MB)`);
     }
-    ensureWorker();
-    const info = await ask('loadAdapter', { adapterUrl: url });
-    engineAdapterState = `b-${gridSize}`;
-    debugLog(`adapter loaded: whole grid, ${gridSize}x${gridSize} (${(info.bytes / 1e6).toFixed(1)} MB)`);
+  } finally {
+    updateEngineTile();
   }
 }
 
@@ -1210,6 +1269,7 @@ async function llmStepOnce() {
     setGridSize(n);
     if (isLlmMode(mode)) logGridInfo(n);
   }
+  updateEngineTile();
   render();
   setStatus('ready', 'Ready');
 }
@@ -1234,7 +1294,7 @@ window.__app = {
     resync();
     els.methodDesc.textContent = methodDescFor(m);
     els.modelSize.textContent = MODE_INFO[m].size;
-    els.engine.textContent = MODE_INFO[m].engine;
+    updateEngineTile();
     const isA = m === 'llm-a', isB = m === 'llm';
     els.callsSection.style.display = isA ? '' : 'none';
     els.narrationWrap.style.display = isA ? '' : 'none';
@@ -1243,7 +1303,8 @@ window.__app = {
     els.adapterSection.style.display = isLlmMode(m) ? '' : 'none';
     els.adapterAChoice.style.display = isA ? '' : 'none';
     els.adapterBChoice.style.display = isB ? '' : 'none';
-    ensureModeAdapter().catch((e) => debugLog('adapter sync failed: ' + e.message));
+    updateStepPlayEnabled();
+    ensureModeAdapter().then(updateEngineTile).catch((e) => debugLog('adapter sync failed: ' + e.message));
     return mode;
   },
   setGrid: (n) => {
@@ -1263,6 +1324,7 @@ window.__app = {
     } else {
       armedGridSize = null;
     }
+    setPlaying(false);
     gridSize = n;
     updateGridButtons();
     if (isLlmMode(mode)) ensureModeAdapter().catch((e) => debugLog('adapter sync failed: ' + e.message));
