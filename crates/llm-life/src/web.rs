@@ -132,94 +132,7 @@ impl LifeEngine {
     /// Parse the GGUF, upload to GPU, tokenize the rules prefix.
     #[wasm_bindgen(js_name = load)]
     pub async fn load(&mut self, tokenizer_json: String, rulestring: String) -> Result<(), JsError> {
-        if self.shards.is_empty() {
-            return Err(JsError::new("no shards appended"));
-        }
-        let rule = Rule::parse(&rulestring).ok_or_else(|| JsError::new("bad rulestring"))?;
-
-        let tokenizer = Tokenizer::from_json(tokenizer_json.as_bytes())
-            .map_err(|e| JsError::new(&format!("tokenizer: {e}")))?;
-        let encode_one = |s: &str| -> Result<u32, JsError> {
-            let ids = tokenizer
-                .encode(s, false)
-                .map_err(|e| JsError::new(&format!("encode: {e}")))?;
-            if ids.len() != 1 {
-                return Err(JsError::new(&format!("'{s}' is not a single token")));
-            }
-            Ok(ids[0])
-        };
-        self.dead = encode_one("0")?;
-        self.alive = encode_one("1")?;
-        self.prefix = tokenizer
-            .encode(&rules_prefix(&rule), false)
-            .map_err(|e| JsError::new(&format!("encode prefix: {e}")))?;
-
-        // Two-phase: the GGUF reader (and its shard bytes) is dropped before
-        // the GPU tensors are finalized, so the 4GB wasm address space never
-        // has to hold both.
-        let parts = {
-            let shards = std::mem::take(&mut self.shards);
-            let mut loader = Q4ModelLoader::from_shards(shards)
-                .map_err(|e| JsError::new(&format!("open gguf: {e}")))?;
-            loader
-                .load_deferred(&self.device)
-                .map_err(|e| JsError::new(&format!("load: {e}")))?
-        };
-        let model = parts
-            .finalize(&self.device)
-            .map_err(|e| JsError::new(&format!("finalize: {e}")))?;
-
-        self.head = Some(
-            model
-                .head_slice(&[self.dead, self.alive])
-                .map_err(|e| JsError::new(&format!("head slice: {e}")))?,
-        );
-
-        // Variant A's own prompt set and resident prefix, off the same model
-        // and tokenizer. Few-shot is on and not optional: without the six
-        // worked examples the model answers `0` almost everywhere
-        // (docs/OVERNIGHT-REPORT.md), which is not worth putting in the tab.
-        let mut prefix_a_text = variant_a::rules_prefix(&rule);
-        prefix_a_text.push_str(&variant_a::fewshot_examples());
-        self.prefix_a = tokenizer
-            .encode(&prefix_a_text, false)
-            .map_err(|e| JsError::new(&format!("encode variant A prefix: {e}")))?;
-        // Only 512 distinct per-cell prompts exist, so the tokenizer runs 512
-        // times per load instead of once per cell per generation.
-        self.prompts = Vec::with_capacity(512);
-        for k in 0..512usize {
-            let nb: Vec<u8> = (0..8).map(|b| ((k >> b) & 1) as u8).collect();
-            let text = format!("\n{}", variant_a::cell_prompt(&nb, ((k >> 8) & 1) as u8));
-            self.prompts.push(
-                tokenizer
-                    .encode(&text, false)
-                    .map_err(|e| JsError::new(&format!("encode cell prompt: {e}")))?,
-            );
-        }
-        self.cell_tokens = self.prompts.iter().map(|p| p.len()).max().unwrap();
-        let mut cache = model.new_cache(self.prefix_a.len() + CHUNK_CELLS * self.cell_tokens);
-        model
-            .forward_hidden(&self.prefix_a, &mut cache)
-            .map_err(|e| JsError::new(&format!("prefill variant A prefix: {e}")))?;
-        self.cache_a = Some(cache);
-        self.rule = Some(rule);
-        self.tokenizer = Some(tokenizer);
-        // `prefix_norules` stays `None`: the rules+few-shot prefix built
-        // above is only a fallback for running the base model with no
-        // adapter. `loadAdapter` rebuilds it to match whichever adapter's
-        // own training-time prefix (no few-shot either way — see
-        // `train::run_a::prompt_a`) it is about to apply.
-
-        log(&format!(
-            "[llm-life] loaded: {} layers, hidden {}, prefix {} tokens, grid {}x{}",
-            model.config().num_layers,
-            model.config().hidden_size,
-            self.prefix.len(),
-            self.width,
-            self.height
-        ));
-        self.model = Some(model);
-        Ok(())
+        self.load_impl(tokenizer_json, rulestring).await
     }
 
     /// Load a runtime LoRA adapter (llm-wasm's `lora` module, LLMLIFE2
@@ -330,23 +243,155 @@ impl LifeEngine {
     /// overwrites this one's rows and the prefix is prefilled once per load.
     #[wasm_bindgen(js_name = stepChunkA)]
     pub async fn step_chunk_a(&mut self, cells: Vec<u8>, chunk: usize) -> Result<Vec<f32>, JsError> {
-        if self.model.is_none() {
-            return Err(JsError::new("not loaded"));
-        }
-        if cells.len() != self.width * self.height {
-            return Err(JsError::new("cells length does not match the grid"));
-        }
-        let n = self.width * self.height;
-        let first = chunk * CHUNK_CELLS;
-        if first >= n {
-            return Err(JsError::new("chunk index past the end of the grid"));
-        }
-        let grid = Grid::from_cells(self.width, self.height, cells);
-        let cell_ids: Vec<usize> = (first..(first + CHUNK_CELLS).min(n)).collect();
+        self.step_chunk_a_impl(cells, chunk).await
+    }
 
+    /// One variant A cell: a chunk of one, against the same resident prefix
+    /// `stepChunkA` uses, so "one cell per call" issues a real forward per
+    /// cell instead of narrating a 64-cell chunk one line at a time.
+    #[wasm_bindgen(js_name = stepCellA)]
+    pub async fn step_cell_a(&mut self, cells: Vec<u8>, index: usize) -> Result<f32, JsError> {
+        self.step_cell_a_impl(cells, index).await
+    }
+
+    /// Token count of one packed forward pass — what the PERFORMANCE panel
+    /// reports alongside seconds per generation.
+    #[wasm_bindgen(js_name = packedTokens)]
+    pub fn packed_tokens(&self) -> usize {
+        self.prefix.len() + self.width * self.height
+    }
+
+    /// Token length of one variant A per-cell prompt (the 512 prompts all
+    /// tokenize to the same length: the format is fixed digits). Used by the
+    /// narration strip's "N-token prompt" line.
+    #[wasm_bindgen(js_name = cellTokens)]
+    pub fn cell_tokens_js(&self) -> usize {
+        self.cell_tokens
+    }
+
+    /// Length of the resident variant A prefix, in tokens — what the worker
+    /// needs to report `tokensPerGenerationA`-equivalent cost for "one cell
+    /// per call" (`chunk_count()` calls of `CHUNK_CELLS` there, `width *
+    /// height` calls of one cell here; both attend this many prefix tokens
+    /// per call).
+    #[wasm_bindgen(js_name = prefixTokensA)]
+    pub fn prefix_tokens_a(&self) -> usize {
+        self.prefix_a.len()
+    }
+}
+
+// The real bodies of `load`/`stepChunkA`/`stepCellA`, in a plain (not
+// `#[wasm_bindgen]`) impl block deliberately: every item inside a
+// `#[wasm_bindgen] impl` block — public or not — gets wrapped in the same
+// JS-glue-dependent codegen, so an async fn placed in the block above still
+// aborts with "function not implemented on non-wasm32 targets" the moment a
+// native caller polls it, even without its own `#[wasm_bindgen(js_name)]`
+// attribute. Moving the actual logic out here, with the wasm_bindgen block
+// above reduced to one-line delegates, is what lets `step_cell_a_tests`
+// below call the exact production code natively.
+impl LifeEngine {
+    /// `load`'s real body.
+    async fn load_impl(&mut self, tokenizer_json: String, rulestring: String) -> Result<(), JsError> {
+        if self.shards.is_empty() {
+            return Err(JsError::new("no shards appended"));
+        }
+        let rule = Rule::parse(&rulestring).ok_or_else(|| JsError::new("bad rulestring"))?;
+
+        let tokenizer = Tokenizer::from_json(tokenizer_json.as_bytes())
+            .map_err(|e| JsError::new(&format!("tokenizer: {e}")))?;
+        let encode_one = |s: &str| -> Result<u32, JsError> {
+            let ids = tokenizer
+                .encode(s, false)
+                .map_err(|e| JsError::new(&format!("encode: {e}")))?;
+            if ids.len() != 1 {
+                return Err(JsError::new(&format!("'{s}' is not a single token")));
+            }
+            Ok(ids[0])
+        };
+        self.dead = encode_one("0")?;
+        self.alive = encode_one("1")?;
+        self.prefix = tokenizer
+            .encode(&rules_prefix(&rule), false)
+            .map_err(|e| JsError::new(&format!("encode prefix: {e}")))?;
+
+        // Two-phase: the GGUF reader (and its shard bytes) is dropped before
+        // the GPU tensors are finalized, so the 4GB wasm address space never
+        // has to hold both.
+        let parts = {
+            let shards = std::mem::take(&mut self.shards);
+            let mut loader = Q4ModelLoader::from_shards(shards)
+                .map_err(|e| JsError::new(&format!("open gguf: {e}")))?;
+            loader
+                .load_deferred(&self.device)
+                .map_err(|e| JsError::new(&format!("load: {e}")))?
+        };
+        let model = parts
+            .finalize(&self.device)
+            .map_err(|e| JsError::new(&format!("finalize: {e}")))?;
+
+        self.head = Some(
+            model
+                .head_slice(&[self.dead, self.alive])
+                .map_err(|e| JsError::new(&format!("head slice: {e}")))?,
+        );
+
+        // Variant A's own prompt set and resident prefix, off the same model
+        // and tokenizer. Few-shot is on and not optional: without the six
+        // worked examples the model answers `0` almost everywhere
+        // (docs/OVERNIGHT-REPORT.md), which is not worth putting in the tab.
+        let mut prefix_a_text = variant_a::rules_prefix(&rule);
+        prefix_a_text.push_str(&variant_a::fewshot_examples());
+        self.prefix_a = tokenizer
+            .encode(&prefix_a_text, false)
+            .map_err(|e| JsError::new(&format!("encode variant A prefix: {e}")))?;
+        // Only 512 distinct per-cell prompts exist, so the tokenizer runs 512
+        // times per load instead of once per cell per generation.
+        self.prompts = Vec::with_capacity(512);
+        for k in 0..512usize {
+            let nb: Vec<u8> = (0..8).map(|b| ((k >> b) & 1) as u8).collect();
+            let text = format!("\n{}", variant_a::cell_prompt(&nb, ((k >> 8) & 1) as u8));
+            self.prompts.push(
+                tokenizer
+                    .encode(&text, false)
+                    .map_err(|e| JsError::new(&format!("encode cell prompt: {e}")))?,
+            );
+        }
+        self.cell_tokens = self.prompts.iter().map(|p| p.len()).max().unwrap();
+        let mut cache = model.new_cache(self.prefix_a.len() + CHUNK_CELLS * self.cell_tokens);
+        model
+            .forward_hidden(&self.prefix_a, &mut cache)
+            .map_err(|e| JsError::new(&format!("prefill variant A prefix: {e}")))?;
+        self.cache_a = Some(cache);
+        self.rule = Some(rule);
+        self.tokenizer = Some(tokenizer);
+        // `prefix_norules` stays `None`: the rules+few-shot prefix built
+        // above is only a fallback for running the base model with no
+        // adapter. `loadAdapter` rebuilds it to match whichever adapter's
+        // own training-time prefix (no few-shot either way — see
+        // `train::run_a::prompt_a`) it is about to apply.
+
+        log(&format!(
+            "[llm-life] loaded: {} layers, hidden {}, prefix {} tokens, grid {}x{}",
+            model.config().num_layers,
+            model.config().hidden_size,
+            self.prefix.len(),
+            self.width,
+            self.height
+        ));
+        self.model = Some(model);
+        Ok(())
+    }
+
+    /// Forward one set of cell ids against the resident variant A prefix and
+    /// return p(alive) for those cells in packed order. Shared by
+    /// `stepChunkA` (a chunk of `CHUNK_CELLS`) and `stepCellA` (a chunk of
+    /// one) — same packing, same block-diagonal mask, same resident-prefix
+    /// rewind, so the two give numerically identical answers for a cell they
+    /// both cover.
+    async fn step_ids_a(&mut self, grid: &Grid, cell_ids: &[usize]) -> Result<Vec<f32>, JsError> {
         let prompts = &self.prompts;
         let packed = variant_a::pack_chunk(
-            &cell_ids,
+            cell_ids,
             |c| {
                 let mut k = 0usize;
                 for (b, &j) in grid.neighbor_indices(c).iter().enumerate() {
@@ -385,19 +430,40 @@ impl LifeEngine {
             .collect())
     }
 
-    /// Token count of one packed forward pass — what the PERFORMANCE panel
-    /// reports alongside seconds per generation.
-    #[wasm_bindgen(js_name = packedTokens)]
-    pub fn packed_tokens(&self) -> usize {
-        self.prefix.len() + self.width * self.height
+    /// `stepChunkA`'s real body.
+    async fn step_chunk_a_impl(&mut self, cells: Vec<u8>, chunk: usize) -> Result<Vec<f32>, JsError> {
+        if self.model.is_none() {
+            return Err(JsError::new("not loaded"));
+        }
+        if cells.len() != self.width * self.height {
+            return Err(JsError::new("cells length does not match the grid"));
+        }
+        let n = self.width * self.height;
+        let first = chunk * CHUNK_CELLS;
+        if first >= n {
+            return Err(JsError::new("chunk index past the end of the grid"));
+        }
+        let grid = Grid::from_cells(self.width, self.height, cells);
+        let cell_ids: Vec<usize> = (first..(first + CHUNK_CELLS).min(n)).collect();
+        self.step_ids_a(&grid, &cell_ids).await
     }
 
-    /// Token length of one variant A per-cell prompt (the 512 prompts all
-    /// tokenize to the same length: the format is fixed digits). Used by the
-    /// narration strip's "N-token prompt" line.
-    #[wasm_bindgen(js_name = cellTokens)]
-    pub fn cell_tokens_js(&self) -> usize {
-        self.cell_tokens
+    /// `stepCellA`'s real body: a chunk of one, against the same resident
+    /// prefix `step_chunk_a_impl` uses.
+    async fn step_cell_a_impl(&mut self, cells: Vec<u8>, index: usize) -> Result<f32, JsError> {
+        if self.model.is_none() {
+            return Err(JsError::new("not loaded"));
+        }
+        let n = self.width * self.height;
+        if cells.len() != n {
+            return Err(JsError::new("cells length does not match the grid"));
+        }
+        if index >= n {
+            return Err(JsError::new("cell index past the end of the grid"));
+        }
+        let grid = Grid::from_cells(self.width, self.height, cells);
+        let out = self.step_ids_a(&grid, &[index]).await?;
+        Ok(out[0])
     }
 }
 

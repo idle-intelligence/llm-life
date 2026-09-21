@@ -34,6 +34,43 @@ fn a_cell_sees_the_prefix_and_its_own_block_and_nothing_else() {
     assert_eq!(row.iter().filter(|&&a| a).count(), P + 2);
 }
 
+/// `LifeEngine::stepCellA` (crates/llm-life/src/web.rs) packs a chunk of one
+/// cell against the resident prefix; `stepChunkA` packs a chunk of many. Both
+/// go through this same `pack_chunk`, so if a cell's own block -- tokens,
+/// positions, and which keys it may attend to -- comes out identical whether
+/// it is packed alone or alongside other cells, the two calls feed the model
+/// an identical input for that cell and are therefore guaranteed to produce
+/// an identical answer for it: a chunk of one is not a different code path,
+/// just a shorter block-diagonal. (A GPU-backed regression test comparing
+/// `stepCellA`/`stepChunkA` output directly is not possible natively --
+/// `#[wasm_bindgen]`-touched async GPU readback aborts with "function not
+/// implemented on non-wasm32 targets" outside a real wasm32 build; the
+/// numeric check against a live model runs in the browser instead, see
+/// `scripts/headless/percell-a.mjs`.)
+#[test]
+fn single_cell_pack_matches_the_same_cell_inside_a_bigger_chunk() {
+    let many = chunk(); // cells 7, 8, 9, prompt lengths 2, 3, 2.
+    let alone = pack_chunk(&[8], |c| vec![c as u32; 3], P);
+
+    // Cell 8's block is the middle one in `many` (after cell 7's 2 tokens).
+    let many_kv = P + many.len();
+    let alone_kv = P + alone.len();
+    assert_eq!(&many.tokens[2..5], &alone.tokens[..]);
+    assert_eq!(&many.positions[2..5], &alone.positions[..]);
+    for i in 0..3 {
+        let many_row = &many.allowed[(2 + i) * many_kv..(2 + i + 1) * many_kv];
+        let alone_row = &alone.allowed[i * alone_kv..(i + 1) * alone_kv];
+        // Same prefix visibility.
+        assert_eq!(&many_row[..P], &alone_row[..P]);
+        // Same causal-within-the-block pattern, reindexed to each pack's own
+        // block offset (2.. in `many`, 0.. in `alone`).
+        assert_eq!(&many_row[P + 2..P + 5], &alone_row[P..P + 3]);
+        // Nothing outside its own block is visible in either pack.
+        assert!(many_row[P..P + 2].iter().all(|&a| !a), "cell 7 invisible to cell 8");
+        assert!(many_row[P + 5..].iter().all(|&a| !a), "cell 9 invisible to cell 8");
+    }
+}
+
 #[test]
 fn every_row_allows_at_least_one_key() {
     // A fully masked row softmaxes to NaN.
