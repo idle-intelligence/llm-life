@@ -4,14 +4,17 @@
 // per-pixel/batched land on the identical grid (same forwards).
 //
 // Run: node scripts/headless/llm-narrated.mjs [--url http://127.0.0.1:8010/]
+function fail(msg) {
+  console.error(msg);
+  process.exit(1);
+}
+
 const PLAYWRIGHT_MODULE =
-  process.env.PLAYWRIGHT_MODULE ??
-  '/path/to/playwright/index.mjs';
+  process.env.PLAYWRIGHT_MODULE ?? fail('set PLAYWRIGHT_MODULE to a playwright index.mjs');
 const { chromium } = await import(PLAYWRIGHT_MODULE);
 
 const EXECUTABLE_PATH =
-  process.env.CHROMIUM_PATH ??
-  '/path/to/chromium Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
+  process.env.CHROMIUM_PATH ?? fail('set CHROMIUM_PATH to a Chromium executable');
 
 function arg(name, dflt) {
   const i = process.argv.indexOf('--' + name);
@@ -20,7 +23,7 @@ function arg(name, dflt) {
 const URL_ = arg('url', 'http://127.0.0.1:8010/');
 const GGUF = arg('gguf', 'http://127.0.0.1:8010/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf');
 const TOKENIZER = arg('tokenizer', 'http://127.0.0.1:8010/models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json');
-const SCREENSHOT = arg('screenshot', '/tmp');
+const SCREENSHOT = arg('screenshot', 'scripts/headless/out/llm-life-narrated.png');
 const TIMEOUT = parseInt(arg('timeout', String(15 * 60 * 1000)), 10);
 
 const browser = await chromium.launch({

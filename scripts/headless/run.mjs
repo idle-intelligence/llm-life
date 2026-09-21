@@ -1,21 +1,24 @@
 // Headless verification of web/ in Playwright's BUNDLED Chromium only —
-// never TC's browser (CLAUDE.md "Demo"). Drives the page through
+// never TC's own browser (CLAUDE.md "Demo"). Drives the page through
 // `window.__app`, not through synthetic DOM clicks.
 //
 // Run: node scripts/headless/run.mjs [--url http://127.0.0.1:8010/] [--mode classical]
 // This repo has no node_modules of its own; the Playwright module is
 // borrowed the same way llm-web's harness borrows it (see its
 // scripts/headless/README.md). Override with PLAYWRIGHT_MODULE.
+function fail(msg) {
+  console.error(msg);
+  process.exit(1);
+}
+
 const PLAYWRIGHT_MODULE =
-  process.env.PLAYWRIGHT_MODULE ??
-  '/path/to/playwright/index.mjs';
+  process.env.PLAYWRIGHT_MODULE ?? fail('set PLAYWRIGHT_MODULE to a playwright index.mjs');
 const { chromium } = await import(PLAYWRIGHT_MODULE);
 
 // Playwright's BUNDLED Chromium, pinned explicitly so a stale default
 // channel can never fall back to TC's own Chrome.
 const EXECUTABLE_PATH =
-  process.env.CHROMIUM_PATH ??
-  '/path/to/chromium Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
+  process.env.CHROMIUM_PATH ?? fail('set CHROMIUM_PATH to a Chromium executable');
 const LAUNCH_ARGS = ['--enable-unsafe-webgpu', '--enable-features=WebGPU', '--use-angle=metal', '--ignore-gpu-blocklist'];
 
 function arg(name, dflt) {

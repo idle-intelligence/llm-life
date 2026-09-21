@@ -4,14 +4,17 @@
 // per call" once to confirm the batched path still works.
 //
 // Run: node scripts/headless/percell-a.mjs (serve web/ on 8010 first)
+function fail(msg) {
+  console.error(msg);
+  process.exit(1);
+}
+
 const PLAYWRIGHT_MODULE =
-  process.env.PLAYWRIGHT_MODULE ??
-  '/path/to/playwright/index.mjs';
+  process.env.PLAYWRIGHT_MODULE ?? fail('set PLAYWRIGHT_MODULE to a playwright index.mjs');
 const { chromium } = await import(PLAYWRIGHT_MODULE);
 
 const EXECUTABLE_PATH =
-  process.env.CHROMIUM_PATH ??
-  '/path/to/chromium Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
+  process.env.CHROMIUM_PATH ?? fail('set CHROMIUM_PATH to a Chromium executable');
 
 function arg(name, dflt) {
   const i = process.argv.indexOf('--' + name);
