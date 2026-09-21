@@ -2734,6 +2734,7 @@ dependencies = [
 [[package]]
 name = "llm-wasm"
 version = "0.1.0"
+source = "git+https://github.com/idle-intelligence/llm-web?rev=11362b995db0d2456676ac4f599dd35d13423788#11362b995db0d2456676ac4f599dd35d13423788"
 dependencies = [
  "anyhow",
  "burn",

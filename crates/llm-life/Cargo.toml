@@ -29,14 +29,14 @@ cpu = ["burn/ndarray"]
 
 [dependencies]
 life = { path = "../life" }
-# The engine, from a dedicated worktree + branch of llm-web whose Cargo
-# manifests are frozen (CLAUDE.md "Code").
-llm-wasm = { path = "../../../llm-web/.claude/worktrees/llm-life/crates/llm-wasm", default-features = false, features = ["wgpu"] }
+# The engine, from idle-intelligence/llm-web on GitHub, pinned to the
+# commit its PR #1/#2 merged at.
+llm-wasm = { git = "https://github.com/idle-intelligence/llm-web", rev = "11362b995db0d2456676ac4f599dd35d13423788", default-features = false, features = ["wgpu"] }
 # Types only (WgpuDevice, Tensor) — the wgpu backend feature is unified in
 # from llm-wasm, which owns the backend choice.
 # `autodiff` is enabled here, in the consumer crate (CLAUDE.md "Code"):
-# llm-web's manifests are frozen and its `burn` has only `std` + the wgpu
-# backend, so `burn::backend::Autodiff` would not exist. Cargo unifies the
+# llm-web's own `burn` has only `std` + the wgpu backend, so
+# `burn::backend::Autodiff` would not exist there. Cargo unifies the
 # feature into the one `burn` both crates share; nothing in llm-web changes.
 burn = { version = "0.20", default-features = false, features = ["std", "autodiff"] }
 anyhow = { workspace = true }

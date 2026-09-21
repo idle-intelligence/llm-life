@@ -16,10 +16,11 @@ lto = true
 codegen-units = 1
 opt-level = 3
 
-# llm-wasm is a path dependency from llm-web's frozen workspace, whose
-# [patch.crates-io] does NOT follow a path dependency into another
+# llm-wasm is a git dependency on idle-intelligence/llm-web, whose
+# [patch.crates-io] does NOT follow a git dependency into another
 # workspace — this build resolves patches from here. The cubecl-wgpu patch
 # caps workgroup size at WebGPU's 256-invocation browser limit; without it
-# the wasm build emits shaders Chromium refuses.
+# the wasm build emits shaders Chromium refuses. Vendored verbatim from
+# llm-web's patches/cubecl-wgpu-0.9.0.
 [patch.crates-io]
-cubecl-wgpu = { path = "../llm-web/patches/cubecl-wgpu-0.9.0" }
+cubecl-wgpu = { path = "patches/cubecl-wgpu-0.9.0" }
