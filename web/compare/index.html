@@ -292,13 +292,13 @@
 <section>
     <h2>output <span class="sub">· methods</span></h2>
     <div class="method-notes">
-        <p><strong>Game of Life (rule)</strong> - Conway's rule: a live cell with two or three live neighbours stays alive, a dead cell with exactly three comes alive, every other cell dies or stays dead. A for loop over the grid on the CPU, one pass per generation.</p>
+        <p><strong>Game of Life (rule)</strong> - The classical rule, as a for loop.</p>
         <p><strong>lookup table</strong> - the same rule as a 512-entry table indexed by the 9 neighbourhood bits. The fastest way to compute it, and the thing every model below is measured against.</p>
-        <p><strong>LLM per cell</strong> - a stupid idea: give a language model the rules and one cell's neighbours, ask if it lives or dies. Off the shelf it gets 215 of 512 neighbourhoods right; fine-tuned, all 512.</p>
-        <p><strong>BERT of Life</strong> - alive or dead is a classification. What would a BERT do? A one-layer encoder over the 9 cells as tokens, 3,490 parameters, exact.</p>
-        <p><strong>9 numbers to centre</strong> - drop the language model, keep the approach. A 2-layer MLP over the 9 cell values, 1,442 parameters, exact.</p>
-        <p><strong>LLM whole grid</strong> - cell by cell is stupid. Ask the model for the whole grid in one prompt, one token per cell.</p>
-        <p><strong>stencil (grid to grid)</strong> - the whole grid in one pass, no language model: one attention layer where each cell only sees its 3x3 stencil. 3,329 parameters, trained at 16x16, exact with the same weights at 256x256.</p>
+        <p><strong>LLM per cell</strong> - A stupid idea: give a language model the rules and current cell's state, *as text*, and ask if it lives or dies. Repeat for each and every cell. Of course, it's very slow, and an off the shelf model doesn't work. Fine tuning a small LoRa adapter gets us perfect results, but it's still slow... Does it speed up if we batch the inference?</p>
+        <p><strong>BERT of Life</strong> - Alive or Dead is a classification. What would a BERT do? A BERT-shaped classifier, one-layer encoder over the 9 cells as tokens, 3,490 parameters trained from scratch; it works.</p>
+        <p><strong>9 numbers to centre</strong> - Why do we even use a language model? Can we fit a "modern" model architecture that actually learns the rules? A 2-layer MLP over the 9 cell values, 1,442 parameters; We run it cell by cell, pretty fast, it works.</p>
+        <p><strong>LLM whole grid</strong> - Look, there are many optimisation we could do. That's not the game we are playing. Yet, cell by cell _is_ stupid. Instead, we ask the model for the whole grid in one prompt, one token per cell. It's much faster, but training a 64x64 adapter gets expensive, and 256x256 doesn't fit in this small model's context. Another LoRa adapter gets us to 100% accuracy.</p>
+        <p><strong>stencil (grid to grid)</strong> - Cell by cell is nice, but we can do better: One attention layer over the whole grid, each cell masked to its 3x3 stencil. 3,329 parameters, trained at 16x16, it scales to whatever grid size.</p>
     </div>
 </section>
 
