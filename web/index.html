@@ -215,6 +215,12 @@
         line-height: 1.4;
     }
     .method-grid input[type="radio"] { margin-top: 3px; cursor: pointer; }
+    blockquote.rules {
+        margin: 0 0 8px 0;
+        padding: 0 0 0 14px;
+        border-left: 2px solid var(--border);
+    }
+    blockquote.rules p { margin: 0 0 8px 0; font-size: 15px; line-height: 1.55; }
     .panel-desc {
         font-size: 12px;
         color: var(--faint);
@@ -283,6 +289,17 @@
         <a href="https://github.com/idle-intelligence/llm-life">github.com/idle-intelligence/llm-life</a>
     </p>
 </header>
+
+<section>
+    <h2>the rules <span class="sub">· Martin Gardner, 1970</span></h2>
+    <blockquote class="rules">
+        <p>Conway's genetic laws are delightfully simple. First note that each cell of the checkerboard (assumed to be an infinite plane) has eight neighboring cells, four adjacent orthogonally, four adjacent diagonally. The rules are:</p>
+        <p><strong>Survivals.</strong> Every counter with two or three neighboring counters survives for the next generation.</p>
+        <p><strong>Deaths.</strong> Each counter with four or more neighbors dies (is removed) from overpopulation. Every counter with one neighbor or none dies from isolation.</p>
+        <p><strong>Births.</strong> Each empty cell adjacent to exactly three neighbors, no more, no fewer, is a birth cell. A counter is placed on it at the next move.</p>
+    </blockquote>
+    <p class="panel-desc">Martin Gardner, "Mathematical Games: The fantastic combinations of John Conway's new solitaire game 'life'", Scientific American 223 (October 1970), 120 to 123.</p>
+</section>
 
 <section>
     <h2>settings <span class="sub">· method</span></h2>
