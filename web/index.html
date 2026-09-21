@@ -227,19 +227,27 @@
         margin-top: 10px;
         line-height: 1.5;
     }
+    /* The three worlds break out of the text column: one row as wide as
+       the viewport allows (up to 1080 px), stacked at phone width. */
     .grids {
+        --grids-w: min(100vw - 32px, 1080px);
         display: flex;
         gap: 16px;
-        flex-wrap: wrap;
+        width: var(--grids-w);
+        margin-left: calc(50% - var(--grids-w) / 2);
     }
-    .panel { text-align: center; }
+    .panel { text-align: center; flex: 1 1 0; min-width: 0; }
     .panel canvas {
         border: 1px solid var(--border);
         image-rendering: pixelated;
-        width: 176px;
-        height: 176px;
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        height: auto;
         display: block;
         background: #fff;
+    }
+    @media (max-width: 700px) {
+        .grids { flex-direction: column; width: 100%; margin-left: 0; }
     }
     .panel .caption {
         font-family: 'IBM Plex Mono', monospace;
