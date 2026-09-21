@@ -314,12 +314,19 @@ async function handle(id, type, payload, reply) {
       }
       self.postMessage({ type: 'progress', stage: 'threshold' });
       const pArr = Float32Array.from(p);
-      // Label-free binarization - same code (crate::score) as the native
-      // `rescore` tool and docs/pictures/README.md, not a JS reimplementation.
+      // Label-free binarization (Otsu/z-score) is reported for the p(alive)
+      // overlay display only. The grid the model actually paints (and feeds
+      // forward) is thresholded at 0.5, matching how the native scorer reads
+      // these answer-token logits (p_alive is already a softmax over just
+      // dead/alive, so >= 0.5 is exactly the token argmax) and how the
+      // adapters were evaluated during training. Using the label-free
+      // threshold here instead made a handful of correctly-answered cells
+      // paint wrong whenever the grid's own p(alive) distribution pushed
+      // Otsu's cut point off of 0.5.
       const thresholdValue = payload.threshold === 'zscore'
         ? zscoreThreshold(pArr, payload.k ?? 2.0)
         : otsuThreshold(pArr);
-      const binarized = Array.from(p, (v) => (v > thresholdValue ? 1 : 0));
+      const binarized = Array.from(p, (v) => (v >= 0.5 ? 1 : 0));
       self.postMessage({ type: 'progress', stage: 'done' });
       reply(true, {
         pAlive: Array.from(p),
