@@ -1097,17 +1097,13 @@ function ask(type, payload) {
   return new Promise((resolve, reject) => {
     const id = nextId++;
     pending.set(id, { resolve, reject });
-    console.debug('[main] ask: posting', type, id);
     worker.postMessage({ id, type, payload });
-    console.debug('[main] ask: posted', type, id);
   });
 }
 
 function ensureWorker() {
   if (worker) return;
-  worker = new Worker('./worker.js?v=2026-09-22c', { type: 'module' });
-  worker.onerror = (e) => console.error('[main] worker error', e.message, e.filename, e.lineno);
-  worker.onmessageerror = (e) => console.error('[main] worker messageerror', e);
+  worker = new Worker('./worker.js?v=2026-09-22d', { type: 'module' });
   worker.onmessage = (e) => {
     const { id, ok, result, type, stage, fraction } = e.data;
     if (type === 'chunk') {

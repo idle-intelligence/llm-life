@@ -7,7 +7,15 @@
 // so this streams the single GET response and slices it into chunks itself.
 // Version tag on the engine URLs: browsers keep a wasm module at a fixed path
 // across rebuilds, even through a hard reload. Bump when the engine changes.
-const ENGINE_BUILD = '2026-09-22c';
+const ENGINE_BUILD = '2026-09-22d';
+// A message posted to this worker before its top-level `await import` below
+// finishes can be dropped rather than queued (observed in this browser: the
+// page's first 'load' message, sent right after `new Worker(...)`, arrived
+// while this module was still evaluating and was lost). Buffer every message
+// that arrives before the real handler is attached, then replay it.
+const pending = [];
+self.onmessage = (e) => pending.push(e);
+
 const { default: init, LifeEngine, BertEngine, VecMlpEngine, VecStencilEngine, initWgpuDevice, otsuThreshold, zscoreThreshold } =
   await import(`./pkg-llm/llm_life.js?v=${ENGINE_BUILD}`);
 
@@ -85,6 +93,8 @@ self.onmessage = (e) => {
   const reply = (ok, result) => self.postMessage({ id, ok, result });
   enqueue(() => handle(id, type, payload, reply));
 };
+for (const e of pending) self.onmessage(e);
+pending.length = 0;
 
 // `init()` (wasm module) and `initWgpuDevice()` (the shared WebGPU device
 // both engines construct against) are each idempotent to call once; guarded
