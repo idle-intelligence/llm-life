@@ -1040,7 +1040,7 @@ function ask(type, payload) {
 
 function ensureWorker() {
   if (worker) return;
-  worker = new Worker('./worker.js', { type: 'module' });
+  worker = new Worker('./worker.js?v=2026-09-22b', { type: 'module' });
   worker.onmessage = (e) => {
     const { id, ok, result, type, stage, fraction } = e.data;
     if (type === 'chunk') {

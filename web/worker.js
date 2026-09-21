@@ -5,7 +5,11 @@
 // engine reads through a sharded cursor for exactly this reason. The dev
 // server (web/serve.py, stdlib http.server) doesn't support Range requests,
 // so this streams the single GET response and slices it into chunks itself.
-import init, { LifeEngine, BertEngine, VecMlpEngine, VecStencilEngine, initWgpuDevice, otsuThreshold, zscoreThreshold } from './pkg-llm/llm_life.js';
+// Version tag on the engine URLs: browsers keep a wasm module at a fixed path
+// across rebuilds, even through a hard reload. Bump when the engine changes.
+const ENGINE_BUILD = '2026-09-22b';
+const { default: init, LifeEngine, BertEngine, VecMlpEngine, VecStencilEngine, initWgpuDevice, otsuThreshold, zscoreThreshold } =
+  await import(`./pkg-llm/llm_life.js?v=${ENGINE_BUILD}`);
 
 let engine = null;
 // Tracks the grid size last given to `engine.setGrid`, so a run of `step`
@@ -81,7 +85,7 @@ self.onmessage = (e) => {
 let wasmInited = false;
 async function ensureWasm() {
   if (wasmInited) return;
-  await init();
+  await init({ module_or_path: new URL(`./pkg-llm/llm_life_bg.wasm?v=${ENGINE_BUILD}`, import.meta.url) });
   await initWgpuDevice();
   wasmInited = true;
 }
