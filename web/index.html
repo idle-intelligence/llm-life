@@ -1390,7 +1390,7 @@ window.__app = {
     const isA = m === 'llm-a', isB = m === 'llm';
     els.callsSection.style.display = isA ? '' : 'none';
     els.narrationWrap.style.display = isA ? '' : 'none';
-    els.overlayBtn.style.display = isLlmMode(m) ? '' : 'none';
+    els.overlayBtn.style.display = 'none';
     els.aliveNote.style.display = isLlmMode(m) ? '' : 'none';
     els.adapterSection.style.display = isLlmMode(m) ? '' : 'none';
     els.adapterAChoice.style.display = isA ? '' : 'none';
