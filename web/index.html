@@ -198,11 +198,10 @@
     .method-grid {
         display: grid;
         grid-template-columns: 1fr;
-        gap: 10px;
-        margin-bottom: 4px;
+        row-gap: 8px;
     }
     @media (min-width: 460px) {
-        .method-grid { grid-template-columns: repeat(2, 1fr); gap: 10px 16px; }
+        .method-grid:not(#method-choice) { grid-template-columns: repeat(2, 1fr); gap: 10px 16px; }
     }
     .method-grid label {
         font-family: 'IBM Plex Mono', monospace;
@@ -214,6 +213,7 @@
         gap: 6px;
         line-height: 1.4;
     }
+    .method-desc { font-size: 15px; line-height: 1.5; }
     .method-grid input[type="radio"] { margin-top: 3px; cursor: pointer; }
     blockquote.rules {
         margin: 0 0 8px 0;
@@ -303,15 +303,15 @@
 
 <section>
     <h2>settings <span class="sub">· method</span></h2>
-    <div class="method-grid">
+    <div class="method-grid" id="method-choice">
         <label><input type="radio" name="mode" value="classical" checked /> Game of Life (rule)</label>
         <label><input type="radio" name="mode" value="llm-a" /> LLM per cell (0.5B, 430 MB)</label>
+        <label><input type="radio" name="mode" value="llm" /> LLM whole grid (0.5B)</label>
         <label><input type="radio" name="mode" value="bert" /> BERT of Life</label>
         <label><input type="radio" name="mode" value="vec-mlp" /> 9 numbers to centre</label>
-        <label><input type="radio" name="mode" value="llm" /> LLM whole grid (0.5B)</label>
         <label><input type="radio" name="mode" value="vec-stencil" /> stencil, grid to grid</label>
     </div>
-    <p class="panel-desc" id="method-desc"></p>
+    <p class="panel-desc method-desc" id="method-desc"></p>
 </section>
 
 <section id="adapter-section" style="display:none">
