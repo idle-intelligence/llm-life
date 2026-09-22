@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>llm-life compare - idle intelligence</title>
+<link rel="icon" href="favicon.ico">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+    :root {
+        --bg: #fdfdfd;
+        --text: #1a1a1a;
+        --muted: #555;
+        --faint: #999;
+        --border: #ddd;
+        --green: #2d7d46;
+        --yellow: #b58900;
+        --red: #c0392b;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 48px 24px 96px;
+        color: var(--text);
+        background: var(--bg);
+        line-height: 1.5;
+        font-size: 15px;
+    }
+    a { color: var(--text); }
+    a:hover { color: var(--muted); }
+
+    header { margin-bottom: 48px; }
+    .org {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        color: var(--muted);
+        letter-spacing: 0.02em;
+        margin-bottom: 2px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .org img {
+        width: 16px;
+        height: 16px;
+        border-radius: 2px;
+    }
+    h1 {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 24px;
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+    .tagline {
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.6;
+    }
+    .tagline a { text-decoration: underline; color: var(--muted); }
+    .tagline a:hover { color: var(--text); }
+    .repo {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        margin-top: 4px;
+    }
+    .repo a { color: var(--faint); text-decoration: none; }
+    .repo a:hover { color: var(--muted); }
+
+    section {
+        border-top: 1px solid var(--border);
+        padding: 24px 0;
+    }
+    section h2 {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        color: var(--faint);
+        margin-bottom: 12px;
+    }
+    section h2 .sub { font-weight: 400; }
+
+    .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+    }
+    .status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--faint);
+        flex-shrink: 0;
+    }
+    .status-dot.loading { background: var(--yellow); }
+    .status-dot.ready { background: var(--green); }
+    .status-dot.error { background: var(--red); }
+    .status-dot.generating {
+        background: var(--text);
+        animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+    }
+
+    .controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    button {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        font-weight: 500;
+        padding: 8px 16px;
+        cursor: pointer;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        border-radius: 0;
+        transition: border-color 0.15s;
+    }
+    button:hover:not(:disabled) { border-color: var(--text); }
+    button:disabled { opacity: 0.3; cursor: not-allowed; }
+    button.primary {
+        background: var(--text);
+        color: var(--bg);
+        border-color: var(--text);
+    }
+    button.primary:hover:not(:disabled) {
+        background: var(--muted);
+        border-color: var(--muted);
+    }
+    .info {
+        font-size: 13px;
+        color: var(--faint);
+        margin-top: 12px;
+    }
+
+    .grids {
+        display: flex;
+        gap: 16px;
+    }
+    .panel { text-align: center; }
+    .panel canvas {
+        border: 1px solid var(--border);
+        image-rendering: pixelated;
+        width: 176px;
+        height: 176px;
+        display: block;
+        background: #fff;
+    }
+    .panel .caption {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 11px;
+        color: var(--faint);
+        margin-top: 6px;
+    }
+
+    footer {
+        border-top: 1px solid var(--border);
+        padding-top: 24px;
+        margin-top: 24px;
+    }
+    footer a {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        color: var(--faint);
+        text-decoration: none;
+    }
+    footer a:hover { color: var(--muted); }
+    footer .credit {
+        font-size: 13px;
+        color: var(--faint);
+        line-height: 1.6;
+        margin-top: 16px;
+    }
+    footer .credit a { text-decoration: underline; color: var(--faint); }
+    footer .credit a:hover { color: var(--muted); }
+
+    /* ---- compare-specific: thumbnail grid, ladder table, method-note
+       paragraphs. Same variables/sizes as the base style above. ---- */
+    .thumbs {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 16px;
+    }
+    .thumb { text-align: center; width: 68px; }
+    .thumb canvas {
+        border: 1px solid var(--border);
+        image-rendering: pixelated;
+        width: 64px;
+        height: 64px;
+        display: block;
+        background: #fff;
+    }
+    .thumb canvas.placeholder { background: #f2f2f2; }
+    .thumb .name {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 9px;
+        color: var(--faint);
+        margin-top: 4px;
+        line-height: 1.3;
+    }
+    .thumb .note {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 10px;
+        color: var(--muted);
+    }
+
+    /* The table breaks out of the text column like the worlds on the demo
+       page: as wide as the viewport allows (up to 1080 px), scrolling inside
+       itself only on phones. */
+    .ladder-wrap {
+        --wrap-w: min(100vw - 32px, 1080px);
+        width: var(--wrap-w);
+        margin-left: calc(50% - var(--wrap-w) / 2);
+        overflow-x: auto;
+    }
+    .ladder-wrap table { width: max-content; max-width: 100%; margin: 0 auto; }
+    .ladder-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 12px;
+    }
+    .ladder-table th, .ladder-table td {
+        border: 1px solid var(--border);
+        padding: 4px 8px;
+        text-align: left;
+        white-space: nowrap;
+    }
+    .method-notes p { margin-top: 10px; }
+    .method-notes p:first-child { margin-top: 0; }
+    .method-notes strong { color: var(--text); }
+</style>
+</head>
+<body>
+<header>
+    <p class="org"><img src="apple-touch-icon.png" alt="II">idle intelligence</p>
+    <h1>llm-life compare</h1>
+    <p class="tagline">Without going too far into optimizing the cpu/memory paths, we compare (naive) cpu, (naive) 512-entry lookup table, with a language model, two tiny from-scratch models and a stencil-attention model, all computing the same generation from the same starting board.<br>
+    When Moore's law no longer holds up, we need to find creative ways to spend more compute to achieve the same results.<br>
+    This started as a (stupid) experiment: What if we ask an LLM to play Game of Life, cell by cell?<br>
+    In the end, we answer some interesting questions.</p>
+    <p class="repo">
+        <a href="../">llm-life demo</a> · <a href="https://github.com/idle-intelligence/llm-life">github.com/idle-intelligence/llm-life</a>
+    </p>
+</header>
+
+<section>
+    <h2>settings <span class="sub">· run</span></h2>
+    <div class="grids">
+        <div class="panel"><canvas id="c-board" width="32" height="32"></canvas><div class="caption">board</div></div>
+    </div>
+    <div class="controls" style="margin-top:16px;">
+        <button type="button" class="gridsize-btn" data-size="16">16&times;16</button>
+        <button type="button" class="gridsize-btn primary" data-size="32">32&times;32</button>
+        <button type="button" class="gridsize-btn" data-size="64">64&times;64</button>
+    </div>
+    <div class="controls" style="margin-top:12px;">
+        <button id="run-all" class="primary">run every method</button>
+        <button id="load-llm">load the LLM (about 430 MB, stored locally)</button>
+    </div>
+</section>
+
+<section>
+    <h2>status</h2>
+    <div class="status">
+        <span class="status-dot loading" id="statusDot"></span>
+        <span id="statusText">booting...</span>
+    </div>
+</section>
+
+<section>
+    <h2>output <span class="sub">· ladder</span></h2>
+    <div class="ladder-wrap">
+        <table class="ladder-table" id="ladder">
+            <thead>
+                <tr>
+                    <th>method</th>
+                    <th>s / generation</th>
+                    <th>parameters</th>
+                    <th>cells correct</th>
+                </tr>
+            </thead>
+            <tbody id="ladder-body"></tbody>
+        </table>
+    </div>
+    <p class="info" id="llm-hint">load the LLM above to measure the LLM rows, or "run every method" will load it.</p>
+    <div class="thumbs" id="thumbs"></div>
+</section>
+
+<section>
+    <h2>output <span class="sub">· methods</span></h2>
+    <div class="method-notes">
+        <p><strong>Game of Life (rule):</strong> The classical rule, as a for loop.</p>
+        <p><strong>lookup table:</strong> the same rule as a 512-entry table indexed by the 9 neighbourhood bits. The fastest way to compute it, and the thing every model below is measured against.</p>
+        <p><strong>LLM per cell:</strong> Give a language model the rules and current cell's state, *as text*, and ask if it lives or dies. Repeat for each and every cell. Of course, it's very slow, and an off the shelf model doesn't work. Fine tuning a small LoRa adapter gets us perfect results, but it's still slow... Does it speed up if we batch the inference?</p>
+        <p><strong>LLM whole grid:</strong> Look, there are many optimisation we could do. That's not the game we are playing. Yet, cell by cell _is_ stupid. Instead, we ask the model for the whole grid in one prompt, one token per cell. It's much faster, but training a 64x64 adapter gets expensive, and 256x256 doesn't fit in this small model's context. Another LoRa adapter gets us to 100% accuracy.</p>
+        <p><strong>BERT of Life:</strong> Alive or Dead is a classification. What would a BERT do? A BERT-shaped classifier, one-layer encoder over the 9 cells as tokens, 3,490 parameters trained from scratch; it works.</p>
+        <p><strong>9 numbers to centre:</strong> Why do we even use a language model? Can we fit a "modern" model architecture that actually learns the rules? A 2-layer MLP over the 9 cell values, 1,442 parameters; We run it cell by cell, pretty fast, it works.</p>
+        <p><strong>stencil (grid to grid):</strong> Cell by cell is nice, but we can do better: One attention layer over the whole grid, each cell masked to its 3x3 stencil. 3,329 parameters, trained at 16x16, it scales to whatever grid size.</p>
+    </div>
+</section>
+
+<footer>
+    <a href="https://idleintelligence.org">idleintelligence.org</a>
+    <p class="credit">
+        <a href="../">llm-life demo</a> ·
+        <a href="https://github.com/idle-intelligence/llm-life">source</a> ·
+        <a href="https://github.com/idle-intelligence/llm-web">engine</a> (MIT).<br>
+        Base model: <a href="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF">Qwen2.5-0.5B-Instruct</a> by the Qwen team (Apache-2.0).<br>
+        Adapters: <a href="https://huggingface.co/idle-intelligence/llm-of-life-lora">llm-of-life-lora</a>. Small models: <a href="https://huggingface.co/idle-intelligence/stencil-life">stencil-life</a>.
+    </p>
+</footer>
+
+<script type="module">
+// Bumped whenever worker.js or the pkg/pkg-llm wasm builds change. The pkg
+// import above is a static import specifier and can't take this variable,
+// so its own '?v=' literal is bumped by hand alongside this constant.
+const BUILD = '2026-09-23';
+
+import init, { LifeApp } from '../pkg/life.js?v=2026-09-23';
+import { MODEL_URLS } from '../models.js';
+
+let size = 32;
+let app = null;
+let running = false;
+let llmReady = false, llmLoading = null;
+let bertReady = false, vecMlpReady = false, vecStencilReady = false;
+let worker = null, nextId = 1, pending = new Map();
+let lastResults = null;
+
+const els = {
+  statusDot: document.getElementById('statusDot'),
+  statusText: document.getElementById('statusText'),
+  board: document.getElementById('c-board'),
+  runAll: document.getElementById('run-all'),
+  loadLlm: document.getElementById('load-llm'),
+  ladderBody: document.getElementById('ladder-body'),
+  llmHint: document.getElementById('llm-hint'),
+  thumbs: document.getElementById('thumbs'),
+};
+const boardCtx = els.board.getContext('2d');
+
+function setStatus(state, text) {
+  els.statusDot.className = 'status-dot ' + state;
+  els.statusText.textContent = text;
+}
+
+function paint(ctx, w, h, values) {
+  const img = ctx.createImageData(w, h);
+  for (let i = 0; i < w * h; i++) {
+    const v = Math.max(0, Math.min(1, values[i]));
+    const g = Math.round(255 * (1 - v));
+    img.data[i * 4 + 0] = g;
+    img.data[i * 4 + 1] = g;
+    img.data[i * 4 + 2] = g;
+    img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Naive JS baselines -- plain nested loop and a 9-bit lookup table, no Rust,
+// no bit tricks beyond the packing the table needs to exist at all. Every
+// cell is looked up every generation; nothing is precomputed across calls.
+// ---------------------------------------------------------------------------
+function jsLifeStepLoop(cells, w, h) {
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          n += cells[((y + dy + h) % h) * w + ((x + dx + w) % w)];
+        }
+      }
+      const c = cells[y * w + x];
+      out[y * w + x] = (c ? (n === 2 || n === 3) : n === 3) ? 1 : 0;
+    }
+  }
+  return out;
+}
+
+let lookupTable = null;
+function buildLookupTable() {
+  const t = new Uint8Array(512);
+  for (let k = 0; k < 512; k++) {
+    let n = 0;
+    for (let b = 0; b < 8; b++) if ((k >> b) & 1) n++;
+    const self = (k >> 8) & 1;
+    t[k] = (self ? (n === 2 || n === 3) : n === 3) ? 1 : 0;
+  }
+  return t;
+}
+function jsLifeStepLookup(cells, w, h, table) {
+  const out = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const x = i % w, y = Math.floor(i / w);
+    const xm = (x + w - 1) % w, xp = (x + 1) % w, ym = (y + h - 1) % h, yp = (y + 1) % h;
+    const k = cells[ym * w + xm] | (cells[ym * w + x] << 1) | (cells[ym * w + xp] << 2) |
+      (cells[y * w + xm] << 3) | (cells[y * w + xp] << 4) |
+      (cells[yp * w + xm] << 5) | (cells[yp * w + x] << 6) | (cells[yp * w + xp] << 7) |
+      (cells[i] << 8);
+    out[i] = table[k];
+  }
+  return out;
+}
+function timeIt(fn, reps) {
+  const t0 = performance.now();
+  for (let i = 0; i < reps; i++) fn();
+  return (performance.now() - t0) / reps / 1000;
+}
+function fmtSec(v) {
+  if (v == null) return '-';
+  if (v < 1e-3) return v.toExponential(2);
+  if (v < 1) return v.toFixed(4);
+  return v.toFixed(2);
+}
+function countMatches(a, b) {
+  let c = 0;
+  for (let i = 0; i < a.length; i++) if ((a[i] !== 0) === (b[i] !== 0)) c++;
+  return c;
+}
+
+// ---------------------------------------------------------------------------
+// Worker -- the same web/worker.js the main demo uses, loaded from here by a
+// relative path so its own fetches (checkpoints, gguf, tokenizer) still
+// resolve against web/, unchanged.
+// ---------------------------------------------------------------------------
+// Set while a per-cell 'step' is in flight for a rung whose row should show
+// a live time estimate (the LLM per-cell rows, which run one forward per
+// cell and can take a while at 32x32) -- fed every 'chunk' message the
+// worker emits for that call, cleared once the call resolves.
+let liveChunkHandler = null;
+function ensureWorker() {
+  if (worker) return;
+  worker = new Worker('../worker.js?v=' + BUILD, { type: 'module' });
+  worker.onmessage = (e) => {
+    const { id, ok, result, type } = e.data;
+    if (type === 'chunk') { if (liveChunkHandler) liveChunkHandler(e.data); return; }
+    if (type === 'bertCell' || type === 'vecMlpCell' || type === 'bertGrid' || type === 'vecMlpGrid' || type === 'vecStencilGrid' || type === 'progress') return;
+    const p = pending.get(id);
+    if (!p) return;
+    pending.delete(id);
+    ok ? p.resolve(result) : p.reject(new Error(result));
+  };
+}
+function ask(type, payload) {
+  return new Promise((resolve, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve, reject });
+    worker.postMessage({ id, type, payload });
+  });
+}
+
+const LLM_MODEL = {
+  ggufUrl: MODEL_URLS.gguf,
+  tokenizerUrl: MODEL_URLS.tokenizer,
+  adapterUrl: MODEL_URLS.loraANorules,
+};
+// The whole-grid row has its own adapter, trained per grid size -- swapped in
+// right before that row runs, and swapped back to LLM_MODEL.adapterUrl at
+// the start of the per-cell row so a rerun always starts from the right
+// adapter regardless of what the previous run left loaded.
+const B_ADAPTER_BY_SIZE = { 16: MODEL_URLS.loraB16, 32: MODEL_URLS.loraB32 };
+const BERT_MODEL = { checkpointUrl: MODEL_URLS.bert, dModel: 16, nLayers: 1, nHeads: 1 };
+const VEC_MLP_MODEL = { checkpointUrl: MODEL_URLS.vecMlp, hidden: 32 };
+const VEC_STENCIL_MODEL = { checkpointUrl: MODEL_URLS.vecStencil, dModel: 16, nLayers: 1, nHeads: 1 };
+
+async function ensureBert() {
+  if (bertReady) return;
+  ensureWorker();
+  await ask('loadBert', { ...BERT_MODEL, width: size, height: size });
+  bertReady = true;
+}
+async function ensureVecMlp() {
+  if (vecMlpReady) return;
+  ensureWorker();
+  await ask('loadVecMlp', { ...VEC_MLP_MODEL, width: size, height: size });
+  vecMlpReady = true;
+}
+async function ensureVecStencil() {
+  if (vecStencilReady) return;
+  ensureWorker();
+  await ask('loadVecStencil', { ...VEC_STENCIL_MODEL, width: size, height: size });
+  vecStencilReady = true;
+}
+
+// WebGPU availability, probed once at load. Every model row runs on the
+// WebGPU engine; without an adapter only the two naive rows run.
+let webGpuAvailable = null;
+const NO_WEBGPU = "doesn't work without WebGPU, yet";
+(async () => {
+  try { webGpuAvailable = !!(navigator.gpu && await navigator.gpu.requestAdapter()); }
+  catch (e) { webGpuAvailable = false; }
+  if (webGpuAvailable === false) {
+    els.loadLlm.disabled = true;
+    els.loadLlm.textContent = NO_WEBGPU;
+    setStatus('ready', NO_WEBGPU + ', the two naive rows still run');
+  }
+})();
+
+els.loadLlm.onclick = async () => {
+  if (webGpuAvailable === false) return;
+  if (llmReady || llmLoading) return;
+  ensureWorker();
+  els.loadLlm.disabled = true;
+  setStatus('loading', 'loading the LLM...');
+  llmLoading = ask('load', { ...LLM_MODEL, width: size, height: size, rulestring: app.rulestring() })
+    .then(() => {
+      llmReady = true;
+      els.loadLlm.textContent = 'LLM loaded';
+      els.llmHint.style.display = 'none';
+      setStatus('ready', 'ready');
+    })
+    .catch((e) => {
+      llmLoading = null;
+      els.loadLlm.disabled = false;
+      setStatus('error', 'LLM load failed: ' + e.message);
+    });
+  await llmLoading;
+};
+
+// ---------------------------------------------------------------------------
+// Board and rung run
+// ---------------------------------------------------------------------------
+function setBoardSize(n) {
+  size = n;
+  els.board.width = size;
+  els.board.height = size;
+  app = new LifeApp(size, size);
+  app.randomize(1n, 0.28);
+  lastResults = null;
+  drawBoard();
+  renderLadderTable();
+  els.thumbs.innerHTML = '';
+  for (const btn of document.querySelectorAll('.gridsize-btn')) {
+    btn.classList.toggle('primary', Number(btn.dataset.size) === size);
+  }
+}
+function drawBoard() {
+  paint(boardCtx, size, size, Array.from(app.cells()));
+}
+
+const RUNGS = [
+  { key: 'cpu', name: 'Game of Life (rule)', params: 'no parameters' },
+  { key: 'lookup', name: 'lookup table', params: '512-entry table' },
+  { key: 'llm-percell-base', name: 'LLM per cell (base)', params: '0.5B (no adapter)' },
+  { key: 'llm-percell-trained', name: 'LLM per cell (trained)', params: '0.5B (+ adapter)' },
+  { key: 'llm-percell-batched', name: 'LLM per cell (trained, batched)', params: '0.5B (+ adapter)' },
+  { key: 'llm-grid-base', name: 'LLM whole grid (base)', params: '0.5B (no adapter)' },
+  { key: 'llm-grid-trained', name: 'LLM whole grid (trained)', params: '0.5B (+ adapter)' },
+  { key: 'bert-cell', name: 'BERT of Life', params: '3,490' },
+  { key: 'bert-batched', name: 'BERT of Life (batched)', params: '3,490' },
+  { key: 'vec-mlp-cell', name: '9 numbers to centre', params: '1,442' },
+  { key: 'vec-mlp-batched', name: '9 numbers to centre (batched)', params: '1,442' },
+  { key: 'vec-stencil', name: 'stencil (grid to grid)', params: '3,329' },
+];
+
+function renderLadderTable() {
+  const results = lastResults || {};
+  els.ladderBody.innerHTML = RUNGS.map((r) => {
+    const res = results[r.key];
+    const secText = (res && res.note) ? res.note
+      : (res ? fmtSec(res.seconds) : '-');
+    const correctText = res && res.total != null ? `${res.correctCount} / ${res.total}` : '-';
+    return `<tr><td>${r.name}</td><td>${secText}</td><td>${r.params}</td><td>${correctText}</td></tr>`;
+  }).join('');
+}
+
+// opts.calls: 'percell' forwards one cell per call (LifeEngine::stepCellA);
+// omitted, variant 'a' forwards a 64-cell chunk per call instead.
+// opts.liveKey: rung key to show a running time estimate for, updated from
+// each 'chunk' message while the call is in flight (see ensureWorker above).
+function liveEstimateHandler(rowKey, t0) {
+  return (d) => {
+    if (d.chunkIndex % 8 !== 0 && d.chunkIndex !== d.chunkCount - 1) return;
+    const elapsed = (performance.now() - t0) / 1000;
+    const eta = elapsed / ((d.chunkIndex + 1) / d.chunkCount);
+    lastResults[rowKey] = { note: `running... ~${fmtSec(eta)}s est (${d.chunkIndex + 1} / ${d.chunkCount})` };
+    renderLadderTable();
+  };
+}
+async function measureWorkerStep(variant, cells, opts = {}) {
+  const payload = { cells: Array.from(cells), variant, width: size, height: size, threshold: 'otsu', k: 2.0 };
+  if (opts.calls) payload.calls = opts.calls;
+  const t0 = performance.now();
+  if (opts.liveKey) liveChunkHandler = liveEstimateHandler(opts.liveKey, t0);
+  try {
+    const first = await ask('step', payload);
+    if (first.seconds >= 2) return first;
+    const runs = [first];
+    for (let i = 0; i < 2; i++) runs.push(await ask('step', payload));
+    runs.sort((a, b) => a.seconds - b.seconds);
+    return runs[1];
+  } finally {
+    liveChunkHandler = null;
+  }
+}
+
+function measureNaive(fn, cells) {
+  const reps = size <= 32 ? 2000 : 400;
+  const seconds = timeIt(() => fn(cells), reps);
+  const binarized = fn(cells);
+  return { seconds, binarized: Array.from(binarized) };
+}
+
+function drawThumb(canvas, w, h, values, placeholder) {
+  const ctx = canvas.getContext('2d');
+  canvas.width = w; canvas.height = h;
+  if (placeholder) {
+    canvas.classList.add('placeholder');
+    ctx.clearRect(0, 0, w, h);
+    return;
+  }
+  canvas.classList.remove('placeholder');
+  paint(ctx, w, h, values);
+}
+
+function renderThumbs(trueNext) {
+  const results = lastResults || {};
+  els.thumbs.innerHTML = '';
+  for (const r of RUNGS) {
+    const wrap = document.createElement('div');
+    wrap.className = 'thumb';
+    const canvas = document.createElement('canvas');
+    const res = results[r.key];
+    const nameEl = document.createElement('div');
+    nameEl.className = 'name';
+    const noteEl = document.createElement('div');
+    noteEl.className = 'note';
+    if (res && res.binarized) {
+      drawThumb(canvas, size, size, res.binarized, false);
+      const wrongCount = res.total - res.correctCount;
+      noteEl.textContent = wrongCount === 0 ? '' : `${wrongCount} cells wrong`;
+    } else {
+      drawThumb(canvas, size, size, null, true);
+      noteEl.textContent = res && res.note ? res.note : 'not run';
+    }
+    nameEl.textContent = r.name;
+    wrap.appendChild(canvas);
+    wrap.appendChild(nameEl);
+    wrap.appendChild(noteEl);
+    els.thumbs.appendChild(wrap);
+  }
+}
+
+async function runEveryRung() {
+  if (running) return;
+  running = true;
+  els.runAll.disabled = true;
+  setStatus('generating', 'running every method...');
+  try {
+    if (!lookupTable) lookupTable = buildLookupTable();
+    const board = Array.from(app.cells());
+    const trueNext = jsLifeStepLoop(board, size, size);
+    const results = {};
+    const total = size * size;
+
+    // naive baselines
+    results.cpu = measureNaive((c) => jsLifeStepLoop(c, size, size), board);
+    results.lookup = measureNaive((c) => jsLifeStepLookup(c, size, size, lookupTable), board);
+    results.cpu.correctCount = countMatches(results.cpu.binarized, trueNext);
+    results.cpu.total = total;
+    results.lookup.correctCount = countMatches(results.lookup.binarized, trueNext);
+    results.lookup.total = total;
+    lastResults = results;
+    renderLadderTable();
+
+    if (webGpuAvailable === false) {
+      for (const r of RUNGS) if (!(r.key in results)) results[r.key] = { note: NO_WEBGPU };
+      lastResults = results;
+      renderLadderTable();
+      setStatus('ready', NO_WEBGPU + ', the two naive rows ran');
+      return;
+    }
+
+    {
+      // Run order is the display order. Going back to the base model after an
+      // adapter means a full reload (there is no unload); it comes from the
+      // browser cache, a few seconds.
+      setStatus('generating', llmReady ? 'reloading the LLM, base model...' : 'loading the LLM, base model...');
+      ensureWorker();
+      const { adapterUrl: _unused, ...baseModel } = LLM_MODEL;
+      await ask('load', { ...baseModel, width: size, height: size, rulestring: app.rulestring() });
+      llmReady = true;
+      els.loadLlm.disabled = true;
+      els.loadLlm.textContent = 'LLM loaded';
+      els.llmHint.style.display = 'none';
+
+      setStatus('generating', 'running the LLM per cell, base model...');
+      results['llm-percell-base'] = await measureWorkerStep('a', board, { calls: 'percell', liveKey: 'llm-percell-base' });
+      results['llm-percell-base'].correctCount = countMatches(results['llm-percell-base'].binarized, trueNext);
+      results['llm-percell-base'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
+      setStatus('generating', 'loading the per-cell adapter...');
+      await ask('loadAdapter', { adapterUrl: LLM_MODEL.adapterUrl });
+
+      setStatus('generating', 'running the LLM per cell, trained, one cell per call...');
+      results['llm-percell-trained'] = await measureWorkerStep('a', board, { calls: 'percell', liveKey: 'llm-percell-trained' });
+      results['llm-percell-trained'].correctCount = countMatches(results['llm-percell-trained'].binarized, trueNext);
+      results['llm-percell-trained'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
+      setStatus('generating', 'running the LLM per cell, trained, batched...');
+      results['llm-percell-batched'] = await measureWorkerStep('a', board, { liveKey: 'llm-percell-batched' });
+      results['llm-percell-batched'].correctCount = countMatches(results['llm-percell-batched'].binarized, trueNext);
+      results['llm-percell-batched'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
+      const bAdapterUrl = B_ADAPTER_BY_SIZE[size];
+      setStatus('generating', 'reloading the LLM, base model...');
+      await ask('load', { ...baseModel, width: size, height: size, rulestring: app.rulestring() });
+      setStatus('generating', 'running the LLM whole grid, base model...');
+      results['llm-grid-base'] = await measureWorkerStep('b', board);
+      results['llm-grid-base'].correctCount = countMatches(results['llm-grid-base'].binarized, trueNext);
+      results['llm-grid-base'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
+      setStatus('generating', 'running the LLM whole grid, trained...');
+      if (bAdapterUrl) {
+        await ask('loadAdapter', { adapterUrl: bAdapterUrl });
+        results['llm-grid-trained'] = await measureWorkerStep('b', board);
+        results['llm-grid-trained'].correctCount = countMatches(results['llm-grid-trained'].binarized, trueNext);
+        results['llm-grid-trained'].total = total;
+      } else {
+        results['llm-grid-trained'] = { note: 'no adapter' };
+      }
+      lastResults = results;
+      renderLadderTable();
+    }
+
+    setStatus('generating', 'running BERT of Life, cell by cell...');
+    await ensureBert();
+    results['bert-cell'] = await measureWorkerStep('bert', board);
+    results['bert-cell'].correctCount = countMatches(results['bert-cell'].binarized, trueNext);
+    results['bert-cell'].total = total;
+    lastResults = results;
+    renderLadderTable();
+
+    setStatus('generating', 'running BERT of Life, batched...');
+    results['bert-batched'] = await measureWorkerStep('bert-batched', board);
+    results['bert-batched'].correctCount = countMatches(results['bert-batched'].binarized, trueNext);
+    results['bert-batched'].total = total;
+    lastResults = results;
+    renderLadderTable();
+
+    setStatus('generating', 'running 9 numbers to centre, cell by cell...');
+    await ensureVecMlp();
+    results['vec-mlp-cell'] = await measureWorkerStep('vec-mlp', board);
+    results['vec-mlp-cell'].correctCount = countMatches(results['vec-mlp-cell'].binarized, trueNext);
+    results['vec-mlp-cell'].total = total;
+    lastResults = results;
+    renderLadderTable();
+
+    setStatus('generating', 'running 9 numbers to centre, batched...');
+    results['vec-mlp-batched'] = await measureWorkerStep('vec-mlp-batched', board);
+    results['vec-mlp-batched'].correctCount = countMatches(results['vec-mlp-batched'].binarized, trueNext);
+    results['vec-mlp-batched'].total = total;
+    lastResults = results;
+    renderLadderTable();
+
+    setStatus('generating', 'running the stencil, grid to grid...');
+    await ensureVecStencil();
+    results['vec-stencil'] = await measureWorkerStep('vec-stencil', board);
+    results['vec-stencil'].correctCount = countMatches(results['vec-stencil'].binarized, trueNext);
+    results['vec-stencil'].total = total;
+    lastResults = results;
+
+    renderLadderTable();
+    renderThumbs(trueNext);
+    setStatus('ready', 'ready');
+  } catch (e) {
+    setStatus('error', 'a method failed: ' + e.message);
+  } finally {
+    running = false;
+    els.runAll.disabled = false;
+  }
+}
+els.runAll.onclick = () => runEveryRung();
+
+for (const btn of document.querySelectorAll('.gridsize-btn')) {
+  btn.addEventListener('click', () => setBoardSize(Number(btn.dataset.size)));
+}
+
+await init();
+setBoardSize(32);
+setStatus('ready', 'ready');
+renderLadderTable();
+</script>
+</body>
+</html>

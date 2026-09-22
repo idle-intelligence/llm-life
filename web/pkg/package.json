@@ -1,0 +1,17 @@
+{
+  "name": "life",
+  "type": "module",
+  "description": "Classical cellular automaton (Game of Life, general B/S rules) — the ground truth llm-life is scored against",
+  "version": "0.1.0",
+  "license": "MIT",
+  "files": [
+    "life_bg.wasm",
+    "life.js",
+    "life.d.ts"
+  ],
+  "main": "life.js",
+  "types": "life.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "llm-life",
+  "type": "module",
+  "description": "A language model as the update rule of a cellular automaton",
+  "version": "0.1.0",
+  "license": "MIT",
+  "files": [
+    "llm_life_bg.wasm",
+    "llm_life.js",
+    "llm_life.d.ts"
+  ],
+  "main": "llm_life.js",
+  "types": "llm_life.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
