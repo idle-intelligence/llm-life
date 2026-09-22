@@ -84,7 +84,7 @@ Measured in a browser tab at 16x16 on an M2.
 | 9 numbers to centre (batched) | 0.0253 | 1,442 | 256 / 256 |
 | stencil (grid to grid) | 0.0928 | 3,329 | 256 / 256 |
 
-Two open questions: "Why is batching slower with the LLM? Why is batching
+Two questions for the blog post: "Why is batching slower with the LLM? Why is batching
 faster with the other models?"
 
 ## Layout
