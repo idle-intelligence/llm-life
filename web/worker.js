@@ -45,6 +45,25 @@ const CHUNK = 64 * 1024 * 1024;
 // Bump the version if either file's contents change.
 const MODEL_CACHE = 'llm-life-model-v1';
 
+// Hugging Face only counts a model download when a request hits a query
+// file - config.json for a repo with no known library (see
+// huggingface.co/docs/hub/models-download-stats). Neither Hub repo here has
+// one, so a real .bin fetch alone counts for nothing. Ping config.json once
+// per repo per page load, result ignored, never through the Cache API so
+// every load actually hits the Hub.
+const HF_REPOS = [
+  'https://huggingface.co/idle-intelligence/llm-of-life-lora',
+  'https://huggingface.co/idle-intelligence/stencil-life',
+];
+const countedRepos = new Set();
+function countDownload(url) {
+  const repo = HF_REPOS.find((r) => url.startsWith(r + '/'));
+  if (!repo || countedRepos.has(repo)) return;
+  countedRepos.add(repo);
+  fetch(`${repo}/resolve/main/config.json`, { cache: 'no-store' }).catch((err) =>
+    console.error('[worker] download-count ping failed:', err));
+}
+
 function splitIntoChunks(buf) {
   const chunks = [];
   for (let off = 0; off < buf.length; off += CHUNK) {
@@ -173,6 +192,7 @@ async function handle(id, type, payload, reply) {
       // the base model.
       let adapter = null;
       if (payload.adapterUrl) {
+        countDownload(payload.adapterUrl);
         const bytes = new Uint8Array(await (await fetch(payload.adapterUrl)).arrayBuffer());
         const name = payload.adapterUrl.split('/').pop().replace(/\.bin$/, '');
         // Variant A's resident prefix must match how this adapter was
@@ -186,6 +206,7 @@ async function handle(id, type, payload, reply) {
       await ensureWasm();
       bertEngine = new BertEngine(payload.width, payload.height);
       bertGrid = { width: payload.width, height: payload.height };
+      countDownload(payload.checkpointUrl);
       const bytes = new Uint8Array(await (await fetch(payload.checkpointUrl)).arrayBuffer());
       bertEngine.loadCheckpoint(bytes, payload.dModel, payload.nLayers, payload.nHeads);
       reply(true, { dModel: bertEngine.dModel(), numLayers: bertEngine.numLayers() });
@@ -193,6 +214,7 @@ async function handle(id, type, payload, reply) {
       await ensureWasm();
       vecMlpEngine = new VecMlpEngine(payload.width, payload.height);
       vecMlpGrid = { width: payload.width, height: payload.height };
+      countDownload(payload.checkpointUrl);
       const bytes = new Uint8Array(await (await fetch(payload.checkpointUrl)).arrayBuffer());
       vecMlpEngine.loadCheckpoint(bytes, payload.hidden);
       reply(true, { hidden: vecMlpEngine.hidden() });
@@ -200,6 +222,7 @@ async function handle(id, type, payload, reply) {
       await ensureWasm();
       vecStencilEngine = new VecStencilEngine(payload.width, payload.height);
       vecStencilGrid = { width: payload.width, height: payload.height };
+      countDownload(payload.checkpointUrl);
       const bytes = new Uint8Array(await (await fetch(payload.checkpointUrl)).arrayBuffer());
       vecStencilEngine.loadCheckpoint(bytes, payload.dModel, payload.nLayers, payload.nHeads);
       reply(true, { dModel: vecStencilEngine.dModel(), numLayers: vecStencilEngine.numLayers() });
@@ -207,6 +230,7 @@ async function handle(id, type, payload, reply) {
       // Swap the runtime LoRA adapter without a full model reload - replaces
       // whatever adapter is currently applied (LifeEngine::loadAdapter does
       // not stack).
+      countDownload(payload.adapterUrl);
       const bytes = new Uint8Array(await (await fetch(payload.adapterUrl)).arrayBuffer());
       const name = payload.adapterUrl.split('/').pop().replace(/\.bin$/, '');
       engine.loadAdapter(bytes, name.includes('norules'));
