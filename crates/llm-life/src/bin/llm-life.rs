@@ -372,11 +372,11 @@ enum Command {
         tokenizer: PathBuf,
         #[arg(long, default_value = "artifacts/lora-a-norules-300.bin")]
         adapter: PathBuf,
-        #[arg(long, default_value = "artifacts/bert/bert-d16-L1.bin")]
+        #[arg(long, default_value = "artifacts/bert-d16-L1.bin")]
         bert_checkpoint: PathBuf,
-        #[arg(long, default_value = "artifacts/vector/mlp2-32-lrfix.bin")]
+        #[arg(long, default_value = "artifacts/mlp2-32-lrfix.bin")]
         mlp2_checkpoint: PathBuf,
-        #[arg(long, default_value = "artifacts/vector/stencil-d16-L1.bin")]
+        #[arg(long, default_value = "artifacts/stencil-d16-L1.bin")]
         stencil_checkpoint: PathBuf,
         /// The stencil forward is O(n) with the current `stencil_neighbors`
         /// gather table, but is skipped above this size as a safety cap
