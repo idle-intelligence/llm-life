@@ -6,3 +6,5 @@
 /scripts/headless/out
 /artifacts
 target/
+/local/
+/tools/remote/  # remote-box tooling lives outside the repo
