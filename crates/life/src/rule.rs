@@ -16,7 +16,7 @@ pub struct Rule {
 impl Rule {
     /// Conway's Life.
     pub fn life() -> Self {
-        Rule::parse("B3/S23").unwrap()
+        Rule::parse("B3/S23").unwrap() // literal, always parses
     }
 
     /// Parse `B<digits>/S<digits>` (case-insensitive). Returns `None` on any
@@ -43,13 +43,13 @@ impl Rule {
         let mut s = String::from("B");
         for (n, &on) in self.birth.iter().enumerate() {
             if on {
-                s.push(char::from_digit(n as u32, 10).unwrap());
+                s.push(char::from_digit(n as u32, 10).unwrap()); // n < 9, always a valid digit
             }
         }
         s.push_str("/S");
         for (n, &on) in self.survive.iter().enumerate() {
             if on {
-                s.push(char::from_digit(n as u32, 10).unwrap());
+                s.push(char::from_digit(n as u32, 10).unwrap()); // n < 9, always a valid digit
             }
         }
         s

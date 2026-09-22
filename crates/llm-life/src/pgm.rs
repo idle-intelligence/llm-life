@@ -4,7 +4,7 @@
 //! viewer and every Python script reads it; the demo page paints from the
 //! same float grids directly.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::io::Write;
 use std::path::Path;
 
@@ -12,7 +12,7 @@ use std::path::Path;
 /// by `zoom` so a 64x64 grid is legible without a viewer that can zoom.
 /// 0.0 is white and 1.0 is black, matching the demo page.
 pub fn write_pgm(path: &Path, values: &[f32], width: usize, height: usize, zoom: usize) -> Result<()> {
-    assert_eq!(values.len(), width * height);
+    anyhow::ensure!(values.len() == width * height, "write_pgm: values.len() does not match width * height");
     let mut out = Vec::with_capacity(width * height * zoom * zoom + 32);
     write!(out, "P5\n{} {}\n255\n", width * zoom, height * zoom)?;
     for y in 0..height {
@@ -65,5 +65,3 @@ pub fn read_pgm(path: &Path, zoom: usize) -> Result<(Vec<f32>, usize, usize)> {
     }
     Ok((values, width, height))
 }
-
-use anyhow::Context;
