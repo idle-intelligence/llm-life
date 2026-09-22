@@ -122,6 +122,21 @@ Native release build of the CLI:
 cargo build --release -p llm-life --features cpu
 ```
 
+The three from-scratch checkpoints (BERT, MLP2, stencil) are not tracked in
+this repo; fetch them from Hugging Face:
+
+```bash
+hf download idle-intelligence/stencil-life --local-dir artifacts
+```
+
+The LoRA adapters come from a separate repo:
+
+```bash
+hf download idle-intelligence/llm-of-life-lora --local-dir artifacts
+```
+
+Nothing under `artifacts/` is tracked.
+
 The classical Game of Life CLI:
 
 ```bash
