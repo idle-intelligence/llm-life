@@ -173,16 +173,6 @@ CHROMIUM_PATH=/path/to/chrome \
 node scripts/headless/llm.mjs --url http://127.0.0.1:8010/
 ```
 
-## Training on a GPU box
-
-`tools/remote/box.sh` needs three environment variables: `BOX_HOST` (SSH
-target), `BOX_KEY` (SSH key) and `BOX_ROOT` (remote directory to work in).
-
-```bash
-BOX_HOST=user@host BOX_KEY=~/.ssh/id_box BOX_ROOT=/home/user/llm-life \
-tools/remote/box.sh sync
-```
-
 ## Publish
 
 `tools/publish-pages.sh` builds both wasm engines and republishes the

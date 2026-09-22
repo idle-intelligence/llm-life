@@ -155,7 +155,7 @@ Builds on `../llm-web` (Burn 0.20 + custom WGSL, Qwen2 arch, GGUF, tokenizer, pr
 ## 11. Reframing (owner, 2026-09-19 evening) — three poles, one write-up
 
 The project illustrates three fundamentally different ways to compute the same thing:
-1. **Scaling laws / overpowered thinking** — ONE big LLM, the whole board as text, the four rules, unlimited thinking, writes the next board. Variant E, revived: run on the 3080 box's local Qwen3.6-35B (llama-server, reasoning budget) against the same seeds; measure wrong cells per generation and tokens per correct cell. The tab shows the remote output.
+1. **Scaling laws / overpowered thinking** — ONE big LLM, the whole board as text, the four rules, unlimited thinking, writes the next board. Variant E, revived: run on a local Qwen3.6-35B on an RTX 3080 (Linux) (llama-server, reasoning budget) against the same seeds; measure wrong cells per generation and tokens per correct cell. The tab shows the remote output.
 2. **Find the physics** — variant B: attention shaped like the problem (stencil), one small pass per generation; measured in s/generation and per-case rule recall after fine-tuning.
 3. **Brute force with the right data** — variant A: one LLM call per pixel with the 512-entry rule table learned (fine-tune A FIRST: "neighbors are 1 0 1 0 1 1 0 0, I am 1 →" should reach 100%); two adapters, rules in the prompt vs rules learned; and **BERT of Life** (backlog): a generated dataset of every neighborhood, a small encoder classifying 0/1 and which rule fired (underpopulation / survival / overpopulation / reproduction). "At its core, it's a data problem."
 
