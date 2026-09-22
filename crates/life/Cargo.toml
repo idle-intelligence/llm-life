@@ -8,6 +8,10 @@ description = "Classical cellular automaton (Game of Life, general B/S rules) â€
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "life"
+path = "src/bin/life.rs"
+
 [features]
 default = []
 web = ["dep:wasm-bindgen"]
