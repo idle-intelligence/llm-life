@@ -7,8 +7,7 @@ drift from true Life is the model's character rendered as an image.
 
 [Try the demo](https://idle-intelligence.github.io/llm-life/web/) and the
 [compare page](https://idle-intelligence.github.io/llm-life/web/compare/),
-which runs every method on the same grid, one tab. Both need WebGPU; without
-it, the page says so: "doesn't work without WebGPU, yet".
+which runs every method on the same grid, one tab. Both need WebGPU.
 
 ## The rules, Martin Gardner, 1970
 
