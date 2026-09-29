@@ -108,9 +108,9 @@ def evaluate(model, tokenizer, prefix_ids, cases, device, chunk=64):
         batch = cases[i:i + chunk]
         tokens, positions, m, rows = build_batch(tokenizer, prefix_ids, batch, device)
         logits = model(tokens, positions, m)
-        row_idx = torch.tensor(rows, dtype=torch.long)
+        row_idx = torch.tensor(rows, dtype=torch.long, device=device)
         cell_logits = logits[0, row_idx, :]
-        targets = torch.tensor([t for _, _, t in batch], dtype=torch.long)
+        targets = torch.tensor([t for _, _, t in batch], dtype=torch.long, device=device)
         loss = F.cross_entropy(cell_logits, targets)
         loss_sum += loss.item() * len(batch)
         pred = cell_logits.argmax(-1)
@@ -127,6 +127,15 @@ def main():
     ap.add_argument("--norules", action="store_true")
     ap.add_argument("--steps", type=int, default=100)
     ap.add_argument("--batch", type=int, default=64)
+    ap.add_argument(
+        "--micro-batch",
+        type=int,
+        default=None,
+        help="Split --batch into micro-batches of this size, accumulating gradients (loss "
+        "divided by the number of micro-batches) before one optimizer step, so the "
+        "effective batch stays at the published hyperparameter's value on a GPU too small "
+        "to hold the full batch's activations at once. Defaults to --batch (no accumulation).",
+    )
     ap.add_argument("--lr", type=float, default=3e-5)
     ap.add_argument("--rank", type=int, default=8)
     ap.add_argument("--alpha", type=float, default=16.0)
@@ -179,18 +188,32 @@ def main():
         cursor += args.batch
         batch = [cases[i] for i in idx]
 
-        tokens, positions, m, rows = build_batch(tokenizer, prefix_ids, batch, device)
-        logits = model(tokens, positions, m)
-        row_idx = torch.tensor(rows, dtype=torch.long)
-        cell_logits = logits[0, row_idx, :]
-        targets = torch.tensor([t for _, _, t in batch], dtype=torch.long)
-        loss = F.cross_entropy(cell_logits, targets)
+        # Gradient accumulation: --micro-batch splits this step's --batch
+        # cells into smaller chunks, one forward/backward each (loss scaled
+        # by 1/n_micro so the accumulated gradient matches a single
+        # full-batch backward), one optimizer step per full --batch. Keeps
+        # the effective batch at the published hyperparameter on a GPU too
+        # small to hold --batch cells' worth of attention activations for
+        # backward at once.
+        mb = args.micro_batch or args.batch
         opt.zero_grad()
-        loss.backward()
+        loss_total = 0.0
+        for start_i in range(0, len(batch), mb):
+            micro = batch[start_i:start_i + mb]
+            n_micro = -(-len(batch) // mb)  # ceil
+            tokens, positions, m, rows = build_batch(tokenizer, prefix_ids, micro, device)
+            logits = model(tokens, positions, m)
+            row_idx = torch.tensor(rows, dtype=torch.long, device=device)
+            cell_logits = logits[0, row_idx, :]
+            targets = torch.tensor([t for _, _, t in micro], dtype=torch.long, device=device)
+            micro_loss = F.cross_entropy(cell_logits, targets) / n_micro
+            micro_loss.backward()
+            loss_total += micro_loss.item()
         opt.step()
+        loss_v = loss_total
         secs = time.time() - start
-        log.append((step, loss.item(), secs))
-        print(f"step {step:4d} loss {loss.item():.4f}  {secs:.1f}s")
+        log.append((step, loss_v, secs))
+        print(f"step {step:4d} loss {loss_v:.4f}  {secs:.1f}s")
 
         if args.eval_every and step % args.eval_every == 0:
             e = evaluate(model, tokenizer, prefix_ids, cases, device)
