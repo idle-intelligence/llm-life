@@ -14,6 +14,11 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+# Keep the runner's paths out of the compiled wasm (dependency source paths
+# end up in panic messages otherwise).
+env:
+  RUSTFLAGS: --remap-path-prefix=/home/runner/.cargo=/cargo --remap-path-prefix=/home/runner/work=/src
+
 jobs:
   build:
     runs-on: ubuntu-latest
