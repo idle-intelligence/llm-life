@@ -10,6 +10,16 @@ name = "llm-life"
 path = "src/bin/llm-life.rs"
 required-features = ["native"]
 
+# One-shot bridge for the PyTorch training migration: dumps the published
+# Burn checkpoints (tiny models + LoRA adapters) to safetensors, plus fixed-
+# input oracle logits so the PyTorch port can be checked byte-for-byte
+# against the exact weights the Rust trainer produced. Not part of the
+# ongoing build; run once per checkpoint set.
+[[bin]]
+name = "export"
+path = "src/bin/export.rs"
+required-features = ["native", "cpu", "export"]
+
 [features]
 default = ["native"]
 # Backend/feature selection lives in the consumer crate, not the library
@@ -26,6 +36,7 @@ web = [
 # not wgpu, so it never touches the M2's shared GPU (CLAUDE.md "GPU and
 # measurements"). Consumer-crate-only, per CLAUDE.md "Code".
 cpu = ["burn/ndarray"]
+export = ["dep:safetensors", "dep:serde_json"]
 
 [dependencies]
 life = { path = "../life" }
@@ -45,6 +56,8 @@ wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 web-sys = { version = "0.3", features = ["console"], optional = true }
 clap = { version = "4.5", features = ["derive"], optional = true }
+safetensors = { version = "0.4", optional = true }
+serde_json = { version = "1.0", optional = true }
 
 [lib]
 crate-type = ["cdylib", "rlib"]

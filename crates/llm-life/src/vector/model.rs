@@ -57,9 +57,9 @@ impl Mlp2Config {
 
 #[derive(Module, Debug)]
 pub struct Mlp2OfLife<B: Backend> {
-    fc1: Linear<B>,
-    fc2: Linear<B>,
-    fc3: Linear<B>,
+    pub fc1: Linear<B>,
+    pub fc2: Linear<B>,
+    pub fc3: Linear<B>,
 }
 
 impl<B: Backend> Mlp2OfLife<B> {
@@ -144,16 +144,16 @@ impl<B: Backend> AttnOfLife<B> {
 /// additive mask, pre-norm MLP, both residual — the same shape as
 /// jacobi2000's `Block` (`jacobi2000::model::Block::forward`/`attention`).
 #[derive(Module, Debug)]
-struct StencilBlock<B: Backend> {
-    norm1: LayerNorm<B>,
-    q: Linear<B>,
-    k: Linear<B>,
-    v: Linear<B>,
-    proj: Linear<B>,
-    norm2: LayerNorm<B>,
-    ff1: Linear<B>,
-    ff2: Linear<B>,
-    act: Gelu,
+pub struct StencilBlock<B: Backend> {
+    pub norm1: LayerNorm<B>,
+    pub q: Linear<B>,
+    pub k: Linear<B>,
+    pub v: Linear<B>,
+    pub proj: Linear<B>,
+    pub norm2: LayerNorm<B>,
+    pub ff1: Linear<B>,
+    pub ff2: Linear<B>,
+    pub act: Gelu,
 }
 
 impl<B: Backend> StencilBlock<B> {
@@ -245,10 +245,10 @@ impl StencilConfig {
 
 #[derive(Module, Debug)]
 pub struct StencilOfLife<B: Backend> {
-    embed: Linear<B>,
-    blocks: Vec<StencilBlock<B>>,
-    head: Linear<B>,
-    n_heads: usize,
+    pub embed: Linear<B>,
+    pub blocks: Vec<StencilBlock<B>>,
+    pub head: Linear<B>,
+    pub n_heads: usize,
 }
 
 impl<B: Backend> StencilOfLife<B> {

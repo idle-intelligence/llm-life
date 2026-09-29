@@ -57,11 +57,11 @@ impl BertConfig {
 
 #[derive(Module, Debug)]
 pub struct BertOfLife<B: Backend> {
-    tok_emb: Embedding<B>,
-    pos_emb: Embedding<B>,
-    encoder: TransformerEncoder<B>,
-    head: Linear<B>,
-    d_model: usize,
+    pub tok_emb: Embedding<B>,
+    pub pos_emb: Embedding<B>,
+    pub encoder: TransformerEncoder<B>,
+    pub head: Linear<B>,
+    pub d_model: usize,
 }
 
 impl<B: Backend> BertOfLife<B> {
@@ -108,8 +108,8 @@ impl<B: Backend> BertOfLife<B> {
 /// MLP baseline on the 9 bits").
 #[derive(Module, Debug)]
 pub struct MlpOfLife<B: Backend> {
-    fc1: Linear<B>,
-    fc2: Linear<B>,
+    pub fc1: Linear<B>,
+    pub fc2: Linear<B>,
 }
 
 #[derive(Config, Debug)]
