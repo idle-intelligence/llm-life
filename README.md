@@ -187,13 +187,6 @@ CHROMIUM_PATH=/path/to/chrome \
 node scripts/headless/llm.mjs --url http://127.0.0.1:8010/
 ```
 
-## Publish
-
-`tools/publish-pages.sh` builds both wasm engines and republishes the
-committed `web/` tree to an orphan `gh-pages` branch. It refuses to publish
-if any model weights ended up in the export. It never pushes; push the
-result with `git push --force-with-lease origin gh-pages`.
-
 ## Engine
 
 The inference engine is `llm-wasm` from
