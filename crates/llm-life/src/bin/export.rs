@@ -461,7 +461,57 @@ fn export_variant_a_oracle(
     Ok(())
 }
 
+/// Reverse of `export_lora`: a PEFT-layout safetensors adapter (this port's
+/// training output) back to `LLMLIFE2`, so it can be handed to `lean`'s
+/// `apply_lora` (`crates/lean/src/lora.rs` in llm-web) the same way a
+/// natively Burn-trained adapter is. `lora_A.weight` `[r, in]` -> `a`
+/// `[in, r]`, `lora_B.weight` `[out, r]` -> `b` `[r, out]` (transpose back).
+fn import_lora(path: &Path, rank: u32, alpha: f32, out: &Path) -> Result<()> {
+    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let st = safetensors::SafeTensors::deserialize(&bytes)?;
+
+    let mut n_layers = 0usize;
+    for (name, _) in st.tensors() {
+        if let Some(rest) = name.strip_prefix("base_model.model.model.layers.") {
+            let idx: usize = rest.split('.').next().unwrap().parse()?;
+            n_layers = n_layers.max(idx + 1);
+        }
+    }
+    anyhow::ensure!(n_layers > 0, "no layer tensors found in {}", path.display());
+
+    let device = Default::default();
+    let read2 = |name: &str, transpose: bool| -> Result<Tensor<CB, 2>> {
+        let view = st.tensor(name)?;
+        anyhow::ensure!(view.dtype() == safetensors::Dtype::F32, "{name} is not f32");
+        let shape = view.shape().to_vec();
+        let data: Vec<f32> = view.data().chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+        let t: Tensor<CB, 2> = Tensor::from_data(TensorData::new(data, [shape[0], shape[1]]), &device);
+        Ok(if transpose { t.transpose() } else { t })
+    };
+
+    let mut params = Vec::with_capacity(n_layers * 8);
+    for layer in 0..n_layers {
+        for proj in ["q", "k", "v", "o"] {
+            let a = read2(&format!("base_model.model.model.layers.{layer}.self_attn.{proj}_proj.lora_A.weight"), true)?;
+            let b = read2(&format!("base_model.model.model.layers.{layer}.self_attn.{proj}_proj.lora_B.weight"), true)?;
+            params.push(a);
+            params.push(b);
+        }
+    }
+
+    let spec = llm_life::train::LoraSpec { rank: rank as usize, alpha, mlp: false };
+    llm_life::train::lora_io::save::<CB>(out, &spec, &params)?;
+    println!("wrote {} ({} layers, rank {rank}, alpha {alpha})", out.display(), n_layers);
+    Ok(())
+}
+
 fn main() -> Result<()> {
+    if let Some(path) = arg("import-lora") {
+        let rank: u32 = arg("rank").unwrap_or_else(|| "8".into()).parse()?;
+        let alpha: f32 = arg("alpha").unwrap_or_else(|| "16".into()).parse()?;
+        let out = PathBuf::from(arg("out").expect("--out required"));
+        return import_lora(&PathBuf::from(path), rank, alpha, &out);
+    }
     let stencil_dir = PathBuf::from(arg("stencil-life").unwrap_or_else(|| ".".into()));
     let lora_dir = PathBuf::from(arg("lora").unwrap_or_else(|| ".".into()));
     let out = PathBuf::from(arg("out").unwrap_or_else(|| "export-out".into()));
