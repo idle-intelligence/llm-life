@@ -33,7 +33,11 @@ def build_prompt(tokenizer, rule: Rule):
     return prefix, dead[0], alive[0]
 
 
+@torch.no_grad()
 def evaluate(model, prefix, dead, alive, grids, rule, device):
+    # See train_variant_a.py's `evaluate`: without `no_grad`, every eval
+    # forward keeps its autograd graph alive with nothing to ever consume
+    # it, which is fine on a Mac's unified memory but OOMs a discrete GPU.
     losses, accs, ious, alive_recalls, dead_recalls = [], [], [], [], []
     for g in grids:
         packed = pack(g, prefix, dead, alive)

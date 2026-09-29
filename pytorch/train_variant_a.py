@@ -92,7 +92,15 @@ def build_batch(tokenizer, prefix_ids: list[int], batch, device):
     return tokens_t, positions_t, mask_out, answer_rows
 
 
+@torch.no_grad()
 def evaluate(model, tokenizer, prefix_ids, cases, device, chunk=64):
+    # Bare eval-time forwards build a full autograd graph too (`lora_A`/
+    # `lora_B` require grad and every base-model activation feeds them) even
+    # though nothing ever calls `.backward()` on the result. Never freed,
+    # that graph accumulates across every chunk of a 512-case eval and OOMs
+    # a 10 GB card long before the training loop itself would — the PyTorch
+    # analog of the Burn trainer's `evaluate_a`'s own `drop(l.backward())`
+    # workaround for the same retained-graph problem.
     correct = 0
     loss_sum = 0.0
     done = 0
