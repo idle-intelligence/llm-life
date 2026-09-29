@@ -16,6 +16,10 @@ struct Params {
     height: u32,
     birth_mask: u32,
     survive_mask: u32,
+    // See lut_byte.wgsl's Params.dispatch_x doc comment: folds a 2D
+    // workgroup grid back into one linear word index when the word count
+    // needs more than 65535 workgroups in one dimension.
+    dispatch_x: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -43,11 +47,11 @@ fn full_adder(a: u32, b: u32, c: u32) -> vec2<u32> {
 }
 
 @compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn main(@builtin(workgroup_id) wgid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
     let wpr = params.words_per_row;
     let h = params.height;
     let total = wpr * h;
-    let idx = gid.x;
+    let idx = (wgid.y * params.dispatch_x + wgid.x) * 256u + lid.x;
     if (idx >= total) {
         return;
     }

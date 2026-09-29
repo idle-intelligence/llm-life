@@ -22,6 +22,8 @@ pub struct Engine {
 struct LutParams {
     width: u32,
     height: u32,
+    dispatch_x: u32,
+    _pad: u32,
 }
 
 #[repr(C)]
@@ -31,6 +33,8 @@ struct BitpackParams {
     height: u32,
     birth_mask: u32,
     survive_mask: u32,
+    dispatch_x: u32,
+    _pad: [u32; 3],
 }
 
 fn make_pipeline(device: &wgpu::Device, label: &str, src: &str) -> wgpu::ComputePipeline {
@@ -151,14 +155,27 @@ impl Engine {
         out
     }
 
+    /// WebGPU caps a single dispatch dimension at 65535 workgroups, so a 1D
+    /// grid of `ceil(n / 256)` workgroups is folded into a 2D (x, y) grid
+    /// once it would exceed that — see `lut_byte.wgsl`/`bitpack.wgsl`'s
+    /// `Params::dispatch_x` doc comment for how the shader undoes this.
+    fn dispatch_shape(n: u32) -> (u32, u32) {
+        let workgroups = n.div_ceil(256);
+        if workgroups <= 65535 {
+            (workgroups, 1)
+        } else {
+            (65535, workgroups.div_ceil(65535))
+        }
+    }
+
     fn dispatch_1d(&self, pipeline: &wgpu::ComputePipeline, bind_group: &wgpu::BindGroup, n: u32) -> wgpu::CommandEncoder {
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("gen") });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("gen"), timestamp_writes: None });
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, bind_group, &[]);
-            let workgroups = n.div_ceil(256);
-            pass.dispatch_workgroups(workgroups, 1, 1);
+            let (x, y) = Self::dispatch_shape(n);
+            pass.dispatch_workgroups(x, y, 1);
         }
         encoder
     }
@@ -173,7 +190,8 @@ impl Engine {
     #[allow(clippy::too_many_arguments)]
     pub fn run_lut_timed(&self, width: u32, height: u32, lut: &[u32; 512], initial: &[u32], warmup: u32, generations: u32, flush_every: u32) -> (Vec<u32>, Duration) {
         let n = width * height;
-        let params = self.buf_uniform(LutParams { width, height }, "lut_params");
+        let (dispatch_x, _) = Self::dispatch_shape(n);
+        let params = self.buf_uniform(LutParams { width, height, dispatch_x, _pad: 0 }, "lut_params");
         let lut_buf = self.buf_u32(lut, "lut_table");
         let mut a = self.buf_u32(initial, "grid_a");
         let mut b = self.buf_empty_u32(n as usize, "grid_b");
@@ -230,7 +248,8 @@ impl Engine {
     #[allow(clippy::too_many_arguments)]
     pub fn run_bitpack_timed(&self, words_per_row: u32, height: u32, birth_mask: u32, survive_mask: u32, initial: &[u32], warmup: u32, generations: u32, flush_every: u32) -> (Vec<u32>, Duration) {
         let n = words_per_row * height;
-        let params = self.buf_uniform(BitpackParams { words_per_row, height, birth_mask, survive_mask }, "bitpack_params");
+        let (dispatch_x, _) = Self::dispatch_shape(n);
+        let params = self.buf_uniform(BitpackParams { words_per_row, height, birth_mask, survive_mask, dispatch_x, _pad: [0; 3] }, "bitpack_params");
         let mut a = self.buf_u32(initial, "words_a");
         let mut b = self.buf_empty_u32(n as usize, "words_b");
 

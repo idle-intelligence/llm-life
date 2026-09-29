@@ -15,6 +15,13 @@
 struct Params {
     width: u32,
     height: u32,
+    // Number of workgroups dispatched along X. A 1D grid of cells can need
+    // more workgroups than WebGPU's per-dimension dispatch limit (65535)
+    // allows in one axis (e.g. 4096x4096 cells / 256 = 65536 workgroups) —
+    // the host dispatches a 2D (x, y) workgroup grid instead and this lets
+    // the shader fold (workgroup_id.x, workgroup_id.y) back into one linear
+    // cell index.
+    dispatch_x: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -23,8 +30,8 @@ struct Params {
 @group(0) @binding(3) var<storage, read_write> dst: array<u32>;
 
 @compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let i = gid.x;
+fn main(@builtin(workgroup_id) wgid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
+    let i = (wgid.y * params.dispatch_x + wgid.x) * 256u + lid.x;
     let w = params.width;
     let h = params.height;
     let n = w * h;
