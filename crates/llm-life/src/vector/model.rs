@@ -140,6 +140,16 @@ impl<B: Backend> AttnOfLife<B> {
     }
 }
 
+/// Rows of queries gathered per attention chunk (see `StencilBlock::attention`).
+/// In tests this is set tiny so the 16x16/32x32 boards already exercised by
+/// `tests::gather_matches_dense_mask_*` and `nonsquare_wgpu_tests` cross
+/// several chunk boundaries, proving the chunk/concat path is bit-identical
+/// to the unchunked one at a size cheap enough to actually run.
+#[cfg(not(test))]
+const ATTN_GATHER_CHUNK: usize = 1 << 16;
+#[cfg(test)]
+const ATTN_GATHER_CHUNK: usize = 7;
+
 /// (ii) one stencil-masked attention block: pre-norm self-attention with an
 /// additive mask, pre-norm MLP, both residual — the same shape as
 /// jacobi2000's `Block` (`jacobi2000::model::Block::forward`/`attention`).
@@ -186,6 +196,23 @@ impl<B: Backend> StencilBlock<B> {
     /// `life::Grid::neighbor_indices` taps (self + 8 neighbours, all always
     /// in-bounds on the toroidal grid — no masking needed, just a gather),
     /// so there is never a dense `[n, n]` score tensor to materialise.
+    ///
+    /// The gather itself still blows a query up by 9x, into a
+    /// `[b, heads, chunk, 9, hd]` tensor -- at the full grid (`chunk == n`)
+    /// that one buffer scales with *total cell count*, not with
+    /// width/height individually: at 3840x2160 (8,294,400 cells) and the
+    /// deployed `d_model=16, n_heads=1` (`VEC_STENCIL_MODEL` in
+    /// web/compare/index.html) it is `8_294_400 * 9 * 16 * 4` bytes =
+    /// 4,777,574,400 -- confirmed by a native release run panicking with
+    /// exactly that `can't allocate buffer of size` from cubecl-wgpu.
+    /// Every square board this was checked against before (16..2048,
+    /// <=4,194,304 cells) stayed under that threshold, so it read as a
+    /// "square works, non-square doesn't" bug when it was really "small
+    /// enough works, big enough doesn't" and no square board this size had
+    /// been tried. Chunking the *query* dimension of the gather (k/v for
+    /// the whole sequence are cheap -- `[b, heads, n, hd]`, no 9x blow-up --
+    /// so only the gather output needs bounding) keeps that buffer's size
+    /// independent of total grid size.
     fn attention(&self, x: Tensor<B, 3>, neighbors: Tensor<B, 1, Int>, heads: usize) -> Tensor<B, 3> {
         let [b, t, d] = x.dims();
         let hd = d / heads;
@@ -195,17 +222,25 @@ impl<B: Backend> StencilBlock<B> {
         let k = split(self.k.forward(x.clone()));
         let v = split(self.v.forward(x));
 
-        // gather each query's 9 taps out of k/v along the sequence dim
-        let gather = |y: Tensor<B, 4>| -> Tensor<B, 5> {
-            y.select(2, neighbors.clone()).reshape([b, heads, n, 9, hd])
-        };
-        let k_nb = gather(k);
-        let v_nb = gather(v);
-        let q = q.reshape([b, heads, n, 1, hd]);
+        let mut chunks = Vec::with_capacity(n.div_ceil(ATTN_GATHER_CHUNK));
+        for start in (0..n).step_by(ATTN_GATHER_CHUNK) {
+            let end = (start + ATTN_GATHER_CHUNK).min(n);
+            let rows = end - start;
+            let nb_chunk = neighbors.clone().slice(start * 9..end * 9);
+            // gather this chunk's queries' 9 taps out of k/v along the sequence dim
+            let gather = |y: Tensor<B, 4>| -> Tensor<B, 5> {
+                y.select(2, nb_chunk.clone()).reshape([b, heads, rows, 9, hd])
+            };
+            let k_nb = gather(k.clone());
+            let v_nb = gather(v.clone());
+            let q_chunk = q.clone().slice([0..b, 0..heads, start..end, 0..hd]).reshape([b, heads, rows, 1, hd]);
 
-        let scores = (q * k_nb).sum_dim(4).reshape([b, heads, n, 9]) / (hd as f32).sqrt();
-        let w = softmax(scores, 3).reshape([b, heads, n, 9, 1]);
-        (w * v_nb).sum_dim(3).reshape([b, heads, n, hd]).permute([0, 2, 1, 3]).reshape([b, t, d])
+            let scores = (q_chunk * k_nb).sum_dim(4).reshape([b, heads, rows, 9]) / (hd as f32).sqrt();
+            let w = softmax(scores, 3).reshape([b, heads, rows, 9, 1]);
+            chunks.push((w * v_nb).sum_dim(3).reshape([b, heads, rows, hd]));
+        }
+        let out = if chunks.len() == 1 { chunks.pop().unwrap() } else { Tensor::cat(chunks, 2) };
+        out.permute([0, 2, 1, 3]).reshape([b, t, d])
     }
 
     fn num_params(&self) -> usize {
@@ -374,4 +409,108 @@ mod tests {
     fn gather_matches_dense_mask_32x32() {
         check_equivalence(32, 32);
     }
+}
+
+/// Repro for the 3840x2160 "6,244,398/8,294,400 correct after 3
+/// generations" report: cross-backend equivalence (NdArray reference vs.
+/// the wgpu backend the browser actually runs) at small non-square boards,
+/// same weights (loaded via `into_record`/`load_record` so both backends
+/// run byte-identical parameters), same input cells. NdArray-vs-NdArray
+/// (the module above) can't see a wgpu-only kernel bug; this can.
+#[cfg(all(test, feature = "cpu"))]
+mod nonsquare_wgpu_tests {
+    use super::*;
+    use burn::backend::{NdArray, Wgpu};
+    use burn::module::Module;
+    use burn::record::{BinBytesRecorder, FullPrecisionSettings, Recorder};
+
+    fn check_wgpu_matches_reference(width: usize, height: usize) {
+        let cpu_device = Default::default();
+        let cfg = StencilConfig::new(8, 2, 2);
+        let cpu_model: StencilOfLife<NdArray> = cfg.init(&cpu_device);
+        let recorder = BinBytesRecorder::<FullPrecisionSettings>::new();
+        let bytes = recorder.record(cpu_model.clone().into_record(), ()).expect("serialize record");
+
+        let gpu_device: <Wgpu as Backend>::Device = Default::default();
+        let record = recorder.load(bytes, &gpu_device).expect("deserialize record");
+        let gpu_model: StencilOfLife<Wgpu> = cfg.init(&gpu_device).load_record(record);
+
+        let n = width * height;
+        // deterministic 0/1 pattern, not RNG, so it's identical on both
+        // backends without relying on matching `Distribution` samplers.
+        let cells_data: Vec<f32> = (0..n).map(|i| ((i * 2654435761u64 as usize) % 7 < 3) as u8 as f32).collect();
+
+        let cpu_cells: Tensor<NdArray, 2> = Tensor::<NdArray, 1>::from_floats(cells_data.as_slice(), &cpu_device).reshape([1, n]);
+        let gpu_cells: Tensor<Wgpu, 2> = Tensor::<Wgpu, 1>::from_floats(cells_data.as_slice(), &gpu_device).reshape([1, n]);
+
+        let cpu_neighbors = stencil_neighbors::<NdArray>(width, height, &cpu_device);
+        let gpu_neighbors = stencil_neighbors::<Wgpu>(width, height, &gpu_device);
+
+        let cpu_out = cpu_model.forward(cpu_cells, cpu_neighbors);
+        let gpu_out = gpu_model.forward(gpu_cells, gpu_neighbors);
+
+        let cpu_vec = cpu_out.into_data().to_vec::<f32>().unwrap();
+        let gpu_vec = gpu_out.into_data().to_vec::<f32>().unwrap();
+
+        let mismatches: Vec<(usize, f32, f32)> = cpu_vec
+            .iter()
+            .zip(gpu_vec.iter())
+            .enumerate()
+            .filter(|(_, (a, b))| (**a - **b).abs() > 1e-3)
+            .map(|(i, (a, b))| (i, *a, *b))
+            .collect();
+        assert!(
+            mismatches.is_empty(),
+            "{width}x{height}: {}/{n} mismatched, e.g. {:?}",
+            mismatches.len(),
+            &mismatches[..mismatches.len().min(10)]
+        );
+    }
+
+    #[test]
+    fn wgpu_matches_reference_32x16() {
+        check_wgpu_matches_reference(32, 16);
+    }
+
+    #[test]
+    fn wgpu_matches_reference_16x32() {
+        check_wgpu_matches_reference(16, 32);
+    }
+
+    #[test]
+    fn wgpu_matches_reference_48x16() {
+        check_wgpu_matches_reference(48, 16);
+    }
+
+    #[test]
+    fn wgpu_matches_reference_64x96() {
+        check_wgpu_matches_reference(64, 96);
+    }
+
+    #[test]
+    fn wgpu_matches_reference_square_32x32() {
+        check_wgpu_matches_reference(32, 32);
+    }
+
+    // Bisection toward the reported 3840x2160 (8,294,400 cells) failure:
+    // is it non-square shape, or total cell count? 2880x2880 has the exact
+    // same total (2880*2880 == 3840*2160 == 8,294,400) but is square.
+    #[test]
+    #[ignore]
+    fn wgpu_matches_reference_3840x2160() {
+        check_wgpu_matches_reference(3840, 2160);
+    }
+
+    #[test]
+    #[ignore]
+    fn wgpu_matches_reference_square_2880x2880() {
+        check_wgpu_matches_reference(2880, 2880);
+    }
+
+    #[test]
+    #[ignore]
+    fn wgpu_matches_reference_1920x1080() {
+        check_wgpu_matches_reference(1920, 1080);
+    }
+
 }
