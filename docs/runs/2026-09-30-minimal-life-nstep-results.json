@@ -1,0 +1,252 @@
+[
+  {
+    "name": "A untied DeepCNN n=2 c=8",
+    "params": 1257,
+    "n_steps": 2,
+    "density": 0.38,
+    "converged": 5,
+    "seeds": 5,
+    "seeds_run": 5,
+    "median_steps_to_converge": 3200.0,
+    "best_cells_correct_non_converged": null,
+    "stopped_early_hopeless": 0,
+    "wall_seconds": 129.05955123901367,
+    "per_seed": [
+      {
+        "seed": 0,
+        "converged_at": 3600,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 3600
+      },
+      {
+        "seed": 1,
+        "converged_at": 1600,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 1600
+      },
+      {
+        "seed": 2,
+        "converged_at": 2200,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 2200
+      },
+      {
+        "seed": 3,
+        "converged_at": 3200,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 3200
+      },
+      {
+        "seed": 4,
+        "converged_at": 6000,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 6000
+      }
+    ]
+  },
+  {
+    "name": "A untied DeepCNN n=2 c=32",
+    "params": 18849,
+    "n_steps": 2,
+    "density": 0.38,
+    "converged": 5,
+    "seeds": 5,
+    "seeds_run": 5,
+    "median_steps_to_converge": 1600.0,
+    "best_cells_correct_non_converged": null,
+    "stopped_early_hopeless": 0,
+    "wall_seconds": 61.79666233062744,
+    "per_seed": [
+      {
+        "seed": 0,
+        "converged_at": 2200,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 2200
+      },
+      {
+        "seed": 1,
+        "converged_at": 1600,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 1600
+      },
+      {
+        "seed": 2,
+        "converged_at": 2000,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 2000
+      },
+      {
+        "seed": 3,
+        "converged_at": 1000,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 1000
+      },
+      {
+        "seed": 4,
+        "converged_at": 1400,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 1400
+      }
+    ]
+  },
+  {
+    "name": "A untied DeepCNN n=2 c=64",
+    "params": 74561,
+    "n_steps": 2,
+    "density": 0.38,
+    "converged": 5,
+    "seeds": 5,
+    "seeds_run": 5,
+    "median_steps_to_converge": 2000.0,
+    "best_cells_correct_non_converged": null,
+    "stopped_early_hopeless": 0,
+    "wall_seconds": 76.09556722640991,
+    "per_seed": [
+      {
+        "seed": 0,
+        "converged_at": 1200,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 1200
+      },
+      {
+        "seed": 1,
+        "converged_at": 2800,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 2800
+      },
+      {
+        "seed": 2,
+        "converged_at": 1400,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 1400
+      },
+      {
+        "seed": 3,
+        "converged_at": 2600,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 2600
+      },
+      {
+        "seed": 4,
+        "converged_at": 2000,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 2000
+      }
+    ]
+  },
+  {
+    "name": "A untied DeepCNN n=3 c=8",
+    "params": 1841,
+    "n_steps": 3,
+    "density": 0.38,
+    "converged": 1,
+    "seeds": 5,
+    "seeds_run": 5,
+    "median_steps_to_converge": 4600.0,
+    "best_cells_correct_non_converged": 0.9999609375,
+    "stopped_early_hopeless": 2,
+    "wall_seconds": 435.84470891952515,
+    "per_seed": [
+      {
+        "seed": 0,
+        "converged_at": null,
+        "best_cells_correct": 0.7153125,
+        "stopped_early": "hopeless",
+        "steps_run": 3000
+      },
+      {
+        "seed": 1,
+        "converged_at": 4600,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 4600
+      },
+      {
+        "seed": 2,
+        "converged_at": null,
+        "best_cells_correct": 0.9999609375,
+        "stopped_early": null,
+        "steps_run": 20000
+      },
+      {
+        "seed": 3,
+        "converged_at": null,
+        "best_cells_correct": 0.9841015625,
+        "stopped_early": null,
+        "steps_run": 20000
+      },
+      {
+        "seed": 4,
+        "converged_at": null,
+        "best_cells_correct": 0.7025,
+        "stopped_early": "hopeless",
+        "steps_run": 3000
+      }
+    ]
+  },
+  {
+    "name": "A untied DeepCNN n=3 c=32",
+    "params": 28097,
+    "n_steps": 3,
+    "density": 0.38,
+    "converged": 4,
+    "seeds": 5,
+    "seeds_run": 5,
+    "median_steps_to_converge": 8500.0,
+    "best_cells_correct_non_converged": 0.991953125,
+    "stopped_early_hopeless": 0,
+    "wall_seconds": 469.8632035255432,
+    "per_seed": [
+      {
+        "seed": 0,
+        "converged_at": 11800,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 11800
+      },
+      {
+        "seed": 1,
+        "converged_at": null,
+        "best_cells_correct": 0.991953125,
+        "stopped_early": null,
+        "steps_run": 20000
+      },
+      {
+        "seed": 2,
+        "converged_at": 5200,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 5200
+      },
+      {
+        "seed": 3,
+        "converged_at": 13000,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 13000
+      },
+      {
+        "seed": 4,
+        "converged_at": 4800,
+        "best_cells_correct": 1.0,
+        "stopped_early": null,
+        "steps_run": 4800
+      }
+    ]
+  }
+]

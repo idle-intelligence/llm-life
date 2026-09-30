@@ -1,0 +1,1574 @@
+[
+  {
+    "name": "A untied DeepCNN n=2 c=8",
+    "params": 1257,
+    "n_steps": 2,
+    "density": 0.38,
+    "pattern_frac": 0.0,
+    "converged": 5,
+    "seeds": 5,
+    "median_steps_to_converge": 3500.0,
+    "best_cells_correct_non_converged": null,
+    "mean_final_cells_correct": 0.99998828125,
+    "mean_final_baseline": 0.6851484375,
+    "pattern_agg": {
+      "block": {
+        "exact_boards": 20,
+        "total_boards": 20,
+        "mean_masked_cells_correct": 1.0
+      },
+      "beehive": {
+        "exact_boards": 40,
+        "total_boards": 40,
+        "mean_masked_cells_correct": 1.0
+      },
+      "blinker": {
+        "exact_boards": 40,
+        "total_boards": 40,
+        "mean_masked_cells_correct": 1.0
+      },
+      "toad": {
+        "exact_boards": 80,
+        "total_boards": 80,
+        "mean_masked_cells_correct": 1.0
+      },
+      "beacon": {
+        "exact_boards": 40,
+        "total_boards": 40,
+        "mean_masked_cells_correct": 1.0
+      },
+      "glider": {
+        "exact_boards": 160,
+        "total_boards": 160,
+        "mean_masked_cells_correct": 1.0
+      },
+      "lwss": {
+        "exact_boards": 160,
+        "total_boards": 160,
+        "mean_masked_cells_correct": 1.0
+      },
+      "r_pentomino": {
+        "exact_boards": 160,
+        "total_boards": 160,
+        "mean_masked_cells_correct": 1.0
+      }
+    },
+    "wall_seconds": 126.56047344207764,
+    "per_seed": [
+      {
+        "seed": 0,
+        "converged_at": 4000,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 1.0,
+        "final_baseline": 0.68771484375,
+        "stopped_early": null,
+        "steps_run": 4000,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 1,
+        "converged_at": 2000,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 1.0,
+        "final_baseline": 0.682421875,
+        "stopped_early": null,
+        "steps_run": 2000,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 2,
+        "converged_at": 2000,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 0.99998046875,
+        "final_baseline": 0.6794921875,
+        "stopped_early": null,
+        "steps_run": 2000,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 3,
+        "converged_at": 3500,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 0.99998046875,
+        "final_baseline": 0.68642578125,
+        "stopped_early": null,
+        "steps_run": 3500,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 4,
+        "converged_at": 5000,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 0.99998046875,
+        "final_baseline": 0.6896875,
+        "stopped_early": null,
+        "steps_run": 5000,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "A untied DeepCNN n=2 c=32",
+    "params": 18849,
+    "n_steps": 2,
+    "density": 0.38,
+    "pattern_frac": 0.0,
+    "converged": 5,
+    "seeds": 5,
+    "median_steps_to_converge": 2000.0,
+    "best_cells_correct_non_converged": null,
+    "mean_final_cells_correct": 0.999984375,
+    "mean_final_baseline": 0.6851484375,
+    "pattern_agg": {
+      "block": {
+        "exact_boards": 20,
+        "total_boards": 20,
+        "mean_masked_cells_correct": 1.0
+      },
+      "beehive": {
+        "exact_boards": 40,
+        "total_boards": 40,
+        "mean_masked_cells_correct": 1.0
+      },
+      "blinker": {
+        "exact_boards": 40,
+        "total_boards": 40,
+        "mean_masked_cells_correct": 1.0
+      },
+      "toad": {
+        "exact_boards": 80,
+        "total_boards": 80,
+        "mean_masked_cells_correct": 1.0
+      },
+      "beacon": {
+        "exact_boards": 40,
+        "total_boards": 40,
+        "mean_masked_cells_correct": 1.0
+      },
+      "glider": {
+        "exact_boards": 160,
+        "total_boards": 160,
+        "mean_masked_cells_correct": 1.0
+      },
+      "lwss": {
+        "exact_boards": 160,
+        "total_boards": 160,
+        "mean_masked_cells_correct": 1.0
+      },
+      "r_pentomino": {
+        "exact_boards": 160,
+        "total_boards": 160,
+        "mean_masked_cells_correct": 1.0
+      }
+    },
+    "wall_seconds": 84.14711213111877,
+    "per_seed": [
+      {
+        "seed": 0,
+        "converged_at": 2500,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 1.0,
+        "final_baseline": 0.68771484375,
+        "stopped_early": null,
+        "steps_run": 2500,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 1,
+        "converged_at": 3500,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 1.0,
+        "final_baseline": 0.682421875,
+        "stopped_early": null,
+        "steps_run": 3500,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 2,
+        "converged_at": 2000,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 1.0,
+        "final_baseline": 0.6794921875,
+        "stopped_early": null,
+        "steps_run": 2000,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 3,
+        "converged_at": 1500,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 1.0,
+        "final_baseline": 0.68642578125,
+        "stopped_early": null,
+        "steps_run": 1500,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 4,
+        "converged_at": 1500,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 0.999921875,
+        "final_baseline": 0.6896875,
+        "stopped_early": null,
+        "steps_run": 1500,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "A untied DeepCNN n=2 c=64",
+    "params": 74561,
+    "n_steps": 2,
+    "density": 0.38,
+    "pattern_frac": 0.0,
+    "converged": 5,
+    "seeds": 5,
+    "median_steps_to_converge": 2000.0,
+    "best_cells_correct_non_converged": null,
+    "mean_final_cells_correct": 0.9999726562500001,
+    "mean_final_baseline": 0.6851484375,
+    "pattern_agg": {
+      "block": {
+        "exact_boards": 20,
+        "total_boards": 20,
+        "mean_masked_cells_correct": 1.0
+      },
+      "beehive": {
+        "exact_boards": 40,
+        "total_boards": 40,
+        "mean_masked_cells_correct": 1.0
+      },
+      "blinker": {
+        "exact_boards": 40,
+        "total_boards": 40,
+        "mean_masked_cells_correct": 1.0
+      },
+      "toad": {
+        "exact_boards": 80,
+        "total_boards": 80,
+        "mean_masked_cells_correct": 1.0
+      },
+      "beacon": {
+        "exact_boards": 40,
+        "total_boards": 40,
+        "mean_masked_cells_correct": 1.0
+      },
+      "glider": {
+        "exact_boards": 160,
+        "total_boards": 160,
+        "mean_masked_cells_correct": 1.0
+      },
+      "lwss": {
+        "exact_boards": 160,
+        "total_boards": 160,
+        "mean_masked_cells_correct": 1.0
+      },
+      "r_pentomino": {
+        "exact_boards": 160,
+        "total_boards": 160,
+        "mean_masked_cells_correct": 1.0
+      }
+    },
+    "wall_seconds": 79.79660773277283,
+    "per_seed": [
+      {
+        "seed": 0,
+        "converged_at": 2000,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 1.0,
+        "final_baseline": 0.68771484375,
+        "stopped_early": null,
+        "steps_run": 2000,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 1,
+        "converged_at": 3000,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 1.0,
+        "final_baseline": 0.682421875,
+        "stopped_early": null,
+        "steps_run": 3000,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 2,
+        "converged_at": 1500,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 0.999921875,
+        "final_baseline": 0.6794921875,
+        "stopped_early": null,
+        "steps_run": 1500,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 3,
+        "converged_at": 2500,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 0.9999609375,
+        "final_baseline": 0.68642578125,
+        "stopped_early": null,
+        "steps_run": 2500,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 4,
+        "converged_at": 1500,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 0.99998046875,
+        "final_baseline": 0.6896875,
+        "stopped_early": null,
+        "steps_run": 1500,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "B tied MinimalCNN(c=8) n=2",
+    "params": 89,
+    "n_steps": 2,
+    "density": 0.38,
+    "pattern_frac": 0.0,
+    "converged": 1,
+    "seeds": 5,
+    "median_steps_to_converge": 1000.0,
+    "best_cells_correct_non_converged": 0.694375,
+    "mean_final_cells_correct": 0.7469374999999999,
+    "mean_final_baseline": 0.6851484375,
+    "pattern_agg": {
+      "block": {
+        "exact_boards": 4,
+        "total_boards": 20,
+        "mean_masked_cells_correct": 0.2
+      },
+      "beehive": {
+        "exact_boards": 8,
+        "total_boards": 40,
+        "mean_masked_cells_correct": 0.2
+      },
+      "blinker": {
+        "exact_boards": 8,
+        "total_boards": 40,
+        "mean_masked_cells_correct": 0.2
+      },
+      "toad": {
+        "exact_boards": 16,
+        "total_boards": 80,
+        "mean_masked_cells_correct": 0.2
+      },
+      "beacon": {
+        "exact_boards": 8,
+        "total_boards": 40,
+        "mean_masked_cells_correct": 0.2
+      },
+      "glider": {
+        "exact_boards": 32,
+        "total_boards": 160,
+        "mean_masked_cells_correct": 0.2
+      },
+      "lwss": {
+        "exact_boards": 32,
+        "total_boards": 160,
+        "mean_masked_cells_correct": 0.2
+      },
+      "r_pentomino": {
+        "exact_boards": 32,
+        "total_boards": 160,
+        "mean_masked_cells_correct": 0.2
+      }
+    },
+    "wall_seconds": 198.76626420021057,
+    "per_seed": [
+      {
+        "seed": 0,
+        "converged_at": null,
+        "best_cells_correct": 0.686328125,
+        "final_cells_correct": 0.687578125,
+        "final_baseline": 0.68771484375,
+        "stopped_early": "plateau",
+        "steps_run": 5500,
+        "patterns": {
+          "block": {
+            "exact_boards": 0,
+            "total_boards": 4,
+            "masked_cells_correct": 0.0
+          },
+          "beehive": {
+            "exact_boards": 0,
+            "total_boards": 8,
+            "masked_cells_correct": 0.0
+          },
+          "blinker": {
+            "exact_boards": 0,
+            "total_boards": 8,
+            "masked_cells_correct": 0.0
+          },
+          "toad": {
+            "exact_boards": 0,
+            "total_boards": 16,
+            "masked_cells_correct": 0.0
+          },
+          "beacon": {
+            "exact_boards": 0,
+            "total_boards": 8,
+            "masked_cells_correct": 0.0
+          },
+          "glider": {
+            "exact_boards": 0,
+            "total_boards": 32,
+            "masked_cells_correct": 0.0
+          },
+          "lwss": {
+            "exact_boards": 0,
+            "total_boards": 32,
+            "masked_cells_correct": 0.0
+          },
+          "r_pentomino": {
+            "exact_boards": 0,
+            "total_boards": 32,
+            "masked_cells_correct": 0.0
+          }
+        }
+      },
+      {
+        "seed": 1,
+        "converged_at": 1000,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 1.0,
+        "final_baseline": 0.682421875,
+        "stopped_early": null,
+        "steps_run": 1000,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 2,
+        "converged_at": null,
+        "best_cells_correct": 0.689921875,
+        "final_cells_correct": 0.67435546875,
+        "final_baseline": 0.6794921875,
+        "stopped_early": "plateau",
+        "steps_run": 6000,
+        "patterns": {
+          "block": {
+            "exact_boards": 0,
+            "total_boards": 4,
+            "masked_cells_correct": 0.0
+          },
+          "beehive": {
+            "exact_boards": 0,
+            "total_boards": 8,
+            "masked_cells_correct": 0.0
+          },
+          "blinker": {
+            "exact_boards": 0,
+            "total_boards": 8,
+            "masked_cells_correct": 0.0
+          },
+          "toad": {
+            "exact_boards": 0,
+            "total_boards": 16,
+            "masked_cells_correct": 0.0
+          },
+          "beacon": {
+            "exact_boards": 0,
+            "total_boards": 8,
+            "masked_cells_correct": 0.0
+          },
+          "glider": {
+            "exact_boards": 0,
+            "total_boards": 32,
+            "masked_cells_correct": 0.0
+          },
+          "lwss": {
+            "exact_boards": 0,
+            "total_boards": 32,
+            "masked_cells_correct": 0.0
+          },
+          "r_pentomino": {
+            "exact_boards": 0,
+            "total_boards": 32,
+            "masked_cells_correct": 0.0
+          }
+        }
+      },
+      {
+        "seed": 3,
+        "converged_at": null,
+        "best_cells_correct": 0.694375,
+        "final_cells_correct": 0.68375,
+        "final_baseline": 0.68642578125,
+        "stopped_early": "plateau",
+        "steps_run": 9000,
+        "patterns": {
+          "block": {
+            "exact_boards": 0,
+            "total_boards": 4,
+            "masked_cells_correct": 0.0
+          },
+          "beehive": {
+            "exact_boards": 0,
+            "total_boards": 8,
+            "masked_cells_correct": 0.0
+          },
+          "blinker": {
+            "exact_boards": 0,
+            "total_boards": 8,
+            "masked_cells_correct": 0.0
+          },
+          "toad": {
+            "exact_boards": 0,
+            "total_boards": 16,
+            "masked_cells_correct": 0.0
+          },
+          "beacon": {
+            "exact_boards": 0,
+            "total_boards": 8,
+            "masked_cells_correct": 0.0
+          },
+          "glider": {
+            "exact_boards": 0,
+            "total_boards": 32,
+            "masked_cells_correct": 0.0
+          },
+          "lwss": {
+            "exact_boards": 0,
+            "total_boards": 32,
+            "masked_cells_correct": 0.0
+          },
+          "r_pentomino": {
+            "exact_boards": 0,
+            "total_boards": 32,
+            "masked_cells_correct": 0.0
+          }
+        }
+      },
+      {
+        "seed": 4,
+        "converged_at": null,
+        "best_cells_correct": 0.688828125,
+        "final_cells_correct": 0.68900390625,
+        "final_baseline": 0.6896875,
+        "stopped_early": "plateau",
+        "steps_run": 6000,
+        "patterns": {
+          "block": {
+            "exact_boards": 0,
+            "total_boards": 4,
+            "masked_cells_correct": 0.0
+          },
+          "beehive": {
+            "exact_boards": 0,
+            "total_boards": 8,
+            "masked_cells_correct": 0.0
+          },
+          "blinker": {
+            "exact_boards": 0,
+            "total_boards": 8,
+            "masked_cells_correct": 0.0
+          },
+          "toad": {
+            "exact_boards": 0,
+            "total_boards": 16,
+            "masked_cells_correct": 0.0
+          },
+          "beacon": {
+            "exact_boards": 0,
+            "total_boards": 8,
+            "masked_cells_correct": 0.0
+          },
+          "glider": {
+            "exact_boards": 0,
+            "total_boards": 32,
+            "masked_cells_correct": 0.0
+          },
+          "lwss": {
+            "exact_boards": 0,
+            "total_boards": 32,
+            "masked_cells_correct": 0.0
+          },
+          "r_pentomino": {
+            "exact_boards": 0,
+            "total_boards": 32,
+            "masked_cells_correct": 0.0
+          }
+        }
+      }
+    ],
+    "rule_discovery_512_acc_per_seed": [
+      0.712890625,
+      1.0,
+      0.501953125,
+      0.548828125,
+      0.607421875
+    ]
+  },
+  {
+    "name": "A untied DeepCNN n=2 c=32 +25%patterns",
+    "params": 18849,
+    "n_steps": 2,
+    "density": 0.38,
+    "pattern_frac": 0.25,
+    "converged": 5,
+    "seeds": 5,
+    "median_steps_to_converge": 1500.0,
+    "best_cells_correct_non_converged": null,
+    "mean_final_cells_correct": 0.999984375,
+    "mean_final_baseline": 0.6851484375,
+    "pattern_agg": {
+      "block": {
+        "exact_boards": 20,
+        "total_boards": 20,
+        "mean_masked_cells_correct": 1.0
+      },
+      "beehive": {
+        "exact_boards": 40,
+        "total_boards": 40,
+        "mean_masked_cells_correct": 1.0
+      },
+      "blinker": {
+        "exact_boards": 40,
+        "total_boards": 40,
+        "mean_masked_cells_correct": 1.0
+      },
+      "toad": {
+        "exact_boards": 80,
+        "total_boards": 80,
+        "mean_masked_cells_correct": 1.0
+      },
+      "beacon": {
+        "exact_boards": 40,
+        "total_boards": 40,
+        "mean_masked_cells_correct": 1.0
+      },
+      "glider": {
+        "exact_boards": 160,
+        "total_boards": 160,
+        "mean_masked_cells_correct": 1.0
+      },
+      "lwss": {
+        "exact_boards": 160,
+        "total_boards": 160,
+        "mean_masked_cells_correct": 1.0
+      },
+      "r_pentomino": {
+        "exact_boards": 160,
+        "total_boards": 160,
+        "mean_masked_cells_correct": 1.0
+      }
+    },
+    "wall_seconds": 48.686588764190674,
+    "per_seed": [
+      {
+        "seed": 0,
+        "converged_at": 1500,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 1.0,
+        "final_baseline": 0.68771484375,
+        "stopped_early": null,
+        "steps_run": 1500,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 1,
+        "converged_at": 1500,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 0.99998046875,
+        "final_baseline": 0.682421875,
+        "stopped_early": null,
+        "steps_run": 1500,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 2,
+        "converged_at": 1500,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 0.99998046875,
+        "final_baseline": 0.6794921875,
+        "stopped_early": null,
+        "steps_run": 1500,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 3,
+        "converged_at": 1000,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 0.9999609375,
+        "final_baseline": 0.68642578125,
+        "stopped_early": null,
+        "steps_run": 1000,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      },
+      {
+        "seed": 4,
+        "converged_at": 2000,
+        "best_cells_correct": 1.0,
+        "final_cells_correct": 1.0,
+        "final_baseline": 0.6896875,
+        "stopped_early": null,
+        "steps_run": 2000,
+        "patterns": {
+          "block": {
+            "exact_boards": 4,
+            "total_boards": 4,
+            "masked_cells_correct": 1.0
+          },
+          "beehive": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "blinker": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "toad": {
+            "exact_boards": 16,
+            "total_boards": 16,
+            "masked_cells_correct": 1.0
+          },
+          "beacon": {
+            "exact_boards": 8,
+            "total_boards": 8,
+            "masked_cells_correct": 1.0
+          },
+          "glider": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "lwss": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          },
+          "r_pentomino": {
+            "exact_boards": 32,
+            "total_boards": 32,
+            "masked_cells_correct": 1.0
+          }
+        }
+      }
+    ]
+  }
+]

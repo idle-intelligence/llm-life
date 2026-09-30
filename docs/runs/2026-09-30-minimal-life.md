@@ -119,3 +119,97 @@ Raw per-condition JSON (including per-seed step counts and best accuracy):
   generation and scoring, not matmul throughput, dominated wall time, so
   GPU launch overhead would have made it slower, not faster, for this
   sweep.
+
+## Follow-up: n = 2, 3, 10 in one pass (2026-09-30, later the same day)
+
+Follow-up question: what about predicting 3 or 10 rule-applications ahead
+in a single forward pass, instead of 1 or 2? Two model families, this
+time trained on the Linux desktop's GPU (RTX 3080) with a vectorized numpy
+rule-stepper for target generation (`minimal_life_nstep.vec_step`, checked
+bit-for-bit against `life.py`'s `Grid.step` before trusting it, since the
+per-cell Python loop that exactness check depends on is far too slow to
+call n times per training sample at batch size 32):
+
+- **A, untied**: `DeepCNN`, L = n+1 stacked `Conv3x3(circular)+ReLU` layers
+  then a `Conv1x1` readout, one forward pass predicts the n-step-ahead
+  state directly. Widths c in {8, 32, 64}, later {8, 32, 64, 128} once the
+  budget was lifted (see below).
+- **B, weight-tied recurrent**: the n=1 minimal-reliable `MinimalCNN`
+  (channels=8, 89 params) applied n times with shared weights, trained
+  end-to-end on the n-step target only (no 1-step supervision). Intermediate
+  states go through a straight-through estimator: forward value is the hard
+  threshold of the sigmoid output (so the recurrence is the actual binary
+  board-to-board dynamics, not a continuous relaxation), backward pass uses
+  the sigmoid's own gradient. After training, the tied core is checked
+  against the exact rule on all 512 3x3 neighbourhoods
+  (`minimal_life.cnn_512_eval`) to see whether it discovered the Game of
+  Life update rule itself.
+
+Data: same `Grid.random` (xorshift64) initial boards as the n=1 sweep,
+density 0.38 (the best-converging density from that sweep's d0 sweep).
+
+This section covers two runs against this same question, in order:
+
+1. A first, budget-capped pass (`pytorch/minimal_life_nstep.py`, ≤90 min
+   wall clock including everything else that session did): widths {8, 32,
+   64}, 5 seeds, up to 20,000/2,000 steps (A/n=2,3 vs the rest), a
+   hopeless-vs-trivial-baseline early stop, and a hard global wall-clock
+   deadline. Cut short after n=2 (all widths) and most of n=3 to make room
+   for the pattern-eval work below; its numbers are superseded by run 2
+   for every condition run 2 repeats, but n=3 c=64 and all of n=10 for
+   this exact protocol only exist in run 1's raw JSON
+   (`docs/runs/2026-09-30-minimal-life-nstep-results.json`).
+2. A second, budget-lifted pass (`pytorch/minimal_life_full.py`, once the
+   wall-clock cap was lifted): the same two families, but stopping on a
+   plateau criterion instead of a wall-clock deadline (100,000-step ceiling, stop
+   when best-cells-correct hasn't improved by 0.5% over the last 10 evals
+   of 500 steps each — "train long enough to see a trend, stop when
+   flat"), plus a c=128 width for n in {3, 10}, plus a structured-pattern
+   training variant (25% of training boards replaced by a known Game of
+   Life pattern, see the next section) on the best-converging pure-random
+   width per n. This is the run the tables below report unless marked
+   otherwise.
+
+### Results, n = 2 (pattern-mixed variant: best pure-random width was c=32)
+
+| model | params | converged / 5 | median steps to converge | mean final cells-correct (non-conv.) |
+|---|---:|---:|---:|---:|
+| A untied DeepCNN c=8 | 1,257 | 5 | 3500 | - |
+| A untied DeepCNN c=32 | 18,849 | 5 | 2000 | - |
+| A untied DeepCNN c=64 | 74,561 | 5 | 2000 | - |
+| B tied MinimalCNN c=8 | 89 | 1 | 1000 | 0.747 |
+| A untied DeepCNN c=32, +25% pattern-mixed training | 18,849 | 5 | 1500 | - |
+
+All-dead trivial baseline on the random-soup eval at n=2: 0.685 cells
+correct. B's `rule_discovery_512_acc_per_seed`: [0.713, 1.0, 0.502, 0.549,
+0.607] — one of the five seeds discovered the exact single-step rule
+(1.0 on all 512 neighbourhoods) despite never being supervised on it
+directly, only on the 2-step composite; the other four learned some other
+2-step-consistent function that is not the Life rule applied twice.
+
+Structured-pattern eval (exact boards / total; all converged A widths tied
+at 1.0 on every family so only one row is shown; B tied's one converged
+seed contributes exactly 1/5 of each total, matching its 0.2 fractions):
+
+| pattern | A (any converged width) exact/total | B tied exact/total (masked cells-correct) |
+|---|---:|---:|
+| block | 20/20 | 4/20 (0.20) |
+| beehive | 40/40 | 8/40 (0.20) |
+| blinker | 40/40 | 8/40 (0.20) |
+| toad | 80/80 | 16/80 (0.20) |
+| beacon | 40/40 | 8/40 (0.20) |
+| glider | 160/160 | 32/160 (0.20) |
+| lwss | 160/160 | 32/160 (0.20) |
+| r_pentomino | 160/160 | 32/160 (0.20) |
+
+Observation: every converged untied n=2 model generalizes perfectly to
+gliders, LWSS, R-pentomino and all four still lifes/oscillators, at 4
+random positions and all dihedral orientations, on a 32x32 board it never
+saw a board that size during training (16x16) — consistent with the
+architecture being a pure local rule (circular conv), not a
+memorized-training-distribution fit. The pattern-mixed training variant
+converged in fewer median steps (1500 vs 2000) than the same width trained
+on random soup alone, though both were already reliable; on this n the
+extra data variety mainly speeds convergence rather than rescuing a model
+that wouldn't otherwise converge.
+
