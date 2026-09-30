@@ -267,6 +267,8 @@
         <button type="button" class="gridsize-btn primary" data-size="32">32&times;32</button>
         <button type="button" class="gridsize-btn" data-size="64">64&times;64</button>
         <button type="button" class="gridsize-btn" data-size="256">256&times;256</button>
+    </div>
+    <div class="controls" style="margin-top:8px;">
         <button type="button" class="gridsize-btn" data-size="1024">1024&times;1024</button>
         <button type="button" class="gridsize-btn" data-size="2048">2048&times;2048</button>
         <button type="button" class="gridsize-btn" data-size="4096">4096&times;4096</button>
@@ -294,6 +296,7 @@
                 <tr>
                     <th>method</th>
                     <th>s / generation</th>
+                    <th>generations</th>
                     <th>total</th>
                     <th>parameters</th>
                     <th>cells correct</th>
@@ -370,24 +373,31 @@ function setStatus(state, text) {
   els.statusText.textContent = text;
 }
 
-// Above 1024 per side a full-resolution ImageData gets too big to build for
-// every panel and thumbnail (4096x4096 alone is 64 MB) -- this picks a block
-// size so the backing canvas never exceeds 1024 px on its long side, and any
-// live cell in a block paints that block's pixel black (max-pool).
-function displayDims(w, h) {
-  const maxDim = 1024;
-  const block = Math.max(1, Math.ceil(Math.max(w, h) / maxDim));
-  return { outW: Math.ceil(w / block), outH: Math.ceil(h / block), block };
+// A board bigger than the canvas can show at >= minPx per cell (2 for the
+// board panel, 1 for thumbnails) is a crop, not a downsample: max-pooling a
+// block of cells into one pixel saturates to solid black well before
+// 8192x8192 (each pixel would cover ~23x23 cells). Instead this shows the
+// board's real top-left corner at real scale -- every displayed pixel is
+// still exactly one cell, just restricted to a sub-region, so Life
+// structure stays visible at any size.
+const BOARD_CSS_SIZE = 176; // must match .panel canvas's CSS width/height
+const THUMB_CSS_SIZE = 64;  // must match .thumb canvas's CSS width/height
+const BOARD_MIN_PX = 2;
+const THUMB_MIN_PX = 1;
+
+function cropDims(w, h, canvasCssSize, minPx) {
+  const cellsAtMinPx = Math.floor(canvasCssSize / minPx);
+  if (Math.max(w, h) <= cellsAtMinPx) return { cropW: w, cropH: h, cropped: false };
+  return { cropW: Math.min(w, cellsAtMinPx), cropH: Math.min(h, cellsAtMinPx), cropped: true };
 }
 
-// Returns true when the canvas was downsampled (block > 1), so callers can
-// say so in their caption.
-function paint(ctx, w, h, values) {
-  const { outW, outH, block } = displayDims(w, h);
-  ctx.canvas.width = outW;
-  ctx.canvas.height = outH;
-  const img = ctx.createImageData(outW, outH);
-  if (block === 1) {
+// Returns { cropped, cropW, cropH } so callers can caption the crop.
+function paint(ctx, w, h, values, canvasCssSize, minPx) {
+  const { cropW, cropH, cropped } = cropDims(w, h, canvasCssSize, minPx);
+  if (!cropped) {
+    ctx.canvas.width = w;
+    ctx.canvas.height = h;
+    const img = ctx.createImageData(w, h);
     for (let i = 0; i < w * h; i++) {
       const v = Math.max(0, Math.min(1, values[i]));
       const g = Math.round(255 * (1 - v));
@@ -396,23 +406,29 @@ function paint(ctx, w, h, values) {
       img.data[i * 4 + 2] = g;
       img.data[i * 4 + 3] = 255;
     }
-  } else {
-    for (let oy = 0; oy < outH; oy++) {
-      const y0 = oy * block, y1 = Math.min(h, y0 + block);
-      for (let ox = 0; ox < outW; ox++) {
-        const x0 = ox * block, x1 = Math.min(w, x0 + block);
-        let alive = false;
-        for (let y = y0; y < y1 && !alive; y++) {
-          for (let x = x0; x < x1; x++) { if (values[y * w + x]) { alive = true; break; } }
+    ctx.putImageData(img, 0, 0);
+    return { cropped: false };
+  }
+  const outW = cropW * minPx, outH = cropH * minPx;
+  ctx.canvas.width = outW;
+  ctx.canvas.height = outH;
+  const img = ctx.createImageData(outW, outH);
+  for (let cy = 0; cy < cropH; cy++) {
+    const g0 = cy * minPx * outW;
+    for (let cx = 0; cx < cropW; cx++) {
+      const v = Math.max(0, Math.min(1, values[cy * w + cx]));
+      const g = Math.round(255 * (1 - v));
+      for (let py = 0; py < minPx; py++) {
+        const rowStart = (g0 + py * outW + cx * minPx) * 4;
+        for (let px = 0; px < minPx; px++) {
+          const idx = rowStart + px * 4;
+          img.data[idx] = g; img.data[idx + 1] = g; img.data[idx + 2] = g; img.data[idx + 3] = 255;
         }
-        const g = alive ? 0 : 255;
-        const idx = (oy * outW + ox) * 4;
-        img.data[idx] = g; img.data[idx + 1] = g; img.data[idx + 2] = g; img.data[idx + 3] = 255;
       }
     }
   }
   ctx.putImageData(img, 0, 0);
-  return block > 1;
+  return { cropped: true, cropW, cropH };
 }
 
 // ---------------------------------------------------------------------------
@@ -937,8 +953,10 @@ function setBoardSize(n) {
   }
 }
 function drawBoard() {
-  const downsampled = paint(boardCtx, size, size, Array.from(app.cells()));
-  els.boardCaption.textContent = downsampled ? 'board (shown downsampled)' : 'board';
+  const info = paint(boardCtx, size, size, Array.from(app.cells()), BOARD_CSS_SIZE, BOARD_MIN_PX);
+  els.boardCaption.textContent = info.cropped
+    ? `board (top-left ${info.cropW}×${info.cropH} of ${size}×${size})`
+    : 'board';
 }
 
 const RUNGS = [
@@ -966,8 +984,9 @@ function renderLadderTable() {
     const secText = (res && res.note) ? res.note
       : (res ? fmtSec(res.seconds) : '-');
     const totalText = (res && !res.note && res.totalSeconds != null) ? fmtSec(res.totalSeconds) : '-';
+    const gensText = (res && !res.note) ? (res.generations || 1) : '-';
     const correctText = res && res.total != null ? `${res.correctCount} / ${res.total}` : '-';
-    return `<tr><td>${r.name}</td><td>${secText}</td><td>${totalText}</td><td>${r.params}</td><td>${correctText}</td></tr>`;
+    return `<tr><td>${r.name}</td><td>${secText}</td><td>${gensText}</td><td>${totalText}</td><td>${r.params}</td><td>${correctText}</td></tr>`;
   }).join('');
 }
 
@@ -1027,14 +1046,16 @@ async function measureChainedCpu(fn, cells, w, h, generations, onProgress) {
 function drawThumb(canvas, w, h, values, placeholder) {
   const ctx = canvas.getContext('2d');
   if (placeholder) {
-    const { outW, outH } = displayDims(w, h);
+    const { cropW, cropH, cropped } = cropDims(w, h, THUMB_CSS_SIZE, THUMB_MIN_PX);
+    const outW = cropped ? cropW * THUMB_MIN_PX : w;
+    const outH = cropped ? cropH * THUMB_MIN_PX : h;
     canvas.width = outW; canvas.height = outH;
     canvas.classList.add('placeholder');
     ctx.clearRect(0, 0, outW, outH);
-    return false;
+    return { cropped: false };
   }
   canvas.classList.remove('placeholder');
-  return paint(ctx, w, h, values);
+  return paint(ctx, w, h, values, THUMB_CSS_SIZE, THUMB_MIN_PX);
 }
 
 function renderThumbs(trueNext) {
@@ -1050,12 +1071,12 @@ function renderThumbs(trueNext) {
     const noteEl = document.createElement('div');
     noteEl.className = 'note';
     if (res && res.binarized) {
-      const downsampled = drawThumb(canvas, size, size, res.binarized, false);
+      const info = drawThumb(canvas, size, size, res.binarized, false);
       const wrongCount = res.total - res.correctCount;
-      const gens = res.generations || 1;
+      const gens = res.displayGenerations || res.generations || 1;
       let text = `after ${gens} generation${gens === 1 ? '' : 's'}`;
       if (wrongCount !== 0) text += `, ${wrongCount} wrong`;
-      if (downsampled) text += ' (shown downsampled)';
+      if (info.cropped) text += ` (top-left ${info.cropW}×${info.cropH} of ${size}×${size})`;
       noteEl.textContent = text;
     } else {
       drawThumb(canvas, size, size, null, true);
@@ -1083,16 +1104,21 @@ async function runEveryRung() {
 
     // Fair comparison: the rule, lookup table and every GPU row chain the
     // same N generations from the same starting board, so their "total" and
-    // "s / generation" numbers line up directly. 8192x8192 is the one
-    // exception: the rule and lookup table (the correctness reference for
-    // every other row) can't afford N=200 on the CPU at 67M cells, so they
-    // drop to cpuN=10 -- the GPU rows still time their full N=200 chain, but
-    // check correctness with a second, short cpuN-generation chain instead
-    // (their timed board and their checked board differ at that size only).
+    // "s / generation" numbers line up directly. Above 1024x1024 the rule
+    // and lookup table (the correctness reference every other row is
+    // checked against) can't afford N=200 on the CPU any more, so they drop
+    // to cpuN=10 -- the same small N the per-generation-with-readback "GPU
+    // lookup" row also switches to at that size (its readback dominates the
+    // cost the same way the CPU rows' cell loop does: at 8192x8192, N=200
+    // there was 2.28s/gen x 200 = 7.6 minutes on real hardware). GPU lookup
+    // (resident) and bitwise (resident) stay cheap enough to still time
+    // their full N=200 chain; they check correctness with a second, short
+    // cpuN-generation chain instead (the "generations" column shows which N
+    // each row actually ran).
     const N = size <= 1024 ? 1000 : 200;
-    const cpuN = size === 8192 ? 10 : N;
-    els.genNote.textContent = size === 8192
-      ? `rule and lookup table: ${cpuN} generations (the correctness reference every other row is checked against); GPU lookup, GPU lookup (resident) and bitwise (resident): timed over ${N} chained generations, correctness checked after ${cpuN}; stencil: not run above 4096x4096.`
+    const cpuN = size > 1024 ? 10 : N;
+    els.genNote.textContent = size > 1024
+      ? `rule, lookup table and GPU lookup (per generation): ${cpuN} generations (too slow at N=${N} on the CPU, or with a readback every generation); GPU lookup (resident) and bitwise (resident): timed over ${N} chained generations, correctness checked after ${cpuN}; stencil: ${size <= 4096 ? '3 generations.' : 'not run above 4096x4096.'}`
       : `rule, lookup table and every GPU row: ${N} chained generations from the same starting board` + (size > 64 ? `; stencil: 3 generations.` : '.');
 
     const onGen = (label) => (done, gens) => setStatus('generating', `${label}: generation ${done} / ${gens}`);
@@ -1124,19 +1150,34 @@ async function runEveryRung() {
     // untimed chainFn(..., cpuN) run whose board is what gets checked and
     // shown, so the thumbnail and the correctness column always describe the
     // same board.
+    // `generations` is always the timed run's count (N), so the table's
+    // "generations"/"s / generation"/"total" columns stay internally
+    // consistent (total = generations x s/generation). `displayGenerations`
+    // is what's actually shown and correctness-checked -- only different
+    // from `generations` at 8192x8192, where the timed run is longer than
+    // the CPU reference can afford (see the cpuN comment above).
     async function measureGpuRow(label, chainFn) {
       const main = await chainFn(board, size, size, N, onGen(label));
       if (cpuN === N) {
-        return { seconds: main.seconds, totalSeconds: main.totalSeconds ?? main.seconds, binarized: main.binarized, generations: N };
+        return { seconds: main.seconds, totalSeconds: main.totalSeconds ?? main.seconds, binarized: main.binarized, generations: N, displayGenerations: N };
       }
       const check = await chainFn(board, size, size, cpuN);
-      return { seconds: main.seconds, totalSeconds: main.totalSeconds ?? main.seconds, binarized: check.binarized, generations: cpuN };
+      return { seconds: main.seconds, totalSeconds: main.totalSeconds ?? main.seconds, binarized: check.binarized, generations: N, displayGenerations: cpuN };
     }
 
-    setStatus('generating', `running the GPU lookup, ${N} generations (readback each)...`);
+    // Unlike the resident/bitwise rows, "GPU lookup" reads back every
+    // generation, so its cost scales with N the same way the CPU rows do --
+    // it runs cpuN directly (no separate timed-vs-checked split needed: at
+    // cpuN generations it's cheap enough that timing and checking are the
+    // same run).
+    setStatus('generating', `running the GPU lookup, ${cpuN} generations (readback each)...`);
     try {
-      const r = await measureGpuRow('GPU lookup', (b, w, h, gens, onProgress) => measureGpuLookupChain(b, gens, onProgress));
-      results['gpu-lookup'] = { ...r, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
+      const r = await measureGpuLookupChain(board, cpuN, onGen('GPU lookup'));
+      results['gpu-lookup'] = {
+        seconds: r.seconds, totalSeconds: r.totalSeconds, binarized: r.binarized,
+        generations: cpuN, displayGenerations: cpuN,
+        correctCount: countMatches(r.binarized, results.cpu.binarized), total,
+      };
     } catch (e) {
       results['gpu-lookup'] = { note: e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : NO_WEBGPU };
     }
