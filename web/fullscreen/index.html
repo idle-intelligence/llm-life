@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>llm-life fullscreen - idle intelligence</title>
+<link rel="icon" href="../favicon.ico">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+    :root {
+        --bg: #fdfdfd;
+        --text: #1a1a1a;
+        --muted: #555;
+        --faint: #999;
+        --border: #ddd;
+        --green: #2d7d46;
+        --yellow: #b58900;
+        --red: #c0392b;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 48px 24px 96px;
+        color: var(--text);
+        background: var(--bg);
+        line-height: 1.5;
+        font-size: 15px;
+    }
+    a { color: var(--text); }
+    a:hover { color: var(--muted); }
+
+    header { margin-bottom: 48px; }
+    .org {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        color: var(--muted);
+        letter-spacing: 0.02em;
+        margin-bottom: 2px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .org img {
+        width: 16px;
+        height: 16px;
+        border-radius: 2px;
+    }
+    h1 {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 24px;
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+    .tagline {
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.6;
+    }
+    .repo {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        margin-top: 4px;
+    }
+    .repo a { color: var(--faint); text-decoration: none; }
+    .repo a:hover { color: var(--muted); }
+
+    section {
+        border-top: 1px solid var(--border);
+        padding: 24px 0;
+    }
+    section h2 {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        color: var(--faint);
+        margin-bottom: 12px;
+    }
+
+    .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+    }
+    .status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--faint);
+        flex-shrink: 0;
+    }
+    .status-dot.loading { background: var(--yellow); }
+    .status-dot.ready { background: var(--green); }
+    .status-dot.error { background: var(--red); }
+
+    .controls {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+    button {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        font-weight: 500;
+        padding: 8px 16px;
+        cursor: pointer;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        border-radius: 0;
+        transition: border-color 0.15s;
+    }
+    button:hover:not(:disabled) { border-color: var(--text); }
+    button:disabled { opacity: 0.3; cursor: not-allowed; }
+    button.primary {
+        background: var(--text);
+        color: var(--bg);
+        border-color: var(--text);
+    }
+    button.primary:hover:not(:disabled) {
+        background: var(--muted);
+        border-color: var(--muted);
+    }
+    .info {
+        font-size: 13px;
+        color: var(--faint);
+        margin-top: 12px;
+    }
+
+    footer {
+        border-top: 1px solid var(--border);
+        padding-top: 24px;
+        margin-top: 24px;
+    }
+    footer a {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        color: var(--faint);
+        text-decoration: none;
+    }
+    footer a:hover { color: var(--muted); }
+    footer .credit {
+        font-size: 13px;
+        color: var(--faint);
+        line-height: 1.6;
+        margin-top: 16px;
+    }
+    footer .credit a { text-decoration: underline; color: var(--faint); }
+    footer .credit a:hover { color: var(--muted); }
+
+    /* The board breaks out of the text column, same rule as the worlds on
+       the demo page and the table on the compare page: one row as wide as
+       the viewport allows (up to 1080 px). */
+    .fs-wrap {
+        --fs-w: min(100vw - 32px, 1080px);
+        width: var(--fs-w);
+        margin-left: calc(50% - var(--fs-w) / 2);
+    }
+    #board-container {
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        border: 1px solid var(--border);
+        background: #fff;
+        overflow: hidden;
+    }
+    #board-container:fullscreen {
+        aspect-ratio: unset;
+        width: 100vw;
+        height: 100vh;
+        border: none;
+    }
+    #board {
+        width: 100%;
+        height: 100%;
+        display: block;
+        image-rendering: pixelated;
+        cursor: pointer;
+    }
+</style>
+</head>
+<body>
+<header>
+    <p class="org"><img src="../apple-touch-icon.png" alt="II">idle intelligence</p>
+    <h1>llm-life fullscreen</h1>
+    <p class="tagline">Conway's Game of Life at one cell per pixel of your screen. 32 cells per number, counted with bitwise operations on the GPU. The board never leaves the GPU: it simulates and draws itself, generation after generation.</p>
+    <p class="repo">
+        <a href="../">llm-life demo</a> · <a href="https://github.com/idle-intelligence/llm-life">github.com/idle-intelligence/llm-life</a>
+    </p>
+</header>
+
+<section>
+    <h2>status</h2>
+    <div class="status">
+        <span class="status-dot loading" id="statusDot"></span>
+        <span id="statusText">booting...</span>
+    </div>
+</section>
+
+<section>
+    <h2>input</h2>
+    <div class="controls">
+        <button id="speed-toggle" class="primary">full speed</button>
+        <button id="fullscreen-btn">full screen</button>
+    </div>
+    <p class="info">Click the board to reseed with a fresh random soup.</p>
+</section>
+
+<section>
+    <h2>output</h2>
+    <div class="fs-wrap">
+        <div id="board-container">
+            <canvas id="board"></canvas>
+        </div>
+    </div>
+</section>
+
+<footer>
+    <a href="https://idleintelligence.org">idleintelligence.org</a>
+    <p class="credit">
+        <a href="../">llm-life demo</a> ·
+        <a href="../compare/">compare page</a> ·
+        <a href="https://github.com/idle-intelligence/llm-life">source</a> ·
+        <a href="https://github.com/idle-intelligence/llm-web">engine</a> (MIT).
+    </p>
+</footer>
+
+<script type="module">
+// Bumped whenever this page's own WGSL or JS changes.
+const BUILD = '2026-09-30a';
+
+const els = {
+  statusDot: document.getElementById('statusDot'),
+  statusText: document.getElementById('statusText'),
+  speedToggle: document.getElementById('speed-toggle'),
+  fullscreenBtn: document.getElementById('fullscreen-btn'),
+  container: document.getElementById('board-container'),
+  canvas: document.getElementById('board'),
+};
+
+function setStatus(state, text) {
+  els.statusDot.className = 'status-dot ' + state;
+  els.statusText.textContent = text;
+}
+
+// ---------------------------------------------------------------------------
+// CPU reference rule -- copied from ../compare/index.html's jsLifeStepLoop,
+// used only by the __lifeCheck debug hook below, never in the render loop.
+// ---------------------------------------------------------------------------
+function jsLifeStepLoop(cells, w, h) {
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          n += cells[((y + dy + h) % h) * w + ((x + dx + w) % w)];
+        }
+      }
+      const c = cells[y * w + x];
+      out[y * w + x] = (c ? (n === 2 || n === 3) : n === 3) ? 1 : 0;
+    }
+  }
+  return out;
+}
+
+// Packing convention matches ../compare/bitpack.wgsl and its pack.rs: bit k
+// of word `word` is column word*32+k.
+function packBitsU32(cells, width, height) {
+  const wpr = width / 32;
+  const out = new Uint32Array(wpr * height);
+  for (let y = 0; y < height; y++) {
+    for (let word = 0; word < wpr; word++) {
+      let w = 0;
+      for (let k = 0; k < 32; k++) if (cells[y * width + word * 32 + k]) w |= (1 << k);
+      out[y * wpr + word] = w >>> 0;
+    }
+  }
+  return out;
+}
+function unpackBitsU32(words, width, height) {
+  const wpr = width / 32;
+  const out = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let word = 0; word < wpr; word++) {
+      const w = words[y * wpr + word];
+      for (let k = 0; k < 32; k++) out[y * width + word * 32 + k] = (w >>> k) & 1;
+    }
+  }
+  return out;
+}
+
+const CONWAY_BIRTH_MASK = 1 << 3;
+const CONWAY_SURVIVE_MASK = (1 << 2) | (1 << 3);
+
+// WebGPU caps a single dispatch dimension at 65535 workgroups -- folded into
+// a 2D grid the same way ../compare/index.html does for its bitwise row;
+// bitpack.wgsl's Params.dispatch_x undoes the fold back into a linear index.
+function dispatchShape(n) {
+  const workgroups = Math.ceil(n / 256);
+  if (workgroups <= 65535) return { x: workgroups, y: 1, dispatchX: workgroups };
+  const x = 65535;
+  return { x, y: Math.ceil(workgroups / x), dispatchX: x };
+}
+
+if (!navigator.gpu) {
+  setStatus('error', "doesn't work without WebGPU, yet");
+} else {
+  main().catch((e) => {
+    console.error(e);
+    setStatus('error', 'WebGPU error: ' + e.message);
+  });
+}
+
+async function main() {
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) { setStatus('error', "doesn't work without WebGPU, yet"); return; }
+  const device = await adapter.requestDevice();
+  device.lost.then((info) => setStatus('error', 'GPU device lost: ' + info.message));
+
+  const context = els.canvas.getContext('webgpu');
+  const format = navigator.gpu.getPreferredCanvasFormat();
+  context.configure({ device, format, alphaMode: 'opaque' });
+
+  const bitpackCode = await (await fetch('../compare/bitpack.wgsl?v=' + BUILD)).text();
+  const bitpackModule = device.createShaderModule({ code: bitpackCode });
+  const computePipeline = await device.createComputePipelineAsync({
+    layout: 'auto',
+    compute: { module: bitpackModule, entryPoint: 'main' },
+  });
+
+  const renderCode = await (await fetch('./render.wgsl?v=' + BUILD)).text();
+  const renderModule = device.createShaderModule({ code: renderCode });
+  const renderPipeline = await device.createRenderPipelineAsync({
+    layout: 'auto',
+    vertex: { module: renderModule, entryPoint: 'vs_main' },
+    fragment: { module: renderModule, entryPoint: 'fs_main', targets: [{ format }] },
+    primitive: { topology: 'triangle-list' },
+  });
+
+  // State rebuilt on every resize / fullscreen transition: buffers, bind
+  // groups and the board's own W/H (== the canvas's real device-pixel size).
+  let W = 0, H = 0, wpr = 0;
+  let bufA = null, bufB = null, computeParamsBuf = null, renderParamsBuf = null;
+  let bgComputeAB = null, bgComputeBA = null, bgRenderA = null, bgRenderB = null;
+  let parity = 0; // 0: current board is in bufA; 1: current board is in bufB
+  let generation = 0;
+  let genSinceMark = 0, lastMarkTime = performance.now(), gensPerSec = 0;
+  let fastMode = false;
+  const FAST_K = 64;
+
+  function randomSoup(w, h, density) {
+    const cells = new Uint8Array(w * h);
+    for (let i = 0; i < cells.length; i++) cells[i] = Math.random() < density ? 1 : 0;
+    return cells;
+  }
+
+  function destroyBuffers() {
+    for (const b of [bufA, bufB, computeParamsBuf, renderParamsBuf]) if (b) b.destroy();
+  }
+
+  function buildBindGroups() {
+    bgComputeAB = device.createBindGroup({
+      layout: computePipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: computeParamsBuf } },
+        { binding: 1, resource: { buffer: bufA } },
+        { binding: 2, resource: { buffer: bufB } },
+      ],
+    });
+    bgComputeBA = device.createBindGroup({
+      layout: computePipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: computeParamsBuf } },
+        { binding: 1, resource: { buffer: bufB } },
+        { binding: 2, resource: { buffer: bufA } },
+      ],
+    });
+    bgRenderA = device.createBindGroup({
+      layout: renderPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: renderParamsBuf } },
+        { binding: 1, resource: { buffer: bufA } },
+      ],
+    });
+    bgRenderB = device.createBindGroup({
+      layout: renderPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: renderParamsBuf } },
+        { binding: 1, resource: { buffer: bufB } },
+      ],
+    });
+  }
+
+  // Recomputes the board size from the container's real device-pixel size,
+  // reallocates the ping-pong buffers and reseeds a fresh random soup.
+  function resize() {
+    const rect = els.container.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const newW = Math.max(32, Math.floor(rect.width * dpr / 32) * 32);
+    const newH = Math.max(1, Math.floor(rect.height * dpr));
+    if (newW === W && newH === H) return;
+    destroyBuffers();
+    W = newW; H = newH; wpr = W / 32;
+    els.canvas.width = W;
+    els.canvas.height = H;
+    // Some WebGPU implementations need the canvas context reconfigured after
+    // the backing canvas is resized, or getCurrentTexture() later hands back
+    // an invalid texture.
+    context.configure({ device, format, alphaMode: 'opaque' });
+
+    const n = wpr * H;
+    const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+    bufA = device.createBuffer({ size: n * 4, usage: bufUsage });
+    bufB = device.createBuffer({ size: n * 4, usage: bufUsage });
+    computeParamsBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(computeParamsBuf, 0, new Uint32Array([wpr, H, CONWAY_BIRTH_MASK, CONWAY_SURVIVE_MASK, dispatchShape(n).dispatchX, 0, 0, 0]));
+    renderParamsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(renderParamsBuf, 0, new Uint32Array([W, H, wpr, 0]));
+    buildBindGroups();
+    seed();
+  }
+
+  function seed() {
+    const cells = randomSoup(W, H, 0.3);
+    device.queue.writeBuffer(bufA, 0, packBitsU32(cells, W, H));
+    parity = 0;
+    generation = 0;
+    genSinceMark = 0;
+    lastMarkTime = performance.now();
+  }
+
+  function stepOnce(encoder) {
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(computePipeline);
+    pass.setBindGroup(0, parity === 0 ? bgComputeAB : bgComputeBA);
+    const { x, y } = dispatchShape(wpr * H);
+    pass.dispatchWorkgroups(x, y, 1);
+    pass.end();
+    parity = 1 - parity;
+  }
+
+  function frame() {
+    if (W > 0) {
+      const k = fastMode ? FAST_K : 1;
+      const encoder = device.createCommandEncoder();
+      for (let i = 0; i < k; i++) stepOnce(encoder);
+      generation += k;
+      genSinceMark += k;
+
+      const view = context.getCurrentTexture().createView();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store', clearValue: { r: 1, g: 1, b: 1, a: 1 } }],
+      });
+      pass.setPipeline(renderPipeline);
+      pass.setBindGroup(0, parity === 0 ? bgRenderA : bgRenderB);
+      pass.draw(3);
+      pass.end();
+      device.queue.submit([encoder.finish()]);
+
+      const now = performance.now();
+      const elapsed = now - lastMarkTime;
+      if (elapsed >= 1000) {
+        gensPerSec = genSinceMark / (elapsed / 1000);
+        genSinceMark = 0;
+        lastMarkTime = now;
+        setStatus('ready', `${W}×${H} board, ${gensPerSec.toFixed(0)} generations/s`);
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  const ro = new ResizeObserver(() => resize());
+  ro.observe(els.container);
+  resize();
+  setStatus('ready', `${W}×${H} board`);
+  requestAnimationFrame(frame);
+
+  els.speedToggle.onclick = () => {
+    fastMode = !fastMode;
+    els.speedToggle.textContent = fastMode ? 'watch' : 'full speed';
+  };
+  els.speedToggle.textContent = fastMode ? 'watch' : 'full speed';
+
+  els.fullscreenBtn.onclick = () => {
+    if (els.container.requestFullscreen) els.container.requestFullscreen();
+  };
+  document.addEventListener('fullscreenchange', () => resize());
+
+  els.canvas.addEventListener('click', () => seed());
+
+  // ---------------------------------------------------------------------------
+  // Debug hook only -- never called during normal use. Snapshots the current
+  // board, advances it n generations two ways (this page's GPU kernel, and
+  // the plain CPU rule above) from the same starting board, and reports
+  // whether they match exactly. Runs on a private buffer pair so it never
+  // disturbs the live animation.
+  // ---------------------------------------------------------------------------
+  window.__lifeCheck = async function (n) {
+    const stagingRead = device.createBuffer({ size: wpr * H * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const curBuf = parity === 0 ? bufA : bufB;
+    let encoder = device.createCommandEncoder();
+    encoder.copyBufferToBuffer(curBuf, 0, stagingRead, 0, wpr * H * 4);
+    device.queue.submit([encoder.finish()]);
+    await stagingRead.mapAsync(GPUMapMode.READ);
+    const startWords = new Uint32Array(stagingRead.getMappedRange().slice(0));
+    stagingRead.unmap();
+    stagingRead.destroy();
+    const startCells = unpackBitsU32(startWords, W, H);
+
+    let cpuBoard = startCells;
+    for (let i = 0; i < n; i++) cpuBoard = jsLifeStepLoop(cpuBoard, W, H);
+
+    const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+    const a = device.createBuffer({ size: wpr * H * 4, usage: bufUsage });
+    const b = device.createBuffer({ size: wpr * H * 4, usage: bufUsage });
+    device.queue.writeBuffer(a, 0, startWords);
+    const bgAB = device.createBindGroup({
+      layout: computePipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: computeParamsBuf } }, { binding: 1, resource: { buffer: a } }, { binding: 2, resource: { buffer: b } }],
+    });
+    const bgBA = device.createBindGroup({
+      layout: computePipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: computeParamsBuf } }, { binding: 1, resource: { buffer: b } }, { binding: 2, resource: { buffer: a } }],
+    });
+    let p = 0;
+    encoder = device.createCommandEncoder();
+    for (let i = 0; i < n; i++) {
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(computePipeline);
+      pass.setBindGroup(0, p === 0 ? bgAB : bgBA);
+      const shape = dispatchShape(wpr * H);
+      pass.dispatchWorkgroups(shape.x, shape.y, 1);
+      pass.end();
+      p = 1 - p;
+    }
+    const finalBuf = p === 0 ? a : b;
+    const stagingOut = device.createBuffer({ size: wpr * H * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    encoder.copyBufferToBuffer(finalBuf, 0, stagingOut, 0, wpr * H * 4);
+    device.queue.submit([encoder.finish()]);
+    await stagingOut.mapAsync(GPUMapMode.READ);
+    const gpuWords = new Uint32Array(stagingOut.getMappedRange().slice(0));
+    stagingOut.unmap();
+    const gpuCells = unpackBitsU32(gpuWords, W, H);
+
+    a.destroy(); b.destroy(); stagingOut.destroy();
+
+    let mismatches = 0;
+    for (let i = 0; i < gpuCells.length; i++) if (gpuCells[i] !== cpuBoard[i]) mismatches++;
+    return { match: mismatches === 0, mismatches, w: W, h: H, n };
+  };
+}
+</script>
+</body>
+</html>
