@@ -263,16 +263,17 @@
         <div class="panel"><canvas id="c-board" width="32" height="32"></canvas><div class="caption" id="board-caption">board</div></div>
     </div>
     <div class="controls" style="margin-top:16px;">
-        <button type="button" class="gridsize-btn" data-size="16">16&times;16</button>
-        <button type="button" class="gridsize-btn primary" data-size="32">32&times;32</button>
-        <button type="button" class="gridsize-btn" data-size="64">64&times;64</button>
-        <button type="button" class="gridsize-btn" data-size="256">256&times;256</button>
+        <button type="button" class="gridsize-btn" data-w="16" data-h="16">16&times;16</button>
+        <button type="button" class="gridsize-btn primary" data-w="32" data-h="32">32&times;32</button>
+        <button type="button" class="gridsize-btn" data-w="64" data-h="64">64&times;64</button>
+        <button type="button" class="gridsize-btn" data-w="256" data-h="256">256&times;256</button>
     </div>
     <div class="controls" style="margin-top:8px;">
-        <button type="button" class="gridsize-btn" data-size="1024">1024&times;1024</button>
-        <button type="button" class="gridsize-btn" data-size="2048">2048&times;2048</button>
-        <button type="button" class="gridsize-btn" data-size="4096">4096&times;4096</button>
-        <button type="button" class="gridsize-btn" data-size="8192">8192&times;8192</button>
+        <button type="button" class="gridsize-btn" data-w="1024" data-h="1024">1024&times;1024</button>
+        <button type="button" class="gridsize-btn" data-w="2048" data-h="2048">2048&times;2048</button>
+        <button type="button" class="gridsize-btn" data-w="4096" data-h="4096">4096&times;4096</button>
+        <button type="button" class="gridsize-btn" data-w="8192" data-h="8192">8192&times;8192</button>
+        <button type="button" class="gridsize-btn" data-w="3840" data-h="2160">3840&times;2160 (4K)</button>
     </div>
     <div class="controls" style="margin-top:12px;">
         <button id="run-all" class="primary">run every method</button>
@@ -298,6 +299,7 @@
                     <th>s / generation</th>
                     <th>generations</th>
                     <th>total</th>
+                    <th>generations / s</th>
                     <th>parameters</th>
                     <th>cells correct</th>
                 </tr>
@@ -346,7 +348,7 @@ const BUILD = '2026-09-23b';
 import init, { LifeApp } from '../pkg/life.js?v=2026-09-23';
 import { MODEL_URLS } from '../models.js';
 
-let size = 32;
+let boardW = 32, boardH = 32;
 let app = null;
 let running = false;
 let llmReady = false, llmLoading = null;
@@ -484,6 +486,12 @@ function fmtSec(v) {
   if (v < 1) return v.toFixed(4);
   return v.toFixed(2);
 }
+function fmtRate(v) {
+  if (v == null) return '-';
+  if (v >= 100) return v.toFixed(0);
+  if (v >= 1) return v.toFixed(1);
+  return v.toExponential(2);
+}
 function countMatches(a, b) {
   let c = 0;
   for (let i = 0; i < a.length; i++) if ((a[i] !== 0) === (b[i] !== 0)) c++;
@@ -613,7 +621,7 @@ async function gpuLookupStep(cells, w, h) {
 }
 async function measureGpuLookupOnce(cells) {
   const t0 = performance.now();
-  const binarized = await gpuLookupStep(cells, size, size);
+  const binarized = await gpuLookupStep(cells, boardW, boardH);
   const seconds = (performance.now() - t0) / 1000;
   return { seconds, binarized };
 }
@@ -851,19 +859,19 @@ const VEC_STENCIL_MODEL = { checkpointUrl: MODEL_URLS.vecStencil, dModel: 16, nL
 async function ensureBert() {
   if (bertReady) return;
   ensureWorker();
-  await ask('loadBert', { ...BERT_MODEL, width: size, height: size });
+  await ask('loadBert', { ...BERT_MODEL, width: boardW, height: boardH });
   bertReady = true;
 }
 async function ensureVecMlp() {
   if (vecMlpReady) return;
   ensureWorker();
-  await ask('loadVecMlp', { ...VEC_MLP_MODEL, width: size, height: size });
+  await ask('loadVecMlp', { ...VEC_MLP_MODEL, width: boardW, height: boardH });
   vecMlpReady = true;
 }
 async function ensureVecStencil() {
   if (vecStencilReady) return;
   ensureWorker();
-  await ask('loadVecStencil', { ...VEC_STENCIL_MODEL, width: size, height: size });
+  await ask('loadVecStencil', { ...VEC_STENCIL_MODEL, width: boardW, height: boardH });
   vecStencilReady = true;
 }
 
@@ -915,7 +923,7 @@ els.loadLlm.onclick = async () => {
   ensureWorker();
   els.loadLlm.disabled = true;
   setStatus('loading', 'loading the LLM...');
-  llmLoading = ask('load', { ...LLM_MODEL, width: size, height: size, rulestring: app.rulestring() })
+  llmLoading = ask('load', { ...LLM_MODEL, width: boardW, height: boardH, rulestring: app.rulestring() })
     .then(() => {
       llmReady = true;
       els.loadLlm.textContent = 'LLM loaded';
@@ -933,29 +941,31 @@ els.loadLlm.onclick = async () => {
 // ---------------------------------------------------------------------------
 // Board and rung run
 // ---------------------------------------------------------------------------
-function setBoardSize(n) {
-  size = n;
-  els.board.width = size;
-  els.board.height = size;
-  app = new LifeApp(size, size);
+function setBoardSize(w, h) {
+  boardW = w;
+  boardH = h;
+  els.board.width = boardW;
+  els.board.height = boardH;
+  app = new LifeApp(boardW, boardH);
   app.randomize(1n, 0.28);
   lastResults = null;
   drawBoard();
   renderLadderTable();
   els.thumbs.innerHTML = '';
   for (const btn of document.querySelectorAll('.gridsize-btn')) {
-    btn.classList.toggle('primary', Number(btn.dataset.size) === size);
+    btn.classList.toggle('primary', Number(btn.dataset.w) === boardW && Number(btn.dataset.h) === boardH);
   }
+  const maxDim = Math.max(boardW, boardH);
   if (webGpuAvailable !== false) {
-    els.loadLlm.disabled = size > 64;
-    els.loadLlm.textContent = size > 64 ? 'not run above 64×64'
+    els.loadLlm.disabled = maxDim > 64;
+    els.loadLlm.textContent = maxDim > 64 ? 'not run above 64×64'
       : llmReady ? 'LLM loaded' : 'load the LLM (about 430 MB, stored locally)';
   }
 }
 function drawBoard() {
-  const info = paint(boardCtx, size, size, Array.from(app.cells()), BOARD_CSS_SIZE, BOARD_MIN_PX);
+  const info = paint(boardCtx, boardW, boardH, Array.from(app.cells()), BOARD_CSS_SIZE, BOARD_MIN_PX);
   els.boardCaption.textContent = info.cropped
-    ? `board (top-left ${info.cropW}×${info.cropH} of ${size}×${size})`
+    ? `board (top-left ${info.cropW}×${info.cropH} of ${boardW}×${boardH})`
     : 'board';
 }
 
@@ -985,8 +995,9 @@ function renderLadderTable() {
       : (res ? fmtSec(res.seconds) : '-');
     const totalText = (res && !res.note && res.totalSeconds != null) ? fmtSec(res.totalSeconds) : '-';
     const gensText = (res && !res.note) ? (res.generations || 1) : '-';
+    const rateText = (res && !res.note && res.totalSeconds) ? fmtRate((res.generations || 1) / res.totalSeconds) : '-';
     const correctText = res && res.total != null ? `${res.correctCount} / ${res.total}` : '-';
-    return `<tr><td>${r.name}</td><td>${secText}</td><td>${gensText}</td><td>${totalText}</td><td>${r.params}</td><td>${correctText}</td></tr>`;
+    return `<tr><td>${r.name}</td><td>${secText}</td><td>${gensText}</td><td>${totalText}</td><td>${rateText}</td><td>${r.params}</td><td>${correctText}</td></tr>`;
   }).join('');
 }
 
@@ -1004,7 +1015,7 @@ function liveEstimateHandler(rowKey, t0) {
   };
 }
 async function measureWorkerStep(variant, cells, opts = {}) {
-  const payload = { cells: Array.from(cells), variant, width: size, height: size, threshold: 'otsu', k: 2.0 };
+  const payload = { cells: Array.from(cells), variant, width: boardW, height: boardH, threshold: 'otsu', k: 2.0 };
   if (opts.calls) payload.calls = opts.calls;
   const t0 = performance.now();
   if (opts.liveKey) liveChunkHandler = liveEstimateHandler(opts.liveKey, t0);
@@ -1071,15 +1082,15 @@ function renderThumbs(trueNext) {
     const noteEl = document.createElement('div');
     noteEl.className = 'note';
     if (res && res.binarized) {
-      const info = drawThumb(canvas, size, size, res.binarized, false);
+      const info = drawThumb(canvas, boardW, boardH, res.binarized, false);
       const wrongCount = res.total - res.correctCount;
       const gens = res.displayGenerations || res.generations || 1;
       let text = `after ${gens} generation${gens === 1 ? '' : 's'}`;
       if (wrongCount !== 0) text += `, ${wrongCount} wrong`;
-      if (info.cropped) text += ` (top-left ${info.cropW}×${info.cropH} of ${size}×${size})`;
+      if (info.cropped) text += ` (top-left ${info.cropW}×${info.cropH} of ${boardW}×${boardH})`;
       noteEl.textContent = text;
     } else {
-      drawThumb(canvas, size, size, null, true);
+      drawThumb(canvas, boardW, boardH, null, true);
       noteEl.textContent = res && res.note ? res.note : 'not run';
     }
     nameEl.textContent = r.name;
@@ -1098,40 +1109,51 @@ async function runEveryRung() {
   try {
     if (!lookupTable) lookupTable = buildLookupTable();
     const board = Uint8Array.from(app.cells());
-    const trueNext = jsLifeStepLoop(board, size, size); // single-step reference for the model rows further down
+    const trueNext = jsLifeStepLoop(board, boardW, boardH); // single-step reference for the model rows further down
     const results = {};
-    const total = size * size;
+    const total = boardW * boardH;
+    const maxDim = Math.max(boardW, boardH);
+    const is4K = boardW === 3840 && boardH === 2160;
 
     // Fair comparison: the rule, lookup table and every GPU row chain the
     // same N generations from the same starting board, so their "total" and
-    // "s / generation" numbers line up directly. Above 1024x1024 the rule
-    // and lookup table (the correctness reference every other row is
-    // checked against) can't afford N=200 on the CPU any more, so they drop
-    // to cpuN=10 -- the same small N the per-generation-with-readback "GPU
-    // lookup" row also switches to at that size (its readback dominates the
-    // cost the same way the CPU rows' cell loop does: at 8192x8192, N=200
-    // there was 2.28s/gen x 200 = 7.6 minutes on real hardware). GPU lookup
-    // (resident) and bitwise (resident) stay cheap enough to still time
-    // their full N=200 chain; they check correctness with a second, short
-    // cpuN-generation chain instead (the "generations" column shows which N
-    // each row actually ran).
-    const N = size <= 1024 ? 1000 : 200;
-    const cpuN = size > 1024 ? 10 : N;
-    els.genNote.textContent = size > 1024
-      ? `rule, lookup table and GPU lookup (per generation): ${cpuN} generations (too slow at N=${N} on the CPU, or with a readback every generation); GPU lookup (resident) and bitwise (resident): timed over ${N} chained generations, correctness checked after ${cpuN}; stencil: ${size <= 4096 ? '3 generations.' : 'not run above 4096x4096.'}`
-      : `rule, lookup table and every GPU row: ${N} chained generations from the same starting board` + (size > 64 ? `; stencil: 3 generations.` : '.');
+    // "s / generation" numbers line up directly. Above 1024 on the long
+    // edge the rule and lookup table (the correctness reference every other
+    // row is checked against) can't afford N=200 on the CPU any more, so
+    // they drop to cpuN=10 -- the same small N the per-generation-with-
+    // readback "GPU lookup" row also switches to at that size (its readback
+    // dominates the cost the same way the CPU rows' cell loop does: at
+    // 8192x8192, N=200 there was 2.28s/gen x 200 = 7.6 minutes on real
+    // hardware). GPU lookup (resident) and bitwise (resident) stay cheap
+    // enough to still time their full N=residentN chain; they check
+    // correctness with a second, short cpuN-generation chain instead (the
+    // "generations" column shows which N each row actually ran). 4K
+    // (3840x2160, 8.3M cells) is a special case TC asked for directly: it
+    // affords N=200 on the CPU (unlike 2048+ square boards of the same
+    // order of cell count, because that number was chosen for it) but not
+    // N=1000, and its own gpuReadbackN (10) differs from its own cpuN (200)
+    // -- so the "GPU lookup" row gets its own short reference chain below
+    // instead of reusing results.cpu.
+    const residentN = is4K ? 1000 : (maxDim <= 1024 ? 1000 : 200);
+    const cpuN = is4K ? 200 : (maxDim > 1024 ? 10 : residentN);
+    const gpuReadbackN = is4K ? 10 : cpuN;
+    els.genNote.textContent = is4K
+      ? `rule and lookup table: ${cpuN} generations; GPU lookup (per generation): ${gpuReadbackN} generations; GPU lookup (resident) and bitwise (resident): timed over ${residentN} chained generations, correctness checked after ${cpuN} (${gpuReadbackN} for the per-generation row); stencil: a few generations, memory permitting.`
+      : maxDim > 1024
+      ? `rule, lookup table and GPU lookup (per generation): ${cpuN} generations (too slow at N=${residentN} on the CPU, or with a readback every generation); GPU lookup (resident) and bitwise (resident): timed over ${residentN} chained generations, correctness checked after ${cpuN}; stencil: ${total <= 4096 * 4096 ? '3 generations.' : 'not run above 4096x4096.'}`
+      : `rule, lookup table and every GPU row: ${residentN} chained generations from the same starting board` + (maxDim > 64 ? `; stencil: 3 generations.` : '.');
 
     const onGen = (label) => (done, gens) => setStatus('generating', `${label}: generation ${done} / ${gens}`);
 
     setStatus('generating', `running the rule, ${cpuN} generations...`);
-    results.cpu = await measureChainedCpu(jsLifeStepLoop, board, size, size, cpuN, onGen('rule'));
+    results.cpu = await measureChainedCpu(jsLifeStepLoop, board, boardW, boardH, cpuN, onGen('rule'));
     results.cpu.correctCount = total; // the rule is the reference board itself
     results.cpu.total = total;
     lastResults = results;
     renderLadderTable();
 
     setStatus('generating', `running the lookup table, ${cpuN} generations...`);
-    results.lookup = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, size, size, cpuN, onGen('lookup table'));
+    results.lookup = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, boardW, boardH, cpuN, onGen('lookup table'));
     results.lookup.correctCount = countMatches(results.lookup.binarized, results.cpu.binarized);
     results.lookup.total = total;
     lastResults = results;
@@ -1145,38 +1167,42 @@ async function runEveryRung() {
       return;
     }
 
-    // Runs `chainFn(board, size, size, N, onProgress)` for the headline timed
-    // number, and -- only when cpuN differs from N (8192x8192) -- a second,
-    // untimed chainFn(..., cpuN) run whose board is what gets checked and
-    // shown, so the thumbnail and the correctness column always describe the
-    // same board.
-    // `generations` is always the timed run's count (N), so the table's
-    // "generations"/"s / generation"/"total" columns stay internally
-    // consistent (total = generations x s/generation). `displayGenerations`
-    // is what's actually shown and correctness-checked -- only different
-    // from `generations` at 8192x8192, where the timed run is longer than
-    // the CPU reference can afford (see the cpuN comment above).
+    // Runs `chainFn(board, boardW, boardH, residentN, onProgress)` for the
+    // headline timed number, and -- only when cpuN differs from residentN
+    // -- a second, untimed chainFn(..., cpuN) run whose board is what gets
+    // checked and shown, so the thumbnail and the correctness column always
+    // describe the same board.
+    // `generations` is always the timed run's count (residentN), so the
+    // table's "generations"/"s / generation"/"total" columns stay
+    // internally consistent (total = generations x s/generation).
+    // `displayGenerations` is what's actually shown and correctness-checked
+    // -- only different from `generations` when cpuN < residentN.
     async function measureGpuRow(label, chainFn) {
-      const main = await chainFn(board, size, size, N, onGen(label));
-      if (cpuN === N) {
-        return { seconds: main.seconds, totalSeconds: main.totalSeconds ?? main.seconds, binarized: main.binarized, generations: N, displayGenerations: N };
+      const main = await chainFn(board, boardW, boardH, residentN, onGen(label));
+      if (cpuN === residentN) {
+        return { seconds: main.seconds, totalSeconds: main.totalSeconds ?? main.seconds, binarized: main.binarized, generations: residentN, displayGenerations: residentN };
       }
-      const check = await chainFn(board, size, size, cpuN);
-      return { seconds: main.seconds, totalSeconds: main.totalSeconds ?? main.seconds, binarized: check.binarized, generations: N, displayGenerations: cpuN };
+      const check = await chainFn(board, boardW, boardH, cpuN);
+      return { seconds: main.seconds, totalSeconds: main.totalSeconds ?? main.seconds, binarized: check.binarized, generations: residentN, displayGenerations: cpuN };
     }
 
     // Unlike the resident/bitwise rows, "GPU lookup" reads back every
     // generation, so its cost scales with N the same way the CPU rows do --
-    // it runs cpuN directly (no separate timed-vs-checked split needed: at
-    // cpuN generations it's cheap enough that timing and checking are the
-    // same run).
-    setStatus('generating', `running the GPU lookup, ${cpuN} generations (readback each)...`);
+    // it runs gpuReadbackN directly. That's usually the same count as cpuN
+    // (so results.cpu is already the right reference board), except at 4K
+    // where the two diverge -- there it gets its own short reference chain.
+    setStatus('generating', `running the GPU lookup, ${gpuReadbackN} generations (readback each)...`);
     try {
-      const r = await measureGpuLookupChain(board, cpuN, onGen('GPU lookup'));
+      const r = await measureGpuLookupChain(board, gpuReadbackN, onGen('GPU lookup'));
+      let ref = results.cpu.binarized;
+      if (gpuReadbackN !== cpuN) {
+        const shortRef = await measureChainedCpu(jsLifeStepLoop, board, boardW, boardH, gpuReadbackN);
+        ref = shortRef.binarized;
+      }
       results['gpu-lookup'] = {
         seconds: r.seconds, totalSeconds: r.totalSeconds, binarized: r.binarized,
-        generations: cpuN, displayGenerations: cpuN,
-        correctCount: countMatches(r.binarized, results.cpu.binarized), total,
+        generations: gpuReadbackN, displayGenerations: gpuReadbackN,
+        correctCount: countMatches(r.binarized, ref), total,
       };
     } catch (e) {
       results['gpu-lookup'] = { note: e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : NO_WEBGPU };
@@ -1184,23 +1210,23 @@ async function runEveryRung() {
     lastResults = results;
     renderLadderTable();
 
-    setStatus('generating', `running the GPU lookup, resident, ${N} generations...`);
+    setStatus('generating', `running the GPU lookup, resident, ${residentN} generations...`);
     try {
       const r = await measureGpuRow('GPU lookup (resident)', gpuLookupResidentRun);
-      results['gpu-lookup-resident'] = { ...r, seconds: r.seconds / N, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
+      results['gpu-lookup-resident'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
     } catch (e) {
       results['gpu-lookup-resident'] = { note: e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : NO_WEBGPU };
     }
     lastResults = results;
     renderLadderTable();
 
-    setStatus('generating', `running bitwise (GPU, resident), ${N} generations...`);
-    if (size % 32 !== 0) {
+    setStatus('generating', `running bitwise (GPU, resident), ${residentN} generations...`);
+    if (boardW % 32 !== 0) {
       results['bitwise-resident'] = { note: 'N/A (needs a board width that is a multiple of 32)' };
     } else {
       try {
         const r = await measureGpuRow('bitwise (GPU, resident)', bitwiseResidentRun);
-        results['bitwise-resident'] = { ...r, seconds: r.seconds / N, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
+        results['bitwise-resident'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
       } catch (e) {
         results['bitwise-resident'] = { note: e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : NO_WEBGPU };
       }
@@ -1208,13 +1234,13 @@ async function runEveryRung() {
     lastResults = results;
     renderLadderTable();
 
-    if (size > 64) {
-      if (size <= 4096) {
+    if (maxDim > 64) {
+      if (total <= 4096 * 4096) {
         setStatus('generating', 'running the stencil, grid to grid...');
         const stencilGens = 3;
         try {
-          const stencilResult = await measureStencilLarge(board, size, size, stencilGens);
-          const stencilRef = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, size, size, stencilGens);
+          const stencilResult = await measureStencilLarge(board, boardW, boardH, stencilGens);
+          const stencilRef = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, boardW, boardH, stencilGens);
           results['vec-stencil'] = {
             seconds: stencilResult.seconds,
             totalSeconds: stencilResult.totalSeconds,
@@ -1250,7 +1276,7 @@ async function runEveryRung() {
       setStatus('generating', llmReady ? 'reloading the LLM, base model...' : 'loading the LLM, base model...');
       ensureWorker();
       const { adapterUrl: _unused, ...baseModel } = LLM_MODEL;
-      await ask('load', { ...baseModel, width: size, height: size, rulestring: app.rulestring() });
+      await ask('load', { ...baseModel, width: boardW, height: boardH, rulestring: app.rulestring() });
       llmReady = true;
       els.loadLlm.disabled = true;
       els.loadLlm.textContent = 'LLM loaded';
@@ -1280,9 +1306,9 @@ async function runEveryRung() {
       lastResults = results;
       renderLadderTable();
 
-      const bAdapterUrl = B_ADAPTER_BY_SIZE[size];
+      const bAdapterUrl = B_ADAPTER_BY_SIZE[boardW];
       setStatus('generating', 'reloading the LLM, base model...');
-      await ask('load', { ...baseModel, width: size, height: size, rulestring: app.rulestring() });
+      await ask('load', { ...baseModel, width: boardW, height: boardH, rulestring: app.rulestring() });
       setStatus('generating', 'running the LLM whole grid, base model...');
       results['llm-grid-base'] = await measureWorkerStep('b', board);
       results['llm-grid-base'].correctCount = countMatches(results['llm-grid-base'].binarized, trueNext);
@@ -1353,11 +1379,11 @@ async function runEveryRung() {
 els.runAll.onclick = () => runEveryRung();
 
 for (const btn of document.querySelectorAll('.gridsize-btn')) {
-  btn.addEventListener('click', () => setBoardSize(Number(btn.dataset.size)));
+  btn.addEventListener('click', () => setBoardSize(Number(btn.dataset.w), Number(btn.dataset.h)));
 }
 
 await init();
-setBoardSize(32);
+setBoardSize(32, 32);
 setStatus('ready', 'ready');
 renderLadderTable();
 </script>
