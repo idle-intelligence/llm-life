@@ -260,12 +260,16 @@
 <section>
     <h2>settings <span class="sub">· run</span></h2>
     <div class="grids">
-        <div class="panel"><canvas id="c-board" width="32" height="32"></canvas><div class="caption">board</div></div>
+        <div class="panel"><canvas id="c-board" width="32" height="32"></canvas><div class="caption" id="board-caption">board</div></div>
     </div>
     <div class="controls" style="margin-top:16px;">
         <button type="button" class="gridsize-btn" data-size="16">16&times;16</button>
         <button type="button" class="gridsize-btn primary" data-size="32">32&times;32</button>
         <button type="button" class="gridsize-btn" data-size="64">64&times;64</button>
+        <button type="button" class="gridsize-btn" data-size="256">256&times;256</button>
+        <button type="button" class="gridsize-btn" data-size="1024">1024&times;1024</button>
+        <button type="button" class="gridsize-btn" data-size="2048">2048&times;2048</button>
+        <button type="button" class="gridsize-btn" data-size="4096">4096&times;4096</button>
     </div>
     <div class="controls" style="margin-top:12px;">
         <button id="run-all" class="primary">run every method</button>
@@ -289,6 +293,7 @@
                 <tr>
                     <th>method</th>
                     <th>s / generation</th>
+                    <th>total</th>
                     <th>parameters</th>
                     <th>cells correct</th>
                 </tr>
@@ -297,6 +302,7 @@
         </table>
     </div>
     <p class="info" id="llm-hint">load the LLM above to measure the LLM rows, or "run every method" will load it.</p>
+    <p class="info" id="genNote"></p>
     <div class="thumbs" id="thumbs"></div>
 </section>
 
@@ -305,7 +311,8 @@
     <div class="method-notes">
         <p><strong>Game of Life (rule):</strong> The classical rule, as a for loop.</p>
         <p><strong>lookup table:</strong> the same rule as a 512-entry table indexed by the 9 neighbourhood bits. The fastest way to compute it, and the thing every model below is measured against.</p>
-        <p><strong>GPU lookup:</strong> the same 512-entry table, looked up by a WebGPU compute shader instead of the CPU: one thread per cell, one lookup each.</p>
+        <p><strong>GPU lookup:</strong> the same 512-entry table, looked up by a WebGPU compute shader instead of the CPU: one thread per cell, one lookup each. This row reads the board back to the CPU every generation.</p>
+        <p><strong>GPU lookup (resident):</strong> the same kernel, run back to back on the GPU with ping-pong buffers and no readback in between; only the final board comes back to the CPU. Reports the amortized time per generation once dispatch and readback overhead are out of the loop.</p>
         <p><strong>LLM per cell:</strong> Give a language model the rules and current cell's state, *as text*, and ask if it lives or dies. Repeat for each and every cell. Of course, it's very slow, and an off the shelf model doesn't work. Fine tuning a small LoRa adapter gets us perfect results, but it's still slow... Does it speed up if we batch the inference?</p>
         <p><strong>LLM whole grid:</strong> Look, there are many optimisation we could do. That's not the game we are playing. Yet, cell by cell _is_ stupid. Instead, we ask the model for the whole grid in one prompt, one token per cell. It's much faster, but training a 64x64 adapter gets expensive, and 256x256 doesn't fit in this small model's context. Another LoRa adapter gets us to 100% accuracy.</p>
         <p><strong>BERT of Life:</strong> Alive or Dead is a classification. What would a BERT do? A BERT-shaped classifier, one-layer encoder over the 9 cells as tokens, 3,490 parameters trained from scratch; it works.</p>
@@ -346,10 +353,12 @@ const els = {
   statusDot: document.getElementById('statusDot'),
   statusText: document.getElementById('statusText'),
   board: document.getElementById('c-board'),
+  boardCaption: document.getElementById('board-caption'),
   runAll: document.getElementById('run-all'),
   loadLlm: document.getElementById('load-llm'),
   ladderBody: document.getElementById('ladder-body'),
   llmHint: document.getElementById('llm-hint'),
+  genNote: document.getElementById('genNote'),
   thumbs: document.getElementById('thumbs'),
 };
 const boardCtx = els.board.getContext('2d');
@@ -359,17 +368,49 @@ function setStatus(state, text) {
   els.statusText.textContent = text;
 }
 
+// Above 1024 per side a full-resolution ImageData gets too big to build for
+// every panel and thumbnail (4096x4096 alone is 64 MB) -- this picks a block
+// size so the backing canvas never exceeds 1024 px on its long side, and any
+// live cell in a block paints that block's pixel black (max-pool).
+function displayDims(w, h) {
+  const maxDim = 1024;
+  const block = Math.max(1, Math.ceil(Math.max(w, h) / maxDim));
+  return { outW: Math.ceil(w / block), outH: Math.ceil(h / block), block };
+}
+
+// Returns true when the canvas was downsampled (block > 1), so callers can
+// say so in their caption.
 function paint(ctx, w, h, values) {
-  const img = ctx.createImageData(w, h);
-  for (let i = 0; i < w * h; i++) {
-    const v = Math.max(0, Math.min(1, values[i]));
-    const g = Math.round(255 * (1 - v));
-    img.data[i * 4 + 0] = g;
-    img.data[i * 4 + 1] = g;
-    img.data[i * 4 + 2] = g;
-    img.data[i * 4 + 3] = 255;
+  const { outW, outH, block } = displayDims(w, h);
+  ctx.canvas.width = outW;
+  ctx.canvas.height = outH;
+  const img = ctx.createImageData(outW, outH);
+  if (block === 1) {
+    for (let i = 0; i < w * h; i++) {
+      const v = Math.max(0, Math.min(1, values[i]));
+      const g = Math.round(255 * (1 - v));
+      img.data[i * 4 + 0] = g;
+      img.data[i * 4 + 1] = g;
+      img.data[i * 4 + 2] = g;
+      img.data[i * 4 + 3] = 255;
+    }
+  } else {
+    for (let oy = 0; oy < outH; oy++) {
+      const y0 = oy * block, y1 = Math.min(h, y0 + block);
+      for (let ox = 0; ox < outW; ox++) {
+        const x0 = ox * block, x1 = Math.min(w, x0 + block);
+        let alive = false;
+        for (let y = y0; y < y1 && !alive; y++) {
+          for (let x = x0; x < x1; x++) { if (values[y * w + x]) { alive = true; break; } }
+        }
+        const g = alive ? 0 : 255;
+        const idx = (oy * outW + ox) * 4;
+        img.data[idx] = g; img.data[idx + 1] = g; img.data[idx + 2] = g; img.data[idx + 3] = 255;
+      }
+    }
   }
   ctx.putImageData(img, 0, 0);
+  return block > 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -419,11 +460,6 @@ function jsLifeStepLookup(cells, w, h, table) {
   }
   return out;
 }
-function timeIt(fn, reps) {
-  const t0 = performance.now();
-  for (let i = 0; i < reps; i++) fn();
-  return (performance.now() - t0) / reps / 1000;
-}
 function fmtSec(v) {
   if (v == null) return '-';
   if (v < 1e-3) return v.toExponential(2);
@@ -469,6 +505,10 @@ async function ensureGpuLookupEngine() {
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error('no WebGPU adapter');
   const device = await adapter.requestDevice();
+  // A device lost elsewhere in the page (e.g. the worker's stencil engine
+  // OOMing at 4096x4096) shouldn't strand the GPU lookup rows on a dead
+  // device -- the next call just builds a fresh one.
+  device.lost.then(() => { if (gpuLookupEngine && gpuLookupEngine.device === device) gpuLookupEngine = null; });
   const code = await (await fetch('./lut_byte.wgsl')).text();
   const module = device.createShaderModule({ code });
   const pipeline = await device.createComputePipelineAsync({
@@ -478,6 +518,20 @@ async function ensureGpuLookupEngine() {
   gpuLookupEngine = { device, pipeline };
   return gpuLookupEngine;
 }
+// WebGPU caps a single dispatch dimension at 65535 workgroups -- a 1024x1024
+// board already needs 4096, and 4096x4096 needs exactly 65536, one over the
+// line. A 1D grid of ceil(n / 256) workgroups that would cross that line is
+// folded into a 2D (x, y) grid instead; lut_byte.wgsl's `Params::dispatch_x`
+// is how the shader undoes the fold back into a linear cell index (same
+// convention as life-lut-bench's native `Engine::dispatch_shape`). Crossing
+// this cap without folding doesn't throw -- WebGPU validation errors surface
+// asynchronously -- so the dispatch silently no-ops instead of failing loudly.
+function dispatchShape(n) {
+  const workgroups = Math.ceil(n / 256);
+  if (workgroups <= 65535) return { x: workgroups, y: 1, dispatchX: workgroups };
+  const x = 65535;
+  return { x, y: Math.ceil(workgroups / x), dispatchX: x };
+}
 async function gpuLookupStep(cells, w, h) {
   const { device, pipeline } = await ensureGpuLookupEngine();
   if (!gpuLut) gpuLut = buildGpuLut();
@@ -485,13 +539,9 @@ async function gpuLookupStep(cells, w, h) {
   const cellsU32 = new Uint32Array(n);
   for (let i = 0; i < n; i++) cellsU32[i] = cells[i] ? 1 : 0;
 
-  // dispatch_x: number of workgroups along X, matching the shader's
-  // Params::dispatch_x (see lut_byte.wgsl). Every grid size this page uses
-  // (16, 32, 64) needs at most 16 workgroups of 256, well under the
-  // 65535-per-axis cap, so this is always a plain 1D dispatch.
-  const workgroups = Math.ceil(n / 256);
+  const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
   const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([w, h, workgroups, 0]));
+  device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([w, h, dispatchX, 0]));
   const lutBuf = device.createBuffer({ size: 512 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(lutBuf, 0, gpuLut);
   const srcBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
@@ -512,7 +562,7 @@ async function gpuLookupStep(cells, w, h) {
   const pass = encoder.beginComputePass();
   pass.setPipeline(pipeline);
   pass.setBindGroup(0, bindGroup);
-  pass.dispatchWorkgroups(workgroups, 1, 1);
+  pass.dispatchWorkgroups(dispatchXCount, dispatchY, 1);
   pass.end();
   encoder.copyBufferToBuffer(dstBuf, 0, stagingBuf, 0, n * 4);
   device.queue.submit([encoder.finish()]);
@@ -529,14 +579,81 @@ async function measureGpuLookupOnce(cells) {
   const seconds = (performance.now() - t0) / 1000;
   return { seconds, binarized };
 }
-async function measureGpuLookup(cells) {
+// Chains `generations` single-generation round trips (dispatch + full
+// readback each time) so this row is directly comparable to the rule and
+// lookup-table rows: same starting board, same N, one wall-clock total.
+async function measureGpuLookupChain(cells, generations, onProgress) {
   await measureGpuLookupOnce(cells); // warm up: pipeline compile, device init
-  const first = await measureGpuLookupOnce(cells);
-  if (first.seconds >= 2) return first;
-  const runs = [first];
-  for (let i = 0; i < 2; i++) runs.push(await measureGpuLookupOnce(cells));
-  runs.sort((a, b) => a.seconds - b.seconds);
-  return runs[1];
+  let cur = cells;
+  const t0 = performance.now();
+  for (let g = 0; g < generations; g++) {
+    const step = await measureGpuLookupOnce(cur);
+    cur = step.binarized;
+    if (onProgress) onProgress(g + 1, generations);
+  }
+  const totalSeconds = (performance.now() - t0) / 1000;
+  return { totalSeconds, seconds: totalSeconds / generations, binarized: cur, generations };
+}
+
+// Same kernel, run `generations` times back to back with ping-pong buffers,
+// no readback until the very end -- same shape as life-lut-bench's
+// Engine::run_lut_timed (crates/life-lut-bench/src/gpu.rs), reimplemented
+// here in plain JS since that crate's benchmark only runs natively.
+async function gpuLookupResidentRun(cells, w, h, generations, onProgress) {
+  const { device, pipeline } = await ensureGpuLookupEngine();
+  if (!gpuLut) gpuLut = buildGpuLut();
+  const n = w * h;
+  const cellsU32 = new Uint32Array(n);
+  for (let i = 0; i < n; i++) cellsU32[i] = cells[i] ? 1 : 0;
+
+  const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
+  const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([w, h, dispatchX, 0]));
+  const lutBuf = device.createBuffer({ size: 512 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(lutBuf, 0, gpuLut);
+  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
+  device.queue.writeBuffer(a, 0, cellsU32);
+  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
+  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+
+  const makeBindGroup = (src, dst) => device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: paramsBuf } },
+      { binding: 1, resource: { buffer: lutBuf } },
+      { binding: 2, resource: { buffer: src } },
+      { binding: 3, resource: { buffer: dst } },
+    ],
+  });
+  const bgAB = makeBindGroup(a, b);
+  const bgBA = makeBindGroup(b, a);
+
+  const t0 = performance.now();
+  for (let g = 0; g < generations; g++) {
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, g % 2 === 0 ? bgAB : bgBA);
+    pass.dispatchWorkgroups(dispatchXCount, dispatchY, 1);
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+    if (g % 100 === 99) {
+      await device.queue.onSubmittedWorkDone();
+      if (onProgress) onProgress(g + 1, generations);
+    }
+  }
+  const finalBuf = generations % 2 === 0 ? a : b;
+  const readEncoder = device.createCommandEncoder();
+  readEncoder.copyBufferToBuffer(finalBuf, 0, stagingBuf, 0, n * 4);
+  device.queue.submit([readEncoder.finish()]);
+  await stagingBuf.mapAsync(GPUMapMode.READ);
+  const binarized = Array.from(new Uint32Array(stagingBuf.getMappedRange().slice(0)), (v) => (v ? 1 : 0));
+  stagingBuf.unmap();
+  const seconds = (performance.now() - t0) / 1000;
+
+  paramsBuf.destroy(); lutBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
+  return { seconds, binarized, generations };
 }
 
 // ---------------------------------------------------------------------------
@@ -603,6 +720,33 @@ async function ensureVecStencil() {
   vecStencilReady = true;
 }
 
+// Above 64x64 the stencil is the only model row that still runs (it's linear
+// in cell count, gathering each cell's 9 neighbours -- see
+// crates/llm-life/src/vector/model.rs). It's chained across a few real
+// generations, not 1000: at 1024x1024 the gathered k/v tensors are large
+// enough (~1M cells x 9 x 16 floats) that this can exceed the browser's GPU
+// memory, so the caller wraps this in a try/catch.
+async function measureStencilLarge(board, w, h, generations) {
+  await ensureVecStencil();
+  let cur = Uint8Array.from(board);
+  const t0 = performance.now();
+  for (let g = 0; g < generations; g++) {
+    const res = await ask('step', { cells: cur, variant: 'vec-stencil', width: w, height: h });
+    cur = res.binarized;
+  }
+  const totalSeconds = (performance.now() - t0) / 1000;
+  return { totalSeconds, seconds: totalSeconds / generations, binarized: cur };
+}
+
+// A GPU device lost inside the worker (e.g. the stencil OOMing above) can
+// take every other engine sharing that device down with it, so recovery is a
+// fresh worker rather than trying to resume the old one.
+function restartWorker() {
+  if (worker) { worker.terminate(); worker = null; }
+  llmReady = false; bertReady = false; vecMlpReady = false; vecStencilReady = false;
+  pending.clear();
+}
+
 // WebGPU availability, probed once at load. Every model row runs on the
 // WebGPU engine; without an adapter only the two naive rows run.
 let webGpuAvailable = null;
@@ -654,15 +798,22 @@ function setBoardSize(n) {
   for (const btn of document.querySelectorAll('.gridsize-btn')) {
     btn.classList.toggle('primary', Number(btn.dataset.size) === size);
   }
+  if (webGpuAvailable !== false) {
+    els.loadLlm.disabled = size > 64;
+    els.loadLlm.textContent = size > 64 ? 'not run above 64×64'
+      : llmReady ? 'LLM loaded' : 'load the LLM (about 430 MB, stored locally)';
+  }
 }
 function drawBoard() {
-  paint(boardCtx, size, size, Array.from(app.cells()));
+  const downsampled = paint(boardCtx, size, size, Array.from(app.cells()));
+  els.boardCaption.textContent = downsampled ? 'board (shown downsampled)' : 'board';
 }
 
 const RUNGS = [
   { key: 'cpu', name: 'Game of Life (rule)', params: 'no parameters' },
   { key: 'lookup', name: 'lookup table', params: '512-entry table' },
   { key: 'gpu-lookup', name: 'GPU lookup', params: '512-entry table (GPU)' },
+  { key: 'gpu-lookup-resident', name: 'GPU lookup (resident)', params: '512-entry table (GPU, resident)' },
   { key: 'llm-percell-base', name: 'LLM per cell (base)', params: '0.5B (no adapter)' },
   { key: 'llm-percell-trained', name: 'LLM per cell (trained)', params: '0.5B (+ adapter)' },
   { key: 'llm-percell-batched', name: 'LLM per cell (trained, batched)', params: '0.5B (+ adapter)' },
@@ -681,8 +832,9 @@ function renderLadderTable() {
     const res = results[r.key];
     const secText = (res && res.note) ? res.note
       : (res ? fmtSec(res.seconds) : '-');
+    const totalText = (res && !res.note && res.totalSeconds != null) ? fmtSec(res.totalSeconds) : '-';
     const correctText = res && res.total != null ? `${res.correctCount} / ${res.total}` : '-';
-    return `<tr><td>${r.name}</td><td>${secText}</td><td>${r.params}</td><td>${correctText}</td></tr>`;
+    return `<tr><td>${r.name}</td><td>${secText}</td><td>${totalText}</td><td>${r.params}</td><td>${correctText}</td></tr>`;
   }).join('');
 }
 
@@ -716,23 +868,40 @@ async function measureWorkerStep(variant, cells, opts = {}) {
   }
 }
 
-function measureNaive(fn, cells) {
-  const reps = size <= 32 ? 2000 : 400;
-  const seconds = timeIt(() => fn(cells), reps);
-  const binarized = fn(cells);
-  return { seconds, binarized: Array.from(binarized) };
+// Chains `generations` steps of `fn` from the same starting board, one
+// wall-clock total for the whole chain plus the amortized per-generation
+// figure -- the same shape the rule, lookup table and both GPU lookup rows
+// all use so their numbers are directly comparable. Chunked to one
+// generation at a time above 64x64 so the event loop gets a turn between
+// generations; the naive modulo-heavy steps are the slow part at
+// 1024x1024/2048x2048, not anything GPU-side.
+async function measureChainedCpu(fn, cells, w, h, generations, onProgress) {
+  let cur = cells;
+  const chunk = w * h > 4096 ? 1 : generations;
+  let done = 0;
+  const t0 = performance.now();
+  while (done < generations) {
+    const step = Math.min(chunk, generations - done);
+    for (let s = 0; s < step; s++) cur = fn(cur, w, h);
+    done += step;
+    if (onProgress) onProgress(done, generations);
+    if (done < generations) await new Promise((r) => setTimeout(r, 0));
+  }
+  const totalSeconds = (performance.now() - t0) / 1000;
+  return { totalSeconds, seconds: totalSeconds / generations, binarized: Array.from(cur), generations };
 }
 
 function drawThumb(canvas, w, h, values, placeholder) {
   const ctx = canvas.getContext('2d');
-  canvas.width = w; canvas.height = h;
   if (placeholder) {
+    const { outW, outH } = displayDims(w, h);
+    canvas.width = outW; canvas.height = outH;
     canvas.classList.add('placeholder');
-    ctx.clearRect(0, 0, w, h);
-    return;
+    ctx.clearRect(0, 0, outW, outH);
+    return false;
   }
   canvas.classList.remove('placeholder');
-  paint(ctx, w, h, values);
+  return paint(ctx, w, h, values);
 }
 
 function renderThumbs(trueNext) {
@@ -748,9 +917,13 @@ function renderThumbs(trueNext) {
     const noteEl = document.createElement('div');
     noteEl.className = 'note';
     if (res && res.binarized) {
-      drawThumb(canvas, size, size, res.binarized, false);
+      const downsampled = drawThumb(canvas, size, size, res.binarized, false);
       const wrongCount = res.total - res.correctCount;
-      noteEl.textContent = wrongCount === 0 ? '' : `${wrongCount} cells wrong`;
+      const gens = res.generations || 1;
+      let text = `after ${gens} generation${gens === 1 ? '' : 's'}`;
+      if (wrongCount !== 0) text += `, ${wrongCount} wrong`;
+      if (downsampled) text += ' (shown downsampled)';
+      noteEl.textContent = text;
     } else {
       drawThumb(canvas, size, size, null, true);
       noteEl.textContent = res && res.note ? res.note : 'not run';
@@ -770,17 +943,29 @@ async function runEveryRung() {
   setStatus('generating', 'running every method...');
   try {
     if (!lookupTable) lookupTable = buildLookupTable();
-    const board = Array.from(app.cells());
-    const trueNext = jsLifeStepLoop(board, size, size);
+    const board = Uint8Array.from(app.cells());
+    const trueNext = jsLifeStepLoop(board, size, size); // single-step reference for the model rows further down
     const results = {};
     const total = size * size;
 
-    // naive baselines
-    results.cpu = measureNaive((c) => jsLifeStepLoop(c, size, size), board);
-    results.lookup = measureNaive((c) => jsLifeStepLookup(c, size, size, lookupTable), board);
-    results.cpu.correctCount = countMatches(results.cpu.binarized, trueNext);
+    // Fair comparison: the rule, lookup table and both GPU lookup rows all
+    // chain the same N generations from the same starting board, so their
+    // "total" and "s / generation" numbers line up directly.
+    const N = size <= 1024 ? 1000 : 200;
+    els.genNote.textContent = `rule, lookup table and both GPU lookup rows: ${N} chained generations from the same starting board` + (size > 64 ? `; stencil: 3 generations.` : '.');
+
+    const onGen = (label) => (done, gens) => setStatus('generating', `${label}: generation ${done} / ${gens}`);
+
+    setStatus('generating', `running the rule, ${N} generations...`);
+    results.cpu = await measureChainedCpu(jsLifeStepLoop, board, size, size, N, onGen('rule'));
+    results.cpu.correctCount = total; // the rule is the reference board itself
     results.cpu.total = total;
-    results.lookup.correctCount = countMatches(results.lookup.binarized, trueNext);
+    lastResults = results;
+    renderLadderTable();
+
+    setStatus('generating', `running the lookup table, ${N} generations...`);
+    results.lookup = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, size, size, N, onGen('lookup table'));
+    results.lookup.correctCount = countMatches(results.lookup.binarized, results.cpu.binarized);
     results.lookup.total = total;
     lastResults = results;
     renderLadderTable();
@@ -793,16 +978,64 @@ async function runEveryRung() {
       return;
     }
 
-    setStatus('generating', 'running the GPU lookup...');
+    setStatus('generating', `running the GPU lookup, ${N} generations (readback each)...`);
     try {
-      results['gpu-lookup'] = await measureGpuLookup(board);
-      results['gpu-lookup'].correctCount = countMatches(results['gpu-lookup'].binarized, trueNext);
+      results['gpu-lookup'] = await measureGpuLookupChain(board, N, onGen('GPU lookup'));
+      results['gpu-lookup'].correctCount = countMatches(results['gpu-lookup'].binarized, results.cpu.binarized);
       results['gpu-lookup'].total = total;
     } catch (e) {
       results['gpu-lookup'] = { note: NO_WEBGPU };
     }
     lastResults = results;
     renderLadderTable();
+
+    setStatus('generating', `running the GPU lookup, resident, ${N} generations...`);
+    try {
+      const gpuResident = await gpuLookupResidentRun(board, size, size, N, onGen('GPU lookup (resident)'));
+      results['gpu-lookup-resident'] = {
+        seconds: gpuResident.seconds / N,
+        totalSeconds: gpuResident.seconds,
+        binarized: gpuResident.binarized,
+        correctCount: countMatches(gpuResident.binarized, results.cpu.binarized),
+        total,
+        generations: N,
+      };
+    } catch (e) {
+      results['gpu-lookup-resident'] = { note: NO_WEBGPU };
+    }
+    lastResults = results;
+    renderLadderTable();
+
+    if (size > 64) {
+      setStatus('generating', 'running the stencil, grid to grid...');
+      const stencilGens = 3;
+      try {
+        const stencilResult = await measureStencilLarge(board, size, size, stencilGens);
+        const stencilRef = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, size, size, stencilGens);
+        results['vec-stencil'] = {
+          seconds: stencilResult.seconds,
+          totalSeconds: stencilResult.totalSeconds,
+          binarized: stencilResult.binarized,
+          correctCount: countMatches(stencilResult.binarized, stencilRef.binarized),
+          total,
+          generations: stencilGens,
+        };
+      } catch (e) {
+        results['vec-stencil'] = { note: "does not fit in this browser's GPU memory" };
+        restartWorker();
+      }
+      lastResults = results;
+      renderLadderTable();
+
+      for (const r of RUNGS) {
+        if (!(r.key in results)) results[r.key] = { note: 'not run above 64x64' };
+      }
+      lastResults = results;
+      renderLadderTable();
+      renderThumbs(trueNext);
+      setStatus('ready', 'ready');
+      return;
+    }
 
     {
       // Run order is the display order. Going back to the base model after an
