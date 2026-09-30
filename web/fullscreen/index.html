@@ -417,6 +417,7 @@ async function main() {
   let genSinceMark = 0, lastMarkTime = performance.now(), gensPerSec = 0;
   let fastMode = false;
   let fastLoopRunning = false;
+  let activeLoopCount = 0; // debug only: should never exceed 1, see __lifeLoopCount
   const FULL_SPEED_BATCH = 256; // fixed constant, no runtime tuning
   // The view onto the board: origin in cells (top-left of the visible area,
   // wrapped toroidally), cellsPerPixel the zoom (1 = the default 1:1 map).
@@ -469,19 +470,24 @@ async function main() {
     });
   }
 
-  // Turns off full speed and waits for its in-flight batches to drain --
-  // called before destroying/reallocating buffers the full-speed loop might
-  // still have GPU work queued against.
-  async function stopFastLoop() {
-    fastMode = false;
-    els.speedToggle.textContent = 'full speed';
+  // Pauses the full-speed loop (without changing the user's selected mode
+  // or the button's label) and waits for its in-flight batches to actually
+  // drain -- called before destroying/reallocating buffers the loop might
+  // still have GPU work queued against. `pauseSim` is what the loop itself
+  // checks; `fastMode` is left alone so a resize/reseed/board-size change
+  // can resume in the same mode afterward instead of silently falling back
+  // to watch.
+  let pauseSim = false;
+  async function pauseFastLoop() {
+    pauseSim = true;
     while (fastLoopRunning) await new Promise((r) => setTimeout(r, 0));
   }
 
-  // (Re)allocates the sim buffers for a w x h board and seeds it on the GPU.
+  // (Re)allocates the sim buffers for a w x h board and seeds it on the GPU,
+  // then resumes whichever mode (watch or full speed) was active before.
   // Does not touch canvasW/canvasH or the render target.
   async function allocateBoard(w, h) {
-    await stopFastLoop();
+    await pauseFastLoop();
     destroyBoardBuffers();
     simW = w; simH = h; wpr = w / 32;
     const n = wpr * simH;
@@ -496,6 +502,8 @@ async function main() {
     genSinceMark = 0;
     lastMarkTime = performance.now();
     await seedGpu(Date.now() >>> 0);
+    pauseSim = false;
+    if (fastMode) fullSpeedLoop();
   }
 
   // Random soup, generated entirely on the GPU with seed.wgsl -- no CPU
@@ -574,9 +582,10 @@ async function main() {
   async function fullSpeedLoop() {
     if (fastLoopRunning) return;
     fastLoopRunning = true;
+    activeLoopCount++;
     const pending = [];
     try {
-      while (fastMode && simW > 0) {
+      while (fastMode && !pauseSim && simW > 0) {
         if (pending.length >= 2) await pending.shift();
         const encoder = device.createCommandEncoder();
         for (let i = 0; i < FULL_SPEED_BATCH; i++) stepOnce(encoder);
@@ -588,6 +597,7 @@ async function main() {
       await Promise.all(pending);
     } finally {
       fastLoopRunning = false;
+      activeLoopCount--;
     }
   }
 
@@ -767,6 +777,10 @@ async function main() {
   // ---------------------------------------------------------------------------
   // Debug hooks only -- never called during normal use.
   // ---------------------------------------------------------------------------
+  // Number of full-speed loops currently executing -- must never exceed 1.
+  window.__lifeLoopCount = () => activeLoopCount;
+  window.__lifeMode = () => (fastMode ? 'full speed' : 'watch');
+
   // Snapshots the current board, advances it n generations two ways (this
   // page's GPU kernel, and the plain CPU rule above) from the same starting
   // board, and reports whether they match exactly. Runs on a private buffer
