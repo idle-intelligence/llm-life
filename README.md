@@ -73,6 +73,7 @@ Measured in a browser tab at 16x16 on an M2.
 |---|---|---|---|
 | Game of Life (rule) | 5.43e-6 | no parameters | 256 / 256 |
 | lookup table | 2.98e-6 | 512-entry table | 256 / 256 |
+| GPU lookup | timing: to measure on a quiet machine | 512-entry table (GPU) | 256 / 256 |
 | LLM per cell (base) | 30.92 | 0.5B (no adapter) | 156 / 256 |
 | LLM per cell (trained) | 28.46 | 0.5B (+ adapter) | 256 / 256 |
 | LLM per cell (trained, batched) | 31.97 | 0.5B (+ adapter) | 256 / 256 |
@@ -147,8 +148,8 @@ The native "picture" driver, variant B, against Qwen2.5-0.5B-Instruct Q4_0:
 
 ```bash
 cargo run --release -p llm-life -- picture \
-  --gguf ~/Code/idle-intelligence/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf \
-  --tokenizer ~/Code/idle-intelligence/models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json \
+  --gguf ~/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf \
+  --tokenizer ~/models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json \
   --size 64 --generations 10
 ```
 

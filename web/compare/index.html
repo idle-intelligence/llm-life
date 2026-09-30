@@ -305,6 +305,7 @@
     <div class="method-notes">
         <p><strong>Game of Life (rule):</strong> The classical rule, as a for loop.</p>
         <p><strong>lookup table:</strong> the same rule as a 512-entry table indexed by the 9 neighbourhood bits. The fastest way to compute it, and the thing every model below is measured against.</p>
+        <p><strong>GPU lookup:</strong> the same 512-entry table, looked up by a WebGPU compute shader instead of the CPU: one thread per cell, one lookup each.</p>
         <p><strong>LLM per cell:</strong> Give a language model the rules and current cell's state, *as text*, and ask if it lives or dies. Repeat for each and every cell. Of course, it's very slow, and an off the shelf model doesn't work. Fine tuning a small LoRa adapter gets us perfect results, but it's still slow... Does it speed up if we batch the inference?</p>
         <p><strong>LLM whole grid:</strong> Look, there are many optimisation we could do. That's not the game we are playing. Yet, cell by cell _is_ stupid. Instead, we ask the model for the whole grid in one prompt, one token per cell. It's much faster, but training a 64x64 adapter gets expensive, and 256x256 doesn't fit in this small model's context. Another LoRa adapter gets us to 100% accuracy.</p>
         <p><strong>BERT of Life:</strong> Alive or Dead is a classification. What would a BERT do? A BERT-shaped classifier, one-layer encoder over the 9 cells as tokens, 3,490 parameters trained from scratch; it works.</p>
@@ -436,6 +437,109 @@ function countMatches(a, b) {
 }
 
 // ---------------------------------------------------------------------------
+// GPU lookup -- the same 512-entry table as jsLifeStepLookup above, but
+// looked up by life-lut-bench's lut_byte.wgsl compute shader (copied
+// verbatim from crates/life-lut-bench/src/shaders/lut_byte.wgsl) instead of
+// the CPU. One thread per cell, one uniform buffer, one 512-entry table
+// buffer, ping (src) and pong (dst) buffers, no ping-pong needed here since
+// each call runs a single generation from the passed-in board.
+//
+// The shader's index convention is bit0 = self, bits1..8 = the 8 neighbours
+// (see lut_byte.wgsl's header) -- the opposite of jsLifeStepLookup's table
+// above (self at bit8), so the table itself is rebuilt to match, following
+// life-lut-bench's lut::build_lut exactly (popcount of the neighbour bits
+// only; the rule doesn't care which physical neighbour sits in which bit).
+// ---------------------------------------------------------------------------
+function buildGpuLut() {
+  const t = new Uint32Array(512);
+  for (let idx = 0; idx < 512; idx++) {
+    const center = idx & 1;
+    const neighborBits = idx >> 1;
+    let n = 0;
+    for (let b = 0; b < 8; b++) if ((neighborBits >> b) & 1) n++;
+    t[idx] = (center ? (n === 2 || n === 3) : n === 3) ? 1 : 0;
+  }
+  return t;
+}
+let gpuLut = null;
+let gpuLookupEngine = null;
+async function ensureGpuLookupEngine() {
+  if (gpuLookupEngine) return gpuLookupEngine;
+  if (!navigator.gpu) throw new Error('no WebGPU');
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error('no WebGPU adapter');
+  const device = await adapter.requestDevice();
+  const code = await (await fetch('./lut_byte.wgsl')).text();
+  const module = device.createShaderModule({ code });
+  const pipeline = await device.createComputePipelineAsync({
+    layout: 'auto',
+    compute: { module, entryPoint: 'main' },
+  });
+  gpuLookupEngine = { device, pipeline };
+  return gpuLookupEngine;
+}
+async function gpuLookupStep(cells, w, h) {
+  const { device, pipeline } = await ensureGpuLookupEngine();
+  if (!gpuLut) gpuLut = buildGpuLut();
+  const n = w * h;
+  const cellsU32 = new Uint32Array(n);
+  for (let i = 0; i < n; i++) cellsU32[i] = cells[i] ? 1 : 0;
+
+  // dispatch_x: number of workgroups along X, matching the shader's
+  // Params::dispatch_x (see lut_byte.wgsl). Every grid size this page uses
+  // (16, 32, 64) needs at most 16 workgroups of 256, well under the
+  // 65535-per-axis cap, so this is always a plain 1D dispatch.
+  const workgroups = Math.ceil(n / 256);
+  const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([w, h, workgroups, 0]));
+  const lutBuf = device.createBuffer({ size: 512 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(lutBuf, 0, gpuLut);
+  const srcBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(srcBuf, 0, cellsU32);
+  const dstBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+
+  const bindGroup = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: paramsBuf } },
+      { binding: 1, resource: { buffer: lutBuf } },
+      { binding: 2, resource: { buffer: srcBuf } },
+      { binding: 3, resource: { buffer: dstBuf } },
+    ],
+  });
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginComputePass();
+  pass.setPipeline(pipeline);
+  pass.setBindGroup(0, bindGroup);
+  pass.dispatchWorkgroups(workgroups, 1, 1);
+  pass.end();
+  encoder.copyBufferToBuffer(dstBuf, 0, stagingBuf, 0, n * 4);
+  device.queue.submit([encoder.finish()]);
+
+  await stagingBuf.mapAsync(GPUMapMode.READ);
+  const out = Array.from(new Uint32Array(stagingBuf.getMappedRange().slice(0)), (v) => (v ? 1 : 0));
+  stagingBuf.unmap();
+  paramsBuf.destroy(); lutBuf.destroy(); srcBuf.destroy(); dstBuf.destroy(); stagingBuf.destroy();
+  return out;
+}
+async function measureGpuLookupOnce(cells) {
+  const t0 = performance.now();
+  const binarized = await gpuLookupStep(cells, size, size);
+  const seconds = (performance.now() - t0) / 1000;
+  return { seconds, binarized };
+}
+async function measureGpuLookup(cells) {
+  await measureGpuLookupOnce(cells); // warm up: pipeline compile, device init
+  const first = await measureGpuLookupOnce(cells);
+  if (first.seconds >= 2) return first;
+  const runs = [first];
+  for (let i = 0; i < 2; i++) runs.push(await measureGpuLookupOnce(cells));
+  runs.sort((a, b) => a.seconds - b.seconds);
+  return runs[1];
+}
+
+// ---------------------------------------------------------------------------
 // Worker -- the same web/worker.js the main demo uses, loaded from here by a
 // relative path so its own fetches (checkpoints, gguf, tokenizer) still
 // resolve against web/, unchanged.
@@ -558,6 +662,7 @@ function drawBoard() {
 const RUNGS = [
   { key: 'cpu', name: 'Game of Life (rule)', params: 'no parameters' },
   { key: 'lookup', name: 'lookup table', params: '512-entry table' },
+  { key: 'gpu-lookup', name: 'GPU lookup', params: '512-entry table (GPU)' },
   { key: 'llm-percell-base', name: 'LLM per cell (base)', params: '0.5B (no adapter)' },
   { key: 'llm-percell-trained', name: 'LLM per cell (trained)', params: '0.5B (+ adapter)' },
   { key: 'llm-percell-batched', name: 'LLM per cell (trained, batched)', params: '0.5B (+ adapter)' },
@@ -687,6 +792,17 @@ async function runEveryRung() {
       setStatus('ready', NO_WEBGPU + ', the two naive rows ran');
       return;
     }
+
+    setStatus('generating', 'running the GPU lookup...');
+    try {
+      results['gpu-lookup'] = await measureGpuLookup(board);
+      results['gpu-lookup'].correctCount = countMatches(results['gpu-lookup'].binarized, trueNext);
+      results['gpu-lookup'].total = total;
+    } catch (e) {
+      results['gpu-lookup'] = { note: NO_WEBGPU };
+    }
+    lastResults = results;
+    renderLadderTable();
 
     {
       // Run order is the display order. Going back to the base model after an
