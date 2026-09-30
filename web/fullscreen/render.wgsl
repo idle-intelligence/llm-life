@@ -53,6 +53,7 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
     let baseX = params.origin_x + fragCoord.x * cpp;
     let baseY = params.origin_y + fragCoord.y * cpp;
 
+    // Alive is black on white, same convention as the other pages.
     if (cpp <= 1.0) {
         let alive = cell_alive(i32(floor(baseX)), i32(floor(baseY)));
         let g = 1.0 - f32(alive);
