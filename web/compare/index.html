@@ -1128,7 +1128,7 @@ async function runEveryRung() {
     // enough to still time their full N=residentN chain; they check
     // correctness with a second, short cpuN-generation chain instead (the
     // "generations" column shows which N each row actually ran). 4K
-    // (3840x2160, 8.3M cells) is a special case TC asked for directly: it
+    // (3840x2160, 8.3M cells) is a special case (a 4K screen): it
     // affords N=200 on the CPU (unlike 2048+ square boards of the same
     // order of cell count, because that number was chosen for it) but not
     // N=1000, and its own gpuReadbackN (10) differs from its own cpuN (200)
@@ -1236,7 +1236,7 @@ async function runEveryRung() {
 
     if (maxDim > 64) {
       if (boardW !== boardH) {
-        // TC found this wrong in real Chrome at 3840x2160 (6244398/8294400
+        // Measured wrong in real Chrome at 3840x2160 (6244398/8294400
         // after 3 generations) while every square size was exact. The page
         // already threads width and height through separately everywhere
         // (VecStencilEngine's constructor/setGrid, stencil_neighbors, the
