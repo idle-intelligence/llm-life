@@ -213,3 +213,70 @@ on random soup alone, though both were already reliable; on this n the
 extra data variety mainly speeds convergence rather than rescuing a model
 that wouldn't otherwise converge.
 
+
+### Results, n = 3 (pattern-mixed variant: best pure-random width was c=32)
+
+| model | params | converged / 5 | median steps to converge | mean final cells-correct |
+|---|---:|---:|---:|---:|
+| A untied DeepCNN c=8 | 1,841 | 3 | 5000 | 0.903 |
+| A untied DeepCNN c=32 | 28,097 | 4 | 7250 | 0.945 |
+| A untied DeepCNN c=64 | 111,489 | 1 | 4000 | 0.771 |
+| A untied DeepCNN c=128 | 444,161 | 0 | - | 0.698 (= baseline) |
+| B tied MinimalCNN c=8 | 89 | 0 | - | 0.698 (= baseline) |
+| A untied DeepCNN c=32, +25% pattern-mixed training | 28,097 | 3 | 7500 | 0.888 |
+
+All-dead trivial baseline on the random-soup eval at n=3: 0.698. Width is
+**not** monotonic here: c=32 (4/5) beats both c=8 (3/5) and c=64 (1/5), and
+c=128 collapses entirely (0/5, sitting exactly on the trivial baseline —
+every seed learned to predict all-dead and never escaped it, the same
+"hopeless" mode a wide model hit in the earlier budget-capped n=2 run).
+Same optimizer, same learning rate, same steps budget for every width;
+this is optimization difficulty at fixed hyperparameters, not a statement
+that c=128 categorically cannot learn 3-step Life. B tied (applying the
+89-param n=1 core three times with a straight-through estimator) did not
+converge in any seed either, staying at baseline, though
+`rule_discovery_512_acc_per_seed` [0.689, 0.596, 0.727, 0.656, 0.734] shows
+every seed learned something systematic, just never the exact rule and
+never a 3-step-exact composite.
+
+Structured-pattern eval (exact boards / total, mean masked cells-correct in
+parentheses) for the architectures that learned something beyond baseline:
+
+| pattern | c=8 (3/5 converged) | c=32 (4/5 converged) | c=64 (1/5 converged) | c=32 +25% patterns (3/5 converged) |
+|---|---:|---:|---:|---:|
+| block | 8/20 (0.58) | 16/20 (0.80) | 8/20 (0.40) | 20/20 (1.00) |
+| beehive | 32/40 (0.80) | 32/40 (0.85) | 8/40 (0.20) | 32/40 (0.95) |
+| blinker | 24/40 (0.70) | 32/40 (0.80) | 8/40 (0.20) | 32/40 (0.83) |
+| toad | 48/80 (0.66) | 64/80 (0.80) | 16/80 (0.20) | 64/80 (0.80) |
+| beacon | 20/40 (0.68) | 32/40 (0.80) | 8/40 (0.34) | 32/40 (0.89) |
+| glider | 96/160 (0.67) | 128/160 (0.83) | 32/160 (0.32) | 96/160 (0.79) |
+| lwss | 96/160 (0.68) | 128/160 (0.86) | 32/160 (0.30) | 96/160 (0.78) |
+| r_pentomino | 96/160 (0.74) | 128/160 (0.89) | 32/160 (0.25) | 96/160 (0.87) |
+
+(c=128 untied and B tied score exactly 0 across every pattern family, since
+both predict all-dead everywhere, so they are omitted from the table.)
+
+Observations:
+
+- Unlike n=2, generalization to structured patterns at n=3 tracks the
+  fraction of seeds that actually converged exactly, not an all-or-nothing
+  property: c=32 (4/5 exact-converged seeds) is clearly better across every
+  pattern family than c=8 (3/5) and much better than c=64 (1/5), and the
+  two 0/5-converged conditions (c=128, B tied) score exactly 0 on every
+  pattern.
+- The pattern-mixed training variant helped some patterns and not others
+  at n=3: block went from 16/20 to a perfect 20/20 and beacon's masked
+  accuracy rose from 0.80 to 0.89, but the fraction of seeds reaching exact
+  100%-cells-correct on random soup dropped slightly (3/5 vs 4/5) and the
+  median convergence step rose (7500 vs 7250). At n=2 the same recipe
+  helped unambiguously (faster convergence, no seeds lost); at n=3 it is a
+  wash at best for overall exactness, though it does look like it shifts
+  the model's errors away from small still lifes specifically. Not enough
+  seeds here to call this conclusively either way.
+- No model, converged or not, discovered a still-life-preserving or
+  glider-translating rule from scratch when it failed to converge: the
+  under-capacity or badly-optimized runs (c=8, c=64) get roughly the same
+  masked accuracy on every pattern family regardless of how different
+  those patterns are (a glider is nothing like a block), consistent with
+  learning some other, wrong but roughly-uniform 3-step function rather
+  than a partially-correct version of the real rule.
