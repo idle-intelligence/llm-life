@@ -270,6 +270,7 @@
         <button type="button" class="gridsize-btn" data-size="1024">1024&times;1024</button>
         <button type="button" class="gridsize-btn" data-size="2048">2048&times;2048</button>
         <button type="button" class="gridsize-btn" data-size="4096">4096&times;4096</button>
+        <button type="button" class="gridsize-btn" data-size="8192">8192&times;8192</button>
     </div>
     <div class="controls" style="margin-top:12px;">
         <button id="run-all" class="primary">run every method</button>
@@ -313,6 +314,7 @@
         <p><strong>lookup table:</strong> the same rule as a 512-entry table indexed by the 9 neighbourhood bits. The fastest way to compute it, and the thing every model below is measured against.</p>
         <p><strong>GPU lookup:</strong> the same 512-entry table, looked up by a WebGPU compute shader instead of the CPU: one thread per cell, one lookup each. This row reads the board back to the CPU every generation.</p>
         <p><strong>GPU lookup (resident):</strong> the same kernel, run back to back on the GPU with ping-pong buffers and no readback in between; only the final board comes back to the CPU. Reports the amortized time per generation once dispatch and readback overhead are out of the loop.</p>
+        <p><strong>bitwise (GPU, resident):</strong> 32 cells packed into one 32-bit word, and a bitwise adder network counts all 32 cells' neighbours at once instead of looking each one up individually; same ping-pong, one readback at the end.</p>
         <p><strong>LLM per cell:</strong> Give a language model the rules and current cell's state, *as text*, and ask if it lives or dies. Repeat for each and every cell. Of course, it's very slow, and an off the shelf model doesn't work. Fine tuning a small LoRa adapter gets us perfect results, but it's still slow... Does it speed up if we batch the inference?</p>
         <p><strong>LLM whole grid:</strong> Look, there are many optimisation we could do. That's not the game we are playing. Yet, cell by cell _is_ stupid. Instead, we ask the model for the whole grid in one prompt, one token per cell. It's much faster, but training a 64x64 adapter gets expensive, and 256x256 doesn't fit in this small model's context. Another LoRa adapter gets us to 100% accuracy.</p>
         <p><strong>BERT of Life:</strong> Alive or Dead is a classification. What would a BERT do? A BERT-shaped classifier, one-layer encoder over the 9 cells as tokens, 3,490 parameters trained from scratch; it works.</p>
@@ -504,7 +506,16 @@ async function ensureGpuLookupEngine() {
   if (!navigator.gpu) throw new Error('no WebGPU');
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error('no WebGPU adapter');
-  const device = await adapter.requestDevice();
+  // 8192x8192 needs a 268 MB byte-per-cell buffer, well above the spec's
+  // default limits (128 MB max storage buffer binding) -- request the
+  // adapter's own maximums up front, same as life-lut-bench's native
+  // Engine::new_async (`required_limits: adapter_limits`).
+  const device = await adapter.requestDevice({
+    requiredLimits: {
+      maxBufferSize: adapter.limits.maxBufferSize,
+      maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+    },
+  });
   // A device lost elsewhere in the page (e.g. the worker's stencil engine
   // OOMing at 4096x4096) shouldn't strand the GPU lookup rows on a dead
   // device -- the next call just builds a fresh one.
@@ -517,6 +528,16 @@ async function ensureGpuLookupEngine() {
   });
   gpuLookupEngine = { device, pipeline };
   return gpuLookupEngine;
+}
+// Even with the adapter's own max limits requested above, a board can still
+// be too large for this browser/GPU -- checked up front so the failure is a
+// plain thrown Error the caller's try/catch can turn into a row note,
+// instead of relying on WebGPU's validation errors (which surface
+// asynchronously via uncapturederror, not as a rejected promise).
+function checkGpuBufferSize(device, bytes) {
+  if (bytes > device.limits.maxStorageBufferBindingSize || bytes > device.limits.maxBufferSize) {
+    throw new Error(GPU_LIMIT_ERR);
+  }
 }
 // WebGPU caps a single dispatch dimension at 65535 workgroups -- a 1024x1024
 // board already needs 4096, and 4096x4096 needs exactly 65536, one over the
@@ -536,6 +557,7 @@ async function gpuLookupStep(cells, w, h) {
   const { device, pipeline } = await ensureGpuLookupEngine();
   if (!gpuLut) gpuLut = buildGpuLut();
   const n = w * h;
+  checkGpuBufferSize(device, n * 4);
   const cellsU32 = new Uint32Array(n);
   for (let i = 0; i < n; i++) cellsU32[i] = cells[i] ? 1 : 0;
 
@@ -603,6 +625,7 @@ async function gpuLookupResidentRun(cells, w, h, generations, onProgress) {
   const { device, pipeline } = await ensureGpuLookupEngine();
   if (!gpuLut) gpuLut = buildGpuLut();
   const n = w * h;
+  checkGpuBufferSize(device, n * 4);
   const cellsU32 = new Uint32Array(n);
   for (let i = 0; i < n; i++) cellsU32[i] = cells[i] ? 1 : 0;
 
@@ -653,6 +676,114 @@ async function gpuLookupResidentRun(cells, w, h, generations, onProgress) {
   const seconds = (performance.now() - t0) / 1000;
 
   paramsBuf.destroy(); lutBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
+  return { seconds, binarized, generations };
+}
+
+// ---------------------------------------------------------------------------
+// Bitwise -- 32 cells per u32, life-lut-bench's bitpack.wgsl (copied verbatim
+// from crates/life-lut-bench/src/shaders/bitpack.wgsl) instead of one thread
+// per cell. Packing convention (bit k of a word is column word*32+k) matches
+// that crate's pack.rs exactly. Requires width % 32 == 0 (checked by the
+// caller); rule is hardcoded to Conway's B3/S23, the same rule every other
+// row on this page uses.
+// ---------------------------------------------------------------------------
+const CONWAY_BIRTH_MASK = 1 << 3;
+const CONWAY_SURVIVE_MASK = (1 << 2) | (1 << 3);
+
+function packBitsU32(cells, width, height) {
+  const wpr = width / 32;
+  const out = new Uint32Array(wpr * height);
+  for (let y = 0; y < height; y++) {
+    for (let word = 0; word < wpr; word++) {
+      let w = 0;
+      for (let k = 0; k < 32; k++) if (cells[y * width + word * 32 + k]) w |= (1 << k);
+      out[y * wpr + word] = w >>> 0;
+    }
+  }
+  return out;
+}
+function unpackBitsU32(words, width, height) {
+  const wpr = width / 32;
+  const out = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let word = 0; word < wpr; word++) {
+      const w = words[y * wpr + word];
+      for (let k = 0; k < 32; k++) out[y * width + word * 32 + k] = (w >>> k) & 1;
+    }
+  }
+  return out;
+}
+
+let bitpackEngine = null;
+async function ensureBitpackEngine() {
+  if (bitpackEngine) return bitpackEngine;
+  const { device } = await ensureGpuLookupEngine(); // shares the device (and its raised limits)
+  const code = await (await fetch('./bitpack.wgsl')).text();
+  const module = device.createShaderModule({ code });
+  const pipeline = await device.createComputePipelineAsync({
+    layout: 'auto',
+    compute: { module, entryPoint: 'main' },
+  });
+  bitpackEngine = { device, pipeline };
+  return bitpackEngine;
+}
+
+// Same ping-pong / one-readback shape as gpuLookupResidentRun, on the
+// packed board instead of one u32 per cell.
+async function bitwiseResidentRun(cells, w, h, generations, onProgress) {
+  const { device, pipeline } = await ensureBitpackEngine();
+  const wpr = w / 32;
+  const n = wpr * h;
+  checkGpuBufferSize(device, n * 4);
+  const words = packBitsU32(cells, w, h);
+
+  const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
+  // BitpackParams is 5 u32 fields but padded to 8 (32 bytes), matching
+  // life-lut-bench's native `gpu::BitpackParams` layout.
+  const paramsBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([wpr, h, CONWAY_BIRTH_MASK, CONWAY_SURVIVE_MASK, dispatchX, 0, 0, 0]));
+  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
+  device.queue.writeBuffer(a, 0, words);
+  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
+  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+
+  const makeBindGroup = (src, dst) => device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: paramsBuf } },
+      { binding: 1, resource: { buffer: src } },
+      { binding: 2, resource: { buffer: dst } },
+    ],
+  });
+  const bgAB = makeBindGroup(a, b);
+  const bgBA = makeBindGroup(b, a);
+
+  const t0 = performance.now();
+  for (let g = 0; g < generations; g++) {
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, g % 2 === 0 ? bgAB : bgBA);
+    pass.dispatchWorkgroups(dispatchXCount, dispatchY, 1);
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+    if (g % 100 === 99) {
+      await device.queue.onSubmittedWorkDone();
+      if (onProgress) onProgress(g + 1, generations);
+    }
+  }
+  const finalBuf = generations % 2 === 0 ? a : b;
+  const readEncoder = device.createCommandEncoder();
+  readEncoder.copyBufferToBuffer(finalBuf, 0, stagingBuf, 0, n * 4);
+  device.queue.submit([readEncoder.finish()]);
+  await stagingBuf.mapAsync(GPUMapMode.READ);
+  const wordsOut = new Uint32Array(stagingBuf.getMappedRange().slice(0));
+  stagingBuf.unmap();
+  const seconds = (performance.now() - t0) / 1000;
+  const binarized = unpackBitsU32(wordsOut, w, h);
+
+  paramsBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
   return { seconds, binarized, generations };
 }
 
@@ -751,6 +882,7 @@ function restartWorker() {
 // WebGPU engine; without an adapter only the two naive rows run.
 let webGpuAvailable = null;
 const NO_WEBGPU = "doesn't work without WebGPU, yet";
+const GPU_LIMIT_ERR = "does not fit in this browser's GPU limits";
 (async () => {
   try { webGpuAvailable = !!(navigator.gpu && await navigator.gpu.requestAdapter()); }
   catch (e) { webGpuAvailable = false; }
@@ -814,6 +946,7 @@ const RUNGS = [
   { key: 'lookup', name: 'lookup table', params: '512-entry table' },
   { key: 'gpu-lookup', name: 'GPU lookup', params: '512-entry table (GPU)' },
   { key: 'gpu-lookup-resident', name: 'GPU lookup (resident)', params: '512-entry table (GPU, resident)' },
+  { key: 'bitwise-resident', name: 'bitwise (GPU, resident)', params: '32 cells per 32-bit word' },
   { key: 'llm-percell-base', name: 'LLM per cell (base)', params: '0.5B (no adapter)' },
   { key: 'llm-percell-trained', name: 'LLM per cell (trained)', params: '0.5B (+ adapter)' },
   { key: 'llm-percell-batched', name: 'LLM per cell (trained, batched)', params: '0.5B (+ adapter)' },
@@ -948,23 +1081,31 @@ async function runEveryRung() {
     const results = {};
     const total = size * size;
 
-    // Fair comparison: the rule, lookup table and both GPU lookup rows all
-    // chain the same N generations from the same starting board, so their
-    // "total" and "s / generation" numbers line up directly.
+    // Fair comparison: the rule, lookup table and every GPU row chain the
+    // same N generations from the same starting board, so their "total" and
+    // "s / generation" numbers line up directly. 8192x8192 is the one
+    // exception: the rule and lookup table (the correctness reference for
+    // every other row) can't afford N=200 on the CPU at 67M cells, so they
+    // drop to cpuN=10 -- the GPU rows still time their full N=200 chain, but
+    // check correctness with a second, short cpuN-generation chain instead
+    // (their timed board and their checked board differ at that size only).
     const N = size <= 1024 ? 1000 : 200;
-    els.genNote.textContent = `rule, lookup table and both GPU lookup rows: ${N} chained generations from the same starting board` + (size > 64 ? `; stencil: 3 generations.` : '.');
+    const cpuN = size === 8192 ? 10 : N;
+    els.genNote.textContent = size === 8192
+      ? `rule and lookup table: ${cpuN} generations (the correctness reference every other row is checked against); GPU lookup, GPU lookup (resident) and bitwise (resident): timed over ${N} chained generations, correctness checked after ${cpuN}; stencil: not run above 4096x4096.`
+      : `rule, lookup table and every GPU row: ${N} chained generations from the same starting board` + (size > 64 ? `; stencil: 3 generations.` : '.');
 
     const onGen = (label) => (done, gens) => setStatus('generating', `${label}: generation ${done} / ${gens}`);
 
-    setStatus('generating', `running the rule, ${N} generations...`);
-    results.cpu = await measureChainedCpu(jsLifeStepLoop, board, size, size, N, onGen('rule'));
+    setStatus('generating', `running the rule, ${cpuN} generations...`);
+    results.cpu = await measureChainedCpu(jsLifeStepLoop, board, size, size, cpuN, onGen('rule'));
     results.cpu.correctCount = total; // the rule is the reference board itself
     results.cpu.total = total;
     lastResults = results;
     renderLadderTable();
 
-    setStatus('generating', `running the lookup table, ${N} generations...`);
-    results.lookup = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, size, size, N, onGen('lookup table'));
+    setStatus('generating', `running the lookup table, ${cpuN} generations...`);
+    results.lookup = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, size, size, cpuN, onGen('lookup table'));
     results.lookup.correctCount = countMatches(results.lookup.binarized, results.cpu.binarized);
     results.lookup.total = total;
     lastResults = results;
@@ -978,51 +1119,75 @@ async function runEveryRung() {
       return;
     }
 
+    // Runs `chainFn(board, size, size, N, onProgress)` for the headline timed
+    // number, and -- only when cpuN differs from N (8192x8192) -- a second,
+    // untimed chainFn(..., cpuN) run whose board is what gets checked and
+    // shown, so the thumbnail and the correctness column always describe the
+    // same board.
+    async function measureGpuRow(label, chainFn) {
+      const main = await chainFn(board, size, size, N, onGen(label));
+      if (cpuN === N) {
+        return { seconds: main.seconds, totalSeconds: main.totalSeconds ?? main.seconds, binarized: main.binarized, generations: N };
+      }
+      const check = await chainFn(board, size, size, cpuN);
+      return { seconds: main.seconds, totalSeconds: main.totalSeconds ?? main.seconds, binarized: check.binarized, generations: cpuN };
+    }
+
     setStatus('generating', `running the GPU lookup, ${N} generations (readback each)...`);
     try {
-      results['gpu-lookup'] = await measureGpuLookupChain(board, N, onGen('GPU lookup'));
-      results['gpu-lookup'].correctCount = countMatches(results['gpu-lookup'].binarized, results.cpu.binarized);
-      results['gpu-lookup'].total = total;
+      const r = await measureGpuRow('GPU lookup', (b, w, h, gens, onProgress) => measureGpuLookupChain(b, gens, onProgress));
+      results['gpu-lookup'] = { ...r, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
     } catch (e) {
-      results['gpu-lookup'] = { note: NO_WEBGPU };
+      results['gpu-lookup'] = { note: e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : NO_WEBGPU };
     }
     lastResults = results;
     renderLadderTable();
 
     setStatus('generating', `running the GPU lookup, resident, ${N} generations...`);
     try {
-      const gpuResident = await gpuLookupResidentRun(board, size, size, N, onGen('GPU lookup (resident)'));
-      results['gpu-lookup-resident'] = {
-        seconds: gpuResident.seconds / N,
-        totalSeconds: gpuResident.seconds,
-        binarized: gpuResident.binarized,
-        correctCount: countMatches(gpuResident.binarized, results.cpu.binarized),
-        total,
-        generations: N,
-      };
+      const r = await measureGpuRow('GPU lookup (resident)', gpuLookupResidentRun);
+      results['gpu-lookup-resident'] = { ...r, seconds: r.seconds / N, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
     } catch (e) {
-      results['gpu-lookup-resident'] = { note: NO_WEBGPU };
+      results['gpu-lookup-resident'] = { note: e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : NO_WEBGPU };
+    }
+    lastResults = results;
+    renderLadderTable();
+
+    setStatus('generating', `running bitwise (GPU, resident), ${N} generations...`);
+    if (size % 32 !== 0) {
+      results['bitwise-resident'] = { note: 'N/A (needs a board width that is a multiple of 32)' };
+    } else {
+      try {
+        const r = await measureGpuRow('bitwise (GPU, resident)', bitwiseResidentRun);
+        results['bitwise-resident'] = { ...r, seconds: r.seconds / N, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
+      } catch (e) {
+        results['bitwise-resident'] = { note: e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : NO_WEBGPU };
+      }
     }
     lastResults = results;
     renderLadderTable();
 
     if (size > 64) {
-      setStatus('generating', 'running the stencil, grid to grid...');
-      const stencilGens = 3;
-      try {
-        const stencilResult = await measureStencilLarge(board, size, size, stencilGens);
-        const stencilRef = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, size, size, stencilGens);
-        results['vec-stencil'] = {
-          seconds: stencilResult.seconds,
-          totalSeconds: stencilResult.totalSeconds,
-          binarized: stencilResult.binarized,
-          correctCount: countMatches(stencilResult.binarized, stencilRef.binarized),
-          total,
-          generations: stencilGens,
-        };
-      } catch (e) {
-        results['vec-stencil'] = { note: "does not fit in this browser's GPU memory" };
-        restartWorker();
+      if (size <= 4096) {
+        setStatus('generating', 'running the stencil, grid to grid...');
+        const stencilGens = 3;
+        try {
+          const stencilResult = await measureStencilLarge(board, size, size, stencilGens);
+          const stencilRef = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, size, size, stencilGens);
+          results['vec-stencil'] = {
+            seconds: stencilResult.seconds,
+            totalSeconds: stencilResult.totalSeconds,
+            binarized: stencilResult.binarized,
+            correctCount: countMatches(stencilResult.binarized, stencilRef.binarized),
+            total,
+            generations: stencilGens,
+          };
+        } catch (e) {
+          results['vec-stencil'] = { note: "does not fit in this browser's GPU memory" };
+          restartWorker();
+        }
+      } else {
+        results['vec-stencil'] = { note: 'not run above 4096' };
       }
       lastResults = results;
       renderLadderTable();
