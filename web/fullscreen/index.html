@@ -183,8 +183,7 @@
         height: 100%;
         display: block;
         image-rendering: pixelated;
-        cursor: grab;
-        touch-action: none;
+        cursor: pointer;
     }
     /* Explicit colours, independent of the page's own (light) theme: dark
        text on a near-opaque white box with a thin border, so it stands
@@ -234,14 +233,8 @@
     <div class="controls">
         <button id="speed-toggle" class="primary">full speed</button>
         <button id="fullscreen-btn">full screen</button>
-        <button id="reseed-btn">reseed</button>
     </div>
-    <div class="controls" style="margin-top:8px;">
-        <button type="button" class="boardsize-btn primary" data-size="screen">screen</button>
-        <button type="button" class="boardsize-btn" data-size="16384">16384&times;16384</button>
-        <button type="button" class="boardsize-btn" data-size="32768">32768&times;32768</button>
-    </div>
-    <p class="info">Drag the board to pan, scroll or pinch to zoom, double-click to fit. Click without dragging, or the reseed button, starts a fresh random soup.</p>
+    <p class="info">Click the board to reseed with a fresh random soup.</p>
 </section>
 
 <section>
@@ -266,14 +259,13 @@
 
 <script type="module">
 // Bumped whenever this page's own WGSL or JS changes.
-const BUILD = '2026-09-30b';
+const BUILD = '2026-09-30c';
 
 const els = {
   statusDot: document.getElementById('statusDot'),
   statusText: document.getElementById('statusText'),
   speedToggle: document.getElementById('speed-toggle'),
   fullscreenBtn: document.getElementById('fullscreen-btn'),
-  reseedBtn: document.getElementById('reseed-btn'),
   container: document.getElementById('board-container'),
   canvas: document.getElementById('board'),
   overlay: document.getElementById('overlay'),
@@ -319,36 +311,18 @@ function unpackBitsU32(words, width, height) {
   }
   return out;
 }
-function packBitsU32(cells, width, height) {
-  const wpr = width / 32;
-  const out = new Uint32Array(wpr * height);
-  for (let y = 0; y < height; y++) {
-    for (let word = 0; word < wpr; word++) {
-      let w = 0;
-      for (let k = 0; k < 32; k++) if (cells[y * width + word * 32 + k]) w |= (1 << k);
-      out[y * wpr + word] = w >>> 0;
-    }
-  }
-  return out;
-}
 
 const CONWAY_BIRTH_MASK = 1 << 3;
 const CONWAY_SURVIVE_MASK = (1 << 2) | (1 << 3);
 
 // WebGPU caps a single dispatch dimension at 65535 workgroups -- folded into
 // a 2D grid the same way ../compare/index.html does for its bitwise row;
-// the shaders' Params.dispatch_x undoes the fold back into a linear index.
+// bitpack.wgsl's Params.dispatch_x undoes the fold back into a linear index.
 function dispatchShape(n) {
   const workgroups = Math.ceil(n / 256);
   if (workgroups <= 65535) return { x: workgroups, y: 1, dispatchX: workgroups };
   const x = 65535;
   return { x, y: Math.ceil(workgroups / x), dispatchX: x };
-}
-
-function wrapf(v, m) {
-  let r = v % m;
-  if (r < 0) r += m;
-  return r;
 }
 
 if (!navigator.gpu) {
@@ -360,21 +334,10 @@ if (!navigator.gpu) {
   });
 }
 
-// Board sizes selectable from the "input" section, beyond the default
-// (the board tracks the screen 1:1). Square, width a multiple of 32.
-const FIXED_BOARD_SIZES = { '16384': 16384, '32768': 32768 };
-
 async function main() {
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) { setStatus('error', "doesn't work without WebGPU, yet"); return; }
-  // Requested up front (same as ../compare/index.html's ensureGpuLookupEngine)
-  // so switching to a fixed board size later doesn't need a fresh device.
-  const device = await adapter.requestDevice({
-    requiredLimits: {
-      maxBufferSize: adapter.limits.maxBufferSize,
-      maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
-    },
-  });
+  const device = await adapter.requestDevice();
   device.lost.then((info) => setStatus('error', 'GPU device lost: ' + info.message));
 
   const context = els.canvas.getContext('webgpu');
@@ -401,15 +364,9 @@ async function main() {
     primitive: { topology: 'triangle-list' },
   });
 
-  // canvasW/canvasH: the render target's real device-pixel size, always
-  // tracking the container (independent of the simulated board's own size
-  // once a fixed board size is picked).
-  let canvasW = 0, canvasH = 0;
-  // simW/simH: the simulated board's dimensions. In 'screen' mode these
-  // equal canvasW/canvasH and are rebuilt on every resize, same as the
-  // original single-size page. In a fixed mode they stay put across resizes.
-  let simW = 0, simH = 0, wpr = 0;
-  let boardMode = 'screen'; // 'screen' | '16384' | '32768'
+  // State rebuilt on every resize / fullscreen transition: buffers, bind
+  // groups and the board's own W/H (== the canvas's real device-pixel size).
+  let W = 0, H = 0, wpr = 0;
   let bufA = null, bufB = null, computeParamsBuf = null, renderParamsBuf = null;
   let bgComputeAB = null, bgComputeBA = null, bgRenderA = null, bgRenderB = null;
   let parity = 0; // 0: current board is in bufA; 1: current board is in bufB
@@ -419,21 +376,8 @@ async function main() {
   let fastLoopRunning = false;
   let activeLoopCount = 0; // debug only: should never exceed 1, see __lifeLoopCount
   const FULL_SPEED_BATCH = 256; // fixed constant, no runtime tuning
-  // The view onto the board: origin in cells (top-left of the visible area,
-  // wrapped toroidally), cellsPerPixel the zoom (1 = the default 1:1 map).
-  const view = { originX: 0, originY: 0, cellsPerPixel: 1 };
 
-  function fitView() {
-    view.cellsPerPixel = Math.max(simW / canvasW, simH / canvasH, 1e-6);
-    view.originX = wrapf((simW - canvasW * view.cellsPerPixel) / 2, simW);
-    view.originY = wrapf((simH - canvasH * view.cellsPerPixel) / 2, simH);
-  }
-
-  function boardBytes(w, h) {
-    return (w / 32) * h * 4;
-  }
-
-  function destroyBoardBuffers() {
+  function destroyBuffers() {
     for (const b of [bufA, bufB, computeParamsBuf, renderParamsBuf]) if (b) b.destroy();
   }
 
@@ -474,45 +418,21 @@ async function main() {
   // or the button's label) and waits for its in-flight batches to actually
   // drain -- called before destroying/reallocating buffers the loop might
   // still have GPU work queued against. `pauseSim` is what the loop itself
-  // checks; `fastMode` is left alone so a resize/reseed/board-size change
-  // can resume in the same mode afterward instead of silently falling back
-  // to watch.
+  // checks; `fastMode` is left alone so a resize/reseed can resume in the
+  // same mode afterward instead of silently falling back to watch.
   let pauseSim = false;
   async function pauseFastLoop() {
     pauseSim = true;
     while (fastLoopRunning) await new Promise((r) => setTimeout(r, 0));
   }
 
-  // (Re)allocates the sim buffers for a w x h board and seeds it on the GPU,
-  // then resumes whichever mode (watch or full speed) was active before.
-  // Does not touch canvasW/canvasH or the render target.
-  async function allocateBoard(w, h) {
-    await pauseFastLoop();
-    destroyBoardBuffers();
-    simW = w; simH = h; wpr = w / 32;
-    const n = wpr * simH;
-    const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-    bufA = device.createBuffer({ size: n * 4, usage: bufUsage });
-    bufB = device.createBuffer({ size: n * 4, usage: bufUsage });
-    computeParamsBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(computeParamsBuf, 0, new Uint32Array([wpr, simH, CONWAY_BIRTH_MASK, CONWAY_SURVIVE_MASK, dispatchShape(n).dispatchX, 0, 0, 0]));
-    renderParamsBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    buildBindGroups();
-    generation = 0;
-    genSinceMark = 0;
-    lastMarkTime = performance.now();
-    await seedGpu(Date.now() >>> 0);
-    pauseSim = false;
-    if (fastMode) fullSpeedLoop();
-  }
-
   // Random soup, generated entirely on the GPU with seed.wgsl -- no CPU
-  // array, so even the 32768x32768 (1.07B cell) board seeds in one dispatch.
+  // array to build or upload.
   async function seedGpu(seedValue, density = 0.3) {
-    const n = wpr * simH;
+    const n = wpr * H;
     const seedParamsBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const threshold = Math.floor(density * 0xffffffff) >>> 0;
-    device.queue.writeBuffer(seedParamsBuf, 0, new Uint32Array([wpr, simH, dispatchShape(n).dispatchX, seedValue >>> 0, threshold, 0, 0, 0]));
+    device.queue.writeBuffer(seedParamsBuf, 0, new Uint32Array([wpr, H, dispatchShape(n).dispatchX, seedValue >>> 0, threshold, 0, 0, 0]));
     const bg = device.createBindGroup({
       layout: seedPipeline.getBindGroupLayout(0),
       entries: [
@@ -537,39 +457,52 @@ async function main() {
     seedParamsBuf.destroy();
   }
 
-  // Picks a new board size ('screen' or one of FIXED_BOARD_SIZES' keys).
-  // Checks the requested size against this device's own limits first --
-  // ../compare/index.html's GPU rows do the same check before allocating --
-  // and falls back to whatever board is already running if it doesn't fit.
-  async function selectBoard(mode) {
-    const w = mode === 'screen' ? canvasW : FIXED_BOARD_SIZES[mode];
-    const h = mode === 'screen' ? canvasH : FIXED_BOARD_SIZES[mode];
-    const bytes = boardBytes(Math.max(32, w), Math.max(1, h));
-    if (bytes > device.limits.maxStorageBufferBindingSize || bytes > device.limits.maxBufferSize) {
-      setStatus('error', `${mode}×${mode} (${(bytes / 1e6).toFixed(0)} MB) exceeds this browser's GPU buffer limits, staying at ${boardMode}`);
-      return;
-    }
-    boardMode = mode;
-    for (const btn of document.querySelectorAll('.boardsize-btn')) btn.classList.toggle('primary', btn.dataset.size === mode);
-    await allocateBoard(Math.max(32, w), Math.max(1, h));
-    fitView();
+  // Recomputes the board size from the container's real device-pixel size,
+  // reallocates the ping-pong buffers, seeds a fresh random soup, and
+  // resumes whichever mode (watch or full speed) was active before.
+  async function resize() {
+    const rect = els.container.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const newW = Math.max(32, Math.floor(rect.width * dpr / 32) * 32);
+    const newH = Math.max(1, Math.floor(rect.height * dpr));
+    if (newW === W && newH === H) return;
+    await pauseFastLoop();
+    destroyBuffers();
+    W = newW; H = newH; wpr = W / 32;
+    els.canvas.width = W;
+    els.canvas.height = H;
+    // Some WebGPU implementations need the canvas context reconfigured after
+    // the backing canvas is resized (this also covers entering/leaving full
+    // screen, which resizes the container to 100vw x 100vh via the
+    // :fullscreen CSS rule above), or getCurrentTexture() later hands back
+    // an invalid texture.
+    context.configure({ device, format, alphaMode: 'opaque' });
+
+    const n = wpr * H;
+    const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+    bufA = device.createBuffer({ size: n * 4, usage: bufUsage });
+    bufB = device.createBuffer({ size: n * 4, usage: bufUsage });
+    computeParamsBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(computeParamsBuf, 0, new Uint32Array([wpr, H, CONWAY_BIRTH_MASK, CONWAY_SURVIVE_MASK, dispatchShape(n).dispatchX, 0, 0, 0]));
+    renderParamsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(renderParamsBuf, 0, new Uint32Array([W, H, wpr, 0]));
+    buildBindGroups();
+    generation = 0;
+    genSinceMark = 0;
+    lastMarkTime = performance.now();
+    await seedGpu(Date.now() >>> 0);
+    pauseSim = false;
+    if (fastMode) fullSpeedLoop();
   }
 
   function stepOnce(encoder) {
     const pass = encoder.beginComputePass();
     pass.setPipeline(computePipeline);
     pass.setBindGroup(0, parity === 0 ? bgComputeAB : bgComputeBA);
-    const { x, y } = dispatchShape(wpr * simH);
+    const { x, y } = dispatchShape(wpr * H);
     pass.dispatchWorkgroups(x, y, 1);
     pass.end();
     parity = 1 - parity;
-  }
-
-  function writeRenderParams() {
-    const buf = new ArrayBuffer(32);
-    new Float32Array(buf, 0, 4).set([view.originX, view.originY, view.cellsPerPixel, 0]);
-    new Uint32Array(buf, 16, 4).set([simW, simH, wpr, 0]);
-    device.queue.writeBuffer(renderParamsBuf, 0, buf);
   }
 
   // Full speed decouples simulation from display: an independent loop keeps
@@ -585,7 +518,7 @@ async function main() {
     activeLoopCount++;
     const pending = [];
     try {
-      while (fastMode && !pauseSim && simW > 0) {
+      while (fastMode && !pauseSim && W > 0) {
         if (pending.length >= 2) await pending.shift();
         const encoder = device.createCommandEncoder();
         for (let i = 0; i < FULL_SPEED_BATCH; i++) stepOnce(encoder);
@@ -602,8 +535,7 @@ async function main() {
   }
 
   function updateOverlay() {
-    const zoomText = view.cellsPerPixel === 1 ? '' : ` · zoom ${view.cellsPerPixel.toFixed(2)} cells/px`;
-    const text = `${simW}×${simH}${zoomText} · ${gensPerSec.toFixed(0)} generations/s · ${fastMode ? 'full speed' : 'watch'}`;
+    const text = `${W}×${H} · ${gensPerSec.toFixed(0)} generations/s · ${fastMode ? 'full speed' : 'watch'}`;
     els.overlay.textContent = text;
     setStatus('ready', text);
   }
@@ -611,15 +543,14 @@ async function main() {
   // Watch mode (1 generation per displayed frame) steps right here; full
   // speed mode's stepping happens entirely in fullSpeedLoop above, so this
   // just renders whatever the latest completed board already is.
-  function renderFrame() {
-    if (simW > 0 && canvasW > 0) {
+  function frame() {
+    if (W > 0) {
       const encoder = device.createCommandEncoder();
       if (!fastMode) {
         stepOnce(encoder);
         generation += 1;
         genSinceMark += 1;
       }
-      writeRenderParams();
       const target = context.getCurrentTexture().createView();
       const pass = encoder.beginRenderPass({
         colorAttachments: [{ view: target, loadOp: 'clear', storeOp: 'store', clearValue: { r: 1, g: 1, b: 1, a: 1 } }],
@@ -639,42 +570,14 @@ async function main() {
         updateOverlay();
       }
     }
-    requestAnimationFrame(renderFrame);
+    requestAnimationFrame(frame);
   }
 
-  // Recomputes the render target's real device-pixel size. In 'screen' mode
-  // this also rebuilds the board to match (the original, single-size
-  // behaviour); in a fixed mode the board stays put, only the view's fit
-  // point moves along with it if the view hasn't been touched yet.
-  async function resizeCanvas() {
-    const rect = els.container.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    const newW = Math.max(32, Math.floor(rect.width * dpr / 32) * 32);
-    const newH = Math.max(1, Math.floor(rect.height * dpr));
-    if (newW === canvasW && newH === canvasH) return;
-    canvasW = newW; canvasH = newH;
-    els.canvas.width = canvasW;
-    els.canvas.height = canvasH;
-    // Some WebGPU implementations need the canvas context reconfigured after
-    // the backing canvas is resized (this also covers entering/leaving full
-    // screen, which resizes the container to 100vw x 100vh via the
-    // :fullscreen CSS rule above), or getCurrentTexture() later hands back
-    // an invalid texture.
-    context.configure({ device, format, alphaMode: 'opaque' });
-    if (boardMode === 'screen') {
-      view.originX = 0; view.originY = 0; view.cellsPerPixel = 1;
-      await allocateBoard(canvasW, canvasH);
-    } else if (simW === 0) {
-      await allocateBoard(FIXED_BOARD_SIZES[boardMode], FIXED_BOARD_SIZES[boardMode]);
-      fitView();
-    }
-  }
-
-  const ro = new ResizeObserver(() => resizeCanvas());
+  const ro = new ResizeObserver(() => resize());
   ro.observe(els.container);
-  await resizeCanvas();
+  await resize();
   updateOverlay();
-  requestAnimationFrame(renderFrame);
+  requestAnimationFrame(frame);
 
   els.speedToggle.onclick = () => {
     fastMode = !fastMode;
@@ -686,93 +589,9 @@ async function main() {
   els.fullscreenBtn.onclick = () => {
     if (els.container.requestFullscreen) els.container.requestFullscreen();
   };
-  document.addEventListener('fullscreenchange', () => resizeCanvas());
+  document.addEventListener('fullscreenchange', () => resize());
 
-  els.reseedBtn.onclick = () => seedGpu(Date.now() >>> 0);
-
-  for (const btn of document.querySelectorAll('.boardsize-btn')) {
-    btn.addEventListener('click', () => selectBoard(btn.dataset.size));
-  }
-
-  // ---------------------------------------------------------------------------
-  // Pan (drag) and zoom (wheel, pinch) -- unified through Pointer Events so
-  // one finger drags and two fingers pinch without separate touch handling.
-  // A click that never moved is a reseed, not a pan, so drag and
-  // click-to-reseed don't fight over the same gesture.
-  // ---------------------------------------------------------------------------
-  const pointers = new Map();
-  let dragOrigin = null, dragAnchor = null, dragDist = null, dragCpp = null, moved = false;
-
-  function canvasPoint(clientX, clientY) {
-    const rect = els.canvas.getBoundingClientRect();
-    const sx = canvasW / rect.width, sy = canvasH / rect.height;
-    return { x: (clientX - rect.left) * sx, y: (clientY - rect.top) * sy };
-  }
-  function midpoint(pts) {
-    return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
-  }
-  function clampCpp(v) {
-    return Math.min(Math.max(v, 1 / 64), Math.max(simW, simH) || 1);
-  }
-
-  els.canvas.addEventListener('pointerdown', (e) => {
-    els.canvas.setPointerCapture(e.pointerId);
-    pointers.set(e.pointerId, canvasPoint(e.clientX, e.clientY));
-    moved = false;
-    const pts = [...pointers.values()];
-    if (pointers.size === 1) {
-      dragAnchor = pts[0];
-      dragOrigin = { x: view.originX, y: view.originY };
-    } else if (pointers.size === 2) {
-      dragAnchor = midpoint(pts);
-      dragDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
-      dragCpp = view.cellsPerPixel;
-      dragOrigin = { x: view.originX, y: view.originY };
-    }
-  });
-  els.canvas.addEventListener('pointermove', (e) => {
-    if (!pointers.has(e.pointerId)) return;
-    pointers.set(e.pointerId, canvasPoint(e.clientX, e.clientY));
-    const pts = [...pointers.values()];
-    if (pointers.size === 1 && simW > 0) {
-      const dx = pts[0].x - dragAnchor.x, dy = pts[0].y - dragAnchor.y;
-      if (Math.hypot(dx, dy) > 3) moved = true;
-      view.originX = wrapf(dragOrigin.x - dx * view.cellsPerPixel, simW);
-      view.originY = wrapf(dragOrigin.y - dy * view.cellsPerPixel, simH);
-    } else if (pointers.size === 2 && simW > 0) {
-      moved = true;
-      const mid = midpoint(pts);
-      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
-      const newCpp = clampCpp(dragCpp * (dragDist / dist));
-      // The cell under the pinch's start point stays under the (moving)
-      // midpoint, so the gesture feels anchored rather than sliding away.
-      const cellX = dragOrigin.x + dragAnchor.x * dragCpp;
-      const cellY = dragOrigin.y + dragAnchor.y * dragCpp;
-      view.cellsPerPixel = newCpp;
-      view.originX = wrapf(cellX - mid.x * newCpp, simW);
-      view.originY = wrapf(cellY - mid.y * newCpp, simH);
-    }
-  });
-  function endPointer(e) {
-    pointers.delete(e.pointerId);
-    if (pointers.size === 0 && !moved) seedGpu(Date.now() >>> 0);
-  }
-  els.canvas.addEventListener('pointerup', endPointer);
-  els.canvas.addEventListener('pointercancel', endPointer);
-
-  els.canvas.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    if (simW === 0) return;
-    const p = canvasPoint(e.clientX, e.clientY);
-    const cellX = view.originX + p.x * view.cellsPerPixel;
-    const cellY = view.originY + p.y * view.cellsPerPixel;
-    const factor = Math.exp(e.deltaY * 0.0015);
-    view.cellsPerPixel = clampCpp(view.cellsPerPixel * factor);
-    view.originX = wrapf(cellX - p.x * view.cellsPerPixel, simW);
-    view.originY = wrapf(cellY - p.y * view.cellsPerPixel, simH);
-  }, { passive: false });
-
-  els.canvas.addEventListener('dblclick', () => fitView());
+  els.canvas.addEventListener('click', () => seedGpu(Date.now() >>> 0));
 
   // ---------------------------------------------------------------------------
   // Debug hooks only -- never called during normal use.
@@ -786,23 +605,23 @@ async function main() {
   // board, and reports whether they match exactly. Runs on a private buffer
   // pair so it never disturbs the live animation.
   window.__lifeCheck = async function (n) {
-    const stagingRead = device.createBuffer({ size: wpr * simH * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const stagingRead = device.createBuffer({ size: wpr * H * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const curBuf = parity === 0 ? bufA : bufB;
     let encoder = device.createCommandEncoder();
-    encoder.copyBufferToBuffer(curBuf, 0, stagingRead, 0, wpr * simH * 4);
+    encoder.copyBufferToBuffer(curBuf, 0, stagingRead, 0, wpr * H * 4);
     device.queue.submit([encoder.finish()]);
     await stagingRead.mapAsync(GPUMapMode.READ);
     const startWords = new Uint32Array(stagingRead.getMappedRange().slice(0));
     stagingRead.unmap();
     stagingRead.destroy();
-    const startCells = unpackBitsU32(startWords, simW, simH);
+    const startCells = unpackBitsU32(startWords, W, H);
 
     let cpuBoard = startCells;
-    for (let i = 0; i < n; i++) cpuBoard = jsLifeStepLoop(cpuBoard, simW, simH);
+    for (let i = 0; i < n; i++) cpuBoard = jsLifeStepLoop(cpuBoard, W, H);
 
     const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-    const a = device.createBuffer({ size: wpr * simH * 4, usage: bufUsage });
-    const b = device.createBuffer({ size: wpr * simH * 4, usage: bufUsage });
+    const a = device.createBuffer({ size: wpr * H * 4, usage: bufUsage });
+    const b = device.createBuffer({ size: wpr * H * 4, usage: bufUsage });
     device.queue.writeBuffer(a, 0, startWords);
     const bgAB = device.createBindGroup({
       layout: computePipeline.getBindGroupLayout(0),
@@ -818,32 +637,32 @@ async function main() {
       const pass = encoder.beginComputePass();
       pass.setPipeline(computePipeline);
       pass.setBindGroup(0, p === 0 ? bgAB : bgBA);
-      const shape = dispatchShape(wpr * simH);
+      const shape = dispatchShape(wpr * H);
       pass.dispatchWorkgroups(shape.x, shape.y, 1);
       pass.end();
       p = 1 - p;
     }
     const finalBuf = p === 0 ? a : b;
-    const stagingOut = device.createBuffer({ size: wpr * simH * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-    encoder.copyBufferToBuffer(finalBuf, 0, stagingOut, 0, wpr * simH * 4);
+    const stagingOut = device.createBuffer({ size: wpr * H * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    encoder.copyBufferToBuffer(finalBuf, 0, stagingOut, 0, wpr * H * 4);
     device.queue.submit([encoder.finish()]);
     await stagingOut.mapAsync(GPUMapMode.READ);
     const gpuWords = new Uint32Array(stagingOut.getMappedRange().slice(0));
     stagingOut.unmap();
-    const gpuCells = unpackBitsU32(gpuWords, simW, simH);
+    const gpuCells = unpackBitsU32(gpuWords, W, H);
 
     a.destroy(); b.destroy(); stagingOut.destroy();
 
     let mismatches = 0;
     for (let i = 0; i < gpuCells.length; i++) if (gpuCells[i] !== cpuBoard[i]) mismatches++;
-    return { match: mismatches === 0, mismatches, w: simW, h: simH, n };
+    return { match: mismatches === 0, mismatches, w: W, h: H, n };
   };
 
   // Reads back a sample of whatever is currently seeded and reports its
   // alive density, to check seed.wgsl's GPU-side random soup independently
-  // of the CPU packBitsU32 path.
+  // of the CPU packing path used elsewhere on this page's sibling pages.
   window.__lifeSeedDensity = async function (sampleWords = 4096) {
-    const n = Math.min(sampleWords, wpr * simH);
+    const n = Math.min(sampleWords, wpr * H);
     const stagingRead = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const curBuf = parity === 0 ? bufA : bufB;
     const encoder = device.createCommandEncoder();
@@ -863,18 +682,15 @@ async function main() {
   // the CPU unpacking of the same board. This is what actually exercises
   // the render pipeline headlessly: canvas presentation itself can't be
   // verified in this environment (see the fullscreen page's handoff notes),
-  // but an offscreen render target doesn't touch canvas presentation at
-  // all. Only exercises the crisp (cellsPerPixel <= 1) path, which is what
-  // the default "screen" board always uses.
+  // but an offscreen render target doesn't touch canvas presentation at all.
   window.__renderCheck = async function (sampleW = 64, sampleH = 64) {
-    const w = Math.max(1, Math.min(sampleW, canvasW));
-    const h = Math.max(1, Math.min(sampleH, canvasH));
+    const w = Math.max(1, Math.min(sampleW, W));
+    const h = Math.max(1, Math.min(sampleH, H));
     const tex = device.createTexture({
       size: [w, h],
       format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     });
-    writeRenderParams();
     const encoder = device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
       colorAttachments: [{ view: tex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 1, g: 1, b: 1, a: 1 } }],
@@ -887,9 +703,9 @@ async function main() {
     const readBuf = device.createBuffer({ size: bytesPerRow * h, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     encoder.copyTextureToBuffer({ texture: tex }, { buffer: readBuf, bytesPerRow }, [w, h, 1]);
 
-    const stagingRead = device.createBuffer({ size: wpr * simH * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const stagingRead = device.createBuffer({ size: wpr * H * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const curBuf = parity === 0 ? bufA : bufB;
-    encoder.copyBufferToBuffer(curBuf, 0, stagingRead, 0, wpr * simH * 4);
+    encoder.copyBufferToBuffer(curBuf, 0, stagingRead, 0, wpr * H * 4);
     device.queue.submit([encoder.finish()]);
 
     await readBuf.mapAsync(GPUMapMode.READ);
@@ -903,10 +719,8 @@ async function main() {
     let mismatches = 0, checked = 0, anyAlivePixel = false;
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
-        const cx = ((Math.floor(view.originX + x * view.cellsPerPixel) % simW) + simW) % simW;
-        const cy = ((Math.floor(view.originY + y * view.cellsPerPixel) % simH) + simH) % simH;
-        const word = words[cy * wpr + (cx >> 5)];
-        const alive = (word >>> (cx & 31)) & 1;
+        const word = words[y * wpr + (x >> 5)];
+        const alive = (word >>> (x & 31)) & 1;
         const expected = alive ? 0 : 255; // alive = black, dead = white
         if (alive) anyAlivePixel = true;
         // Green channel: identical regardless of rgba/bgra channel order,
