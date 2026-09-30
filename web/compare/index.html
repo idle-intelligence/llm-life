@@ -1138,7 +1138,7 @@ async function runEveryRung() {
     const cpuN = is4K ? 200 : (maxDim > 1024 ? 10 : residentN);
     const gpuReadbackN = is4K ? 10 : cpuN;
     els.genNote.textContent = is4K
-      ? `rule and lookup table: ${cpuN} generations; GPU lookup (per generation): ${gpuReadbackN} generations; GPU lookup (resident) and bitwise (resident): timed over ${residentN} chained generations, correctness checked after ${cpuN} (${gpuReadbackN} for the per-generation row); stencil: a few generations, memory permitting.`
+      ? `rule and lookup table: ${cpuN} generations; GPU lookup (per generation): ${gpuReadbackN} generations; GPU lookup (resident) and bitwise (resident): timed over ${residentN} chained generations, correctness checked after ${cpuN} (${gpuReadbackN} for the per-generation row); stencil: not run on non-square boards.`
       : maxDim > 1024
       ? `rule, lookup table and GPU lookup (per generation): ${cpuN} generations (too slow at N=${residentN} on the CPU, or with a readback every generation); GPU lookup (resident) and bitwise (resident): timed over ${residentN} chained generations, correctness checked after ${cpuN}; stencil: ${total <= 4096 * 4096 ? '3 generations.' : 'not run above 4096x4096.'}`
       : `rule, lookup table and every GPU row: ${residentN} chained generations from the same starting board` + (maxDim > 64 ? `; stencil: 3 generations.` : '.');
@@ -1235,7 +1235,19 @@ async function runEveryRung() {
     renderLadderTable();
 
     if (maxDim > 64) {
-      if (total <= 4096 * 4096) {
+      if (boardW !== boardH) {
+        // TC found this wrong in real Chrome at 3840x2160 (6244398/8294400
+        // after 3 generations) while every square size was exact. The page
+        // already threads width and height through separately everywhere
+        // (VecStencilEngine's constructor/setGrid, stencil_neighbors, the
+        // worker's step handler) -- crates/llm-life's Grid and
+        // vector::model are also width/height-generic on read. The
+        // mismatch is inside that engine somewhere at this scale and is out
+        // of scope here (engine is read-only); never show a wrong count as
+        // if it were a result, so this row is skipped on any non-square
+        // board until that's root-caused.
+        results['vec-stencil'] = { note: 'not run on non-square boards' };
+      } else if (total <= 4096 * 4096) {
         setStatus('generating', 'running the stencil, grid to grid...');
         const stencilGens = 3;
         try {
