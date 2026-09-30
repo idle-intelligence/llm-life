@@ -280,3 +280,79 @@ Observations:
   those patterns are (a glider is nothing like a block), consistent with
   learning some other, wrong but roughly-uniform 3-step function rather
   than a partially-correct version of the real rule.
+
+### Results, n = 10
+
+| model | params | converged / 5 | mean final cells-correct | mean final baseline |
+|---|---:|---:|---:|---:|
+| A untied DeepCNN c=8 | 5,929 | 0 | 0.7727 (= baseline) | 0.7727 |
+| A untied DeepCNN c=32 | 92,833 | 0 | 0.7727 (= baseline) | 0.7727 |
+| A untied DeepCNN c=64 | 369,985 | 0 | 0.7727 (= baseline) | 0.7727 |
+| A untied DeepCNN c=128 | 1,477,249 | 0 | 0.7727 (= baseline) | 0.7727 |
+| B tied MinimalCNN c=8 | 89 | 0 | 0.7727 (= baseline) | 0.7727 |
+| A untied DeepCNN c=8, +25% pattern-mixed training | 5,929 | 0 | 0.7727 (= baseline) | 0.7727 |
+
+At n=10, every pure-random-trained width and both families plateau
+exactly at the trivial all-dead baseline (0.7727), the same number to four
+decimal places for all five conditions — every one of them, all 5 seeds
+each, converges to predicting all-dead and stops improving, regardless of
+architecture or 165x range in parameter count (5,929 to 1,477,249). B
+tied's `rule_discovery_512_acc_per_seed` is `[0.7266, 0.7266, 0.7266,
+0.7266, 0.7266]` — identical across all 5 seeds to the last digit, meaning
+every seed's 89-param core converges to the exact same fixed point on the
+512-case table, not just the same random-soup behaviour. This is the
+strongest evidence in the whole sweep for the paper's "hard for neural
+networks to learn" framing: at 10 rule-applications, gradient descent from
+this training density and learning rate does not find a better basin than
+"predict the majority class" for any width tried, tied or untied.
+
+Structured-pattern eval for the pattern-mixed variant (the only n=10
+condition that is not identically the trivial baseline on patterns; the
+five pure-random conditions score 0/total on every pattern family, same
+as B tied and c=128 at n=3):
+
+| pattern | c=8, +25% pattern-mixed training: exact/total (masked cells-correct) |
+|---|---:|
+| block | 16/20 (0.80) |
+| beehive | 28/40 (0.78) |
+| blinker | 32/40 (0.80) |
+| toad | 40/80 (0.73) |
+| beacon | 32/40 (0.80) |
+| glider | 8/160 (0.29) |
+| lwss | 0/160 (0.19) |
+| r_pentomino | 12/160 (0.50) |
+
+Observation: this is the one clear positive result for pattern-mixed
+training in the whole sweep. The n=10 pattern-mixed model still fails to
+converge on random soup (mean final cells-correct is 0.77265625, a
+hundredth of a percent below the pure-random condition's baseline, not a
+meaningfully different number) — it has not learned the 10-step rule in
+any general sense. But on patterns it saw examples of during training
+(still lifes, oscillators), it does dramatically better than predicting
+all-dead (0.73 to 0.80 masked accuracy vs 0 for every pure-random-trained
+n=10 model). It does worse on the spaceships (glider, LWSS) and the
+methuselah (R-pentomino), which travel or grow rather than staying in one
+place, consistent with the model having partially memorized how to keep a
+small set of fixed local patterns stable rather than discovering the
+general rule. This is a data-composition effect, not a capacity or
+convergence effect: the model is still stuck in the same "predict nothing
+changes" local optimum for arbitrary inputs, but 25% of its training
+distribution being exactly the test patterns taught it those patterns'
+specific 10-step fixed points.
+
+### Summary across n
+
+| n | best converged / 5 (width) | smallest exact-converging model | n=10-scale finding |
+|---|---|---|---|
+| 2 | 5/5 (all widths 8/32/64; also 5/5 with 25% patterns) | DeepCNN c=8, 1,257 params | - |
+| 3 | 4/5 (c=32) | DeepCNN c=32, 28,097 params | width non-monotonic; c=128 and the tied model collapse to baseline |
+| 10 | 0/5 (every width, both families) | none converged | universal collapse to the trivial baseline; pattern-mixed training rescues performance on trained-on patterns only |
+
+Raw per-condition JSON for every run in this document:
+`docs/runs/2026-09-30-minimal-life-nstep-results.json` (first, budget-capped
+pass), `docs/runs/2026-09-30-minimal-life-patterns-quick-results.json`
+(single-seed representative check across n=1/2/3/10), and
+`docs/runs/2026-09-30-minimal-life-full-results.json` (second,
+budget-lifted pass — the source for every table above from "Results, n = 2"
+onward). Compute for every run in this document: a Linux desktop's RTX
+3080 GPU, one `systemd-run --user` unit at a time under `flock`.
