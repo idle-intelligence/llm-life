@@ -1,0 +1,49 @@
+{
+  "depth": 8,
+  "width": 128,
+  "n_train": 128000,
+  "n_test": 32000,
+  "probe_target": "centre cell at t+1 (one Life step)",
+  "per_layer": [
+    {
+      "layer": 0,
+      "train_acc": 0.974679708480835,
+      "test_acc": 0.9623125195503235
+    },
+    {
+      "layer": 1,
+      "train_acc": 1.0,
+      "test_acc": 0.9998437762260437
+    },
+    {
+      "layer": 2,
+      "train_acc": 1.0,
+      "test_acc": 0.9997187852859497
+    },
+    {
+      "layer": 3,
+      "train_acc": 1.0,
+      "test_acc": 0.99937504529953
+    },
+    {
+      "layer": 4,
+      "train_acc": 1.0,
+      "test_acc": 0.999500036239624
+    },
+    {
+      "layer": 5,
+      "train_acc": 1.0,
+      "test_acc": 0.999750018119812
+    },
+    {
+      "layer": 6,
+      "train_acc": 1.0,
+      "test_acc": 0.999625027179718
+    },
+    {
+      "layer": 7,
+      "train_acc": 1.0,
+      "test_acc": 0.9995625615119934
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "depth": 2,
+  "width": 128,
+  "n_train": 128000,
+  "n_test": 32000,
+  "probe_target": "centre cell at t+1 (one Life step)",
+  "per_layer": [
+    {
+      "layer": 0,
+      "train_acc": 0.903390645980835,
+      "test_acc": 0.8921250700950623
+    },
+    {
+      "layer": 1,
+      "train_acc": 1.0,
+      "test_acc": 0.9997187852859497
+    }
+  ]
+}
