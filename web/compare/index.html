@@ -324,7 +324,7 @@
         <p><strong>binary model, float / integer adds (177 parameters):</strong> the same idea with binary ({-1,1}) weights instead of ternary, needing roughly 4x the parameters to still reproduce the rule exactly; same two kernels, float multiplies versus adds and subtracts.</p>
         <p><strong>ternary model, bit-packed (45 parameters):</strong> the trained 45-parameter model compiled to bit operations, 32 cells per word.</p>
         <p><strong>ternary model, compiled (89 parameters):</strong> the same rule learned by an 89-parameter ternary network, turned into bit operations automatically by a generic bit-slice compiler rather than written by hand like the row above.</p>
-        <p><strong>ternary model, compiled, 2 steps per pass (9,601 parameters):</strong> a 32-channel ternary network trained to predict two generations at once, compiled the same way; one pass computes two generations, at the cost of a much larger circuit (about 14,000 gates against 92 for the one-step network).</p>
+        <p><strong>ternary model, compiled, 2 steps per pass (9,601 parameters):</strong> a 32-channel ternary network trained to predict two generations at once, compiled the same way; one pass computes two generations, at the cost of a much larger circuit (about 13,000 gates against 92 for the one-step network).</p>
         <p><strong>LLM per cell:</strong> Give a language model the rules and current cell's state, *as text*, and ask if it lives or dies. Repeat for each and every cell. Of course, it's very slow, and an off the shelf model doesn't work. Fine tuning a small LoRa adapter gets us perfect results, but it's still slow... Does it speed up if we batch the inference?</p>
         <p><strong>LLM whole grid:</strong> Look, there are many optimisation we could do. That's not the game we are playing. Yet, cell by cell _is_ stupid. Instead, we ask the model for the whole grid in one prompt, one token per cell. It's much faster, but training a 64x64 adapter gets expensive, and 256x256 doesn't fit in this small model's context. Another LoRa adapter gets us to 100% accuracy.</p>
         <p><strong>BERT of Life:</strong> Alive or Dead is a classification. What would a BERT do? A BERT-shaped classifier, one-layer encoder over the 9 cells as tokens, 3,490 parameters trained from scratch; it works.</p>
@@ -901,7 +901,7 @@ async function compiledResidentRun(cells, w, h, generations, onProgress) {
 // ---------------------------------------------------------------------------
 // Compiled, 2 steps per pass -- same generic compiler, run on a network
 // trained to predict two Life generations at once (bitslice-2step:
-// pytorch/bitslice_models/life_2step_cnn_c32_train.json, seed 0). Same
+// pytorch/bitslice_models/life_2step_cnn_c32_seed3_exact.json, seed 3, exact on all 2^25 5x5 neighbourhoods). Same
 // Params struct, bindings and entry point as the 1-step compiled kernel
 // above (words_per_row, height, dispatch_x; one thread per 32-cell word),
 // same ping-pong/one-readback shape -- only the shader differs, and each
