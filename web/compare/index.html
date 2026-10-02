@@ -1367,7 +1367,7 @@ async function runEveryRung() {
         correctCount: countMatches(r.binarized, ref), total,
       };
     } catch (e) {
-      results['gpu-lookup'] = { note: e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : NO_WEBGPU };
+      results['gpu-lookup'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
     }
     lastResults = results;
     renderLadderTable();
@@ -1377,7 +1377,7 @@ async function runEveryRung() {
       const r = await measureGpuRow('GPU lookup (resident)', gpuLookupResidentRun);
       results['gpu-lookup-resident'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
     } catch (e) {
-      results['gpu-lookup-resident'] = { note: e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : NO_WEBGPU };
+      results['gpu-lookup-resident'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
     }
     lastResults = results;
     renderLadderTable();
@@ -1390,7 +1390,7 @@ async function runEveryRung() {
         const r = await measureGpuRow('bitwise (GPU, resident)', bitwiseResidentRun);
         results['bitwise-resident'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
       } catch (e) {
-        results['bitwise-resident'] = { note: e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : NO_WEBGPU };
+        results['bitwise-resident'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
       }
     }
     lastResults = results;
@@ -1414,7 +1414,7 @@ async function runEveryRung() {
         const r = await measureGpuRow(label, (b, w, h, gens, onProg) => quantResidentRun(model, variant, b, w, h, gens, onProg));
         results[key] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
       } catch (e) {
-        results[key] = { note: e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : NO_WEBGPU };
+        results[key] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
       }
       lastResults = results;
       renderLadderTable();
@@ -1431,7 +1431,7 @@ async function runEveryRung() {
           (b, w, h, gens, onProg) => bitwiseResidentRun(b, w, h, gens, onProg, birthMask, surviveMask));
         results['quant-ternary-bitpack'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
       } catch (e) {
-        results['quant-ternary-bitpack'] = { note: e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : NO_WEBGPU };
+        results['quant-ternary-bitpack'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
       }
     }
     lastResults = results;
