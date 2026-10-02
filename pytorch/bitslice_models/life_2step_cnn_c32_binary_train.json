@@ -1,0 +1,280 @@
+{
+  "channels": 32,
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "n_converged": 0,
+  "wall_seconds": 838.7897851467133,
+  "per_seed": [
+    {
+      "seed": 0,
+      "converged_at": null,
+      "best_cells_correct": 0.6946484375,
+      "final_cells_correct": 0.681875,
+      "final_baseline": 0.68771484375,
+      "stopped_early": "plateau",
+      "steps_run": 16000,
+      "params": 9601,
+      "wall_seconds": 183.7173581123352,
+      "patterns": {
+        "block": {
+          "exact_boards": 4,
+          "total_boards": 4,
+          "masked_cells_correct": 1.0
+        },
+        "beehive": {
+          "exact_boards": 0,
+          "total_boards": 8,
+          "masked_cells_correct": 0.75
+        },
+        "blinker": {
+          "exact_boards": 4,
+          "total_boards": 8,
+          "masked_cells_correct": 0.8333333333333334
+        },
+        "toad": {
+          "exact_boards": 0,
+          "total_boards": 16,
+          "masked_cells_correct": 0.15384615384615385
+        },
+        "beacon": {
+          "exact_boards": 0,
+          "total_boards": 8,
+          "masked_cells_correct": 0.6363636363636364
+        },
+        "glider": {
+          "exact_boards": 0,
+          "total_boards": 32,
+          "masked_cells_correct": 0.5862068965517241
+        },
+        "lwss": {
+          "exact_boards": 0,
+          "total_boards": 32,
+          "masked_cells_correct": 0.42735042735042733
+        },
+        "r_pentomino": {
+          "exact_boards": 0,
+          "total_boards": 32,
+          "masked_cells_correct": 0.6575342465753424
+        }
+      }
+    },
+    {
+      "seed": 1,
+      "converged_at": null,
+      "best_cells_correct": 0.6944140625,
+      "final_cells_correct": 0.68701171875,
+      "final_baseline": 0.682421875,
+      "stopped_early": "plateau",
+      "steps_run": 10500,
+      "params": 9601,
+      "wall_seconds": 120.6996660232544,
+      "patterns": {
+        "block": {
+          "exact_boards": 0,
+          "total_boards": 4,
+          "masked_cells_correct": 0.5
+        },
+        "beehive": {
+          "exact_boards": 0,
+          "total_boards": 8,
+          "masked_cells_correct": 0.5833333333333334
+        },
+        "blinker": {
+          "exact_boards": 0,
+          "total_boards": 8,
+          "masked_cells_correct": 0.16666666666666666
+        },
+        "toad": {
+          "exact_boards": 0,
+          "total_boards": 16,
+          "masked_cells_correct": 0.07692307692307693
+        },
+        "beacon": {
+          "exact_boards": 0,
+          "total_boards": 8,
+          "masked_cells_correct": 0.25
+        },
+        "glider": {
+          "exact_boards": 0,
+          "total_boards": 32,
+          "masked_cells_correct": 0.24444444444444444
+        },
+        "lwss": {
+          "exact_boards": 0,
+          "total_boards": 32,
+          "masked_cells_correct": 0.09210526315789473
+        },
+        "r_pentomino": {
+          "exact_boards": 0,
+          "total_boards": 32,
+          "masked_cells_correct": 0.19672131147540983
+        }
+      }
+    },
+    {
+      "seed": 2,
+      "converged_at": null,
+      "best_cells_correct": 0.702265625,
+      "final_cells_correct": 0.68462890625,
+      "final_baseline": 0.6794921875,
+      "stopped_early": "plateau",
+      "steps_run": 10500,
+      "params": 9601,
+      "wall_seconds": 120.95228290557861,
+      "patterns": {
+        "block": {
+          "exact_boards": 4,
+          "total_boards": 4,
+          "masked_cells_correct": 1.0
+        },
+        "beehive": {
+          "exact_boards": 0,
+          "total_boards": 8,
+          "masked_cells_correct": 0.5
+        },
+        "blinker": {
+          "exact_boards": 0,
+          "total_boards": 8,
+          "masked_cells_correct": 0.3333333333333333
+        },
+        "toad": {
+          "exact_boards": 0,
+          "total_boards": 16,
+          "masked_cells_correct": 0.2
+        },
+        "beacon": {
+          "exact_boards": 0,
+          "total_boards": 8,
+          "masked_cells_correct": 0.625
+        },
+        "glider": {
+          "exact_boards": 0,
+          "total_boards": 32,
+          "masked_cells_correct": 0.3333333333333333
+        },
+        "lwss": {
+          "exact_boards": 0,
+          "total_boards": 32,
+          "masked_cells_correct": 0.16470588235294117
+        },
+        "r_pentomino": {
+          "exact_boards": 0,
+          "total_boards": 32,
+          "masked_cells_correct": 0.08196721311475409
+        }
+      }
+    },
+    {
+      "seed": 3,
+      "converged_at": null,
+      "best_cells_correct": 0.70140625,
+      "final_cells_correct": 0.68849609375,
+      "final_baseline": 0.68642578125,
+      "stopped_early": "plateau",
+      "steps_run": 18000,
+      "params": 9601,
+      "wall_seconds": 206.43605613708496,
+      "patterns": {
+        "block": {
+          "exact_boards": 4,
+          "total_boards": 4,
+          "masked_cells_correct": 1.0
+        },
+        "beehive": {
+          "exact_boards": 0,
+          "total_boards": 8,
+          "masked_cells_correct": 0.46153846153846156
+        },
+        "blinker": {
+          "exact_boards": 0,
+          "total_boards": 8,
+          "masked_cells_correct": 0.3333333333333333
+        },
+        "toad": {
+          "exact_boards": 0,
+          "total_boards": 16,
+          "masked_cells_correct": 0.0
+        },
+        "beacon": {
+          "exact_boards": 0,
+          "total_boards": 8,
+          "masked_cells_correct": 0.125
+        },
+        "glider": {
+          "exact_boards": 0,
+          "total_boards": 32,
+          "masked_cells_correct": 0.24444444444444444
+        },
+        "lwss": {
+          "exact_boards": 0,
+          "total_boards": 32,
+          "masked_cells_correct": 0.13414634146341464
+        },
+        "r_pentomino": {
+          "exact_boards": 0,
+          "total_boards": 32,
+          "masked_cells_correct": 0.08333333333333333
+        }
+      }
+    },
+    {
+      "seed": 4,
+      "converged_at": null,
+      "best_cells_correct": 0.701328125,
+      "final_cells_correct": 0.6896875,
+      "final_baseline": 0.6896875,
+      "stopped_early": "plateau",
+      "steps_run": 16500,
+      "params": 9601,
+      "wall_seconds": 206.3671360015869,
+      "patterns": {
+        "block": {
+          "exact_boards": 0,
+          "total_boards": 4,
+          "masked_cells_correct": 0.0
+        },
+        "beehive": {
+          "exact_boards": 0,
+          "total_boards": 8,
+          "masked_cells_correct": 0.0
+        },
+        "blinker": {
+          "exact_boards": 0,
+          "total_boards": 8,
+          "masked_cells_correct": 0.0
+        },
+        "toad": {
+          "exact_boards": 0,
+          "total_boards": 16,
+          "masked_cells_correct": 0.0
+        },
+        "beacon": {
+          "exact_boards": 0,
+          "total_boards": 8,
+          "masked_cells_correct": 0.0
+        },
+        "glider": {
+          "exact_boards": 0,
+          "total_boards": 32,
+          "masked_cells_correct": 0.0
+        },
+        "lwss": {
+          "exact_boards": 0,
+          "total_boards": 32,
+          "masked_cells_correct": 0.0
+        },
+        "r_pentomino": {
+          "exact_boards": 0,
+          "total_boards": 32,
+          "masked_cells_correct": 0.0
+        }
+      }
+    }
+  ],
+  "models": {}
+}
