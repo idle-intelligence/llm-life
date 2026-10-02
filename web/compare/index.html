@@ -324,6 +324,7 @@
         <p><strong>binary model, float / integer adds (177 parameters):</strong> the same idea with binary ({-1,1}) weights instead of ternary, needing roughly 4x the parameters to still reproduce the rule exactly; same two kernels, float multiplies versus adds and subtracts.</p>
         <p><strong>ternary model, bit-packed (45 parameters):</strong> the trained 45-parameter model compiled to bit operations, 32 cells per word.</p>
         <p><strong>ternary model, compiled (89 parameters):</strong> the same rule learned by an 89-parameter ternary network, turned into bit operations automatically by a generic bit-slice compiler rather than written by hand like the row above.</p>
+        <p><strong>ternary model, compiled, 2 steps per pass (9,601 parameters):</strong> a 32-channel ternary network trained to predict two generations at once, compiled the same way; one pass computes two generations, at the cost of a much larger circuit (about 14,000 gates against 92 for the one-step network).</p>
         <p><strong>LLM per cell:</strong> Give a language model the rules and current cell's state, *as text*, and ask if it lives or dies. Repeat for each and every cell. Of course, it's very slow, and an off the shelf model doesn't work. Fine tuning a small LoRa adapter gets us perfect results, but it's still slow... Does it speed up if we batch the inference?</p>
         <p><strong>LLM whole grid:</strong> Look, there are many optimisation we could do. That's not the game we are playing. Yet, cell by cell _is_ stupid. Instead, we ask the model for the whole grid in one prompt, one token per cell. It's much faster, but training a 64x64 adapter gets expensive, and 256x256 doesn't fit in this small model's context. Another LoRa adapter gets us to 100% accuracy.</p>
         <p><strong>BERT of Life:</strong> Alive or Dead is a classification. What would a BERT do? A BERT-shaped classifier, one-layer encoder over the 9 cells as tokens, 3,490 parameters trained from scratch; it works.</p>
@@ -898,6 +899,91 @@ async function compiledResidentRun(cells, w, h, generations, onProgress) {
 }
 
 // ---------------------------------------------------------------------------
+// Compiled, 2 steps per pass -- same generic compiler, run on a network
+// trained to predict two Life generations at once (bitslice-2step:
+// pytorch/bitslice_models/life_2step_cnn_c32_train.json, seed 0). Same
+// Params struct, bindings and entry point as the 1-step compiled kernel
+// above (words_per_row, height, dispatch_x; one thread per 32-cell word),
+// same ping-pong/one-readback shape -- only the shader differs, and each
+// dispatch now advances two generations instead of one. Compiled lazily
+// since this shader is ~14k lines and createComputePipelineAsync is slow
+// on it.
+// ---------------------------------------------------------------------------
+let compiled2StepEngine = null;
+async function ensureCompiled2StepEngine() {
+  if (compiled2StepEngine) return compiled2StepEngine;
+  const { device } = await ensureGpuLookupEngine(); // shares the device (and its raised limits)
+  const code = await (await fetch('./bitslice_life_2step_cnn_compiled.wgsl')).text();
+  const module = device.createShaderModule({ code });
+  const pipeline = await device.createComputePipelineAsync({
+    layout: 'auto',
+    compute: { module, entryPoint: 'main' },
+  });
+  compiled2StepEngine = { device, pipeline };
+  return compiled2StepEngine;
+}
+
+// Each dispatch of this kernel advances two generations, so for the same
+// `generations` (residentN, always even) it runs half as many dispatches;
+// the ping-pong parity check at readback uses the dispatch count
+// (iterations), not `generations`.
+async function compiled2StepResidentRun(cells, w, h, generations, onProgress) {
+  const { device, pipeline } = await ensureCompiled2StepEngine();
+  const wpr = w / 32;
+  const n = wpr * h;
+  checkGpuBufferSize(device, n * 4);
+  const words = packBitsU32(cells, w, h);
+
+  const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
+  const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([wpr, h, dispatchX, 0]));
+  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
+  device.queue.writeBuffer(a, 0, words);
+  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
+  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+
+  const makeBindGroup = (src, dst) => device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: paramsBuf } },
+      { binding: 1, resource: { buffer: src } },
+      { binding: 2, resource: { buffer: dst } },
+    ],
+  });
+  const bgAB = makeBindGroup(a, b);
+  const bgBA = makeBindGroup(b, a);
+
+  const iterations = generations / 2;
+  const t0 = performance.now();
+  for (let g = 0; g < iterations; g++) {
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, g % 2 === 0 ? bgAB : bgBA);
+    pass.dispatchWorkgroups(dispatchXCount, dispatchY, 1);
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+    if (g % 100 === 99) {
+      await device.queue.onSubmittedWorkDone();
+      if (onProgress) onProgress((g + 1) * 2, generations);
+    }
+  }
+  const finalBuf = iterations % 2 === 0 ? a : b;
+  const readEncoder = device.createCommandEncoder();
+  readEncoder.copyBufferToBuffer(finalBuf, 0, stagingBuf, 0, n * 4);
+  device.queue.submit([readEncoder.finish()]);
+  await stagingBuf.mapAsync(GPUMapMode.READ);
+  const wordsOut = new Uint32Array(stagingBuf.getMappedRange().slice(0));
+  stagingBuf.unmap();
+  const seconds = (performance.now() - t0) / 1000;
+  const binarized = unpackBitsU32(wordsOut, w, h);
+
+  paramsBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
+  return { seconds, binarized, generations };
+}
+
+// ---------------------------------------------------------------------------
 // Bitwise models -- ternary/binary CNNs trained to reproduce Conway's rule
 // exactly (see docs/runs/2026-10-01-life-1bit.md in llm-life), run here with
 // life_quant.wgsl instead of bitpack.wgsl's hardcoded adder network: one
@@ -1217,6 +1303,7 @@ const RUNGS = [
   { key: 'quant-binary-int', name: 'binary model, integer adds (177 parameters)', params: '177 (binary)' },
   { key: 'quant-ternary-bitpack', name: 'ternary model, bit-packed (45 parameters)', params: '45 (ternary)' },
   { key: 'quant-ternary-compiled', name: 'ternary model, compiled (89 parameters)', params: '89 (ternary)' },
+  { key: 'quant-ternary-2step-compiled', name: 'ternary model, compiled, 2 steps per pass (9,601 parameters)', params: '9,601 (ternary)' },
   { key: 'llm-percell-base', name: 'LLM per cell (base)', params: '0.5B (no adapter)' },
   { key: 'llm-percell-trained', name: 'LLM per cell (trained)', params: '0.5B (+ adapter)' },
   { key: 'llm-percell-batched', name: 'LLM per cell (trained, batched)', params: '0.5B (+ adapter)' },
@@ -1526,6 +1613,20 @@ async function runEveryRung() {
         results['quant-ternary-compiled'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
       } catch (e) {
         results['quant-ternary-compiled'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+      }
+    }
+    lastResults = results;
+    renderLadderTable();
+
+    setStatus('generating', `running the ternary model, compiled, 2 steps per pass, ${residentN} generations...`);
+    if (boardW % 32 !== 0) {
+      results['quant-ternary-2step-compiled'] = { note: 'N/A (needs a board width that is a multiple of 32)' };
+    } else {
+      try {
+        const r = await measureGpuRow('ternary model, compiled, 2 steps per pass', compiled2StepResidentRun);
+        results['quant-ternary-2step-compiled'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
+      } catch (e) {
+        results['quant-ternary-2step-compiled'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
       }
     }
     lastResults = results;
