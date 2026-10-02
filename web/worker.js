@@ -6,8 +6,9 @@
 // server (web/serve.py, stdlib http.server) doesn't support Range requests,
 // so this streams the single GET response and slices it into chunks itself.
 // Version tag on the engine URLs: browsers keep a wasm module at a fixed path
-// across rebuilds, even through a hard reload. Bump when the engine changes.
-const ENGINE_BUILD = '2026-09-23';
+// across rebuilds, even through a hard reload. Bump when either engine
+// (pkg-llm, pkg-lean) changes.
+const ENGINE_BUILD = '2026-10-02';
 // A message posted to this worker before its top-level `await import` below
 // finishes can be dropped rather than queued (observed in this browser: the
 // page's first 'load' message, sent right after `new Worker(...)`, arrived
@@ -16,8 +17,19 @@ const ENGINE_BUILD = '2026-09-23';
 const pending = [];
 self.onmessage = (e) => pending.push(e);
 
-const { default: init, LifeEngine, BertEngine, VecMlpEngine, VecStencilEngine, initWgpuDevice, otsuThreshold, zscoreThreshold } =
+// The small from-scratch models run on the Burn engine (pkg-llm); the
+// language model runs on lean (pkg-lean, crates/llm-life-lean), imported
+// only when the LLM is first loaded.
+const { default: init, BertEngine, VecMlpEngine, VecStencilEngine, initWgpuDevice } =
   await import(`./pkg-llm/llm_life.js?v=${ENGINE_BUILD}`);
+let lean = null;
+async function ensureLean() {
+  if (lean) return lean;
+  const mod = await import(`./pkg-lean/llm_life_lean.js?v=${ENGINE_BUILD}`);
+  await mod.default({ module_or_path: new URL(`./pkg-lean/llm_life_lean_bg.wasm?v=${ENGINE_BUILD}`, import.meta.url) });
+  lean = mod;
+  return lean;
+}
 
 let engine = null;
 // Tracks the grid size last given to `engine.setGrid`, so a run of `step`
@@ -163,10 +175,10 @@ self.onmessage = (e) => {
 for (const e of pending) self.onmessage(e);
 pending.length = 0;
 
-// `init()` (wasm module) and `initWgpuDevice()` (the shared WebGPU device
-// both engines construct against) are each idempotent to call once; guarded
-// here so BERT of Life can load on its own, without the big LLM engine ever
-// having been loaded, and vice versa.
+// `init()` (the Burn wasm module) and `initWgpuDevice()` (the WebGPU device
+// the three small engines share) are each idempotent to call once; guarded
+// here so the small models load on their own. The LLM has its own module
+// and device (`ensureLean` above).
 let wasmInited = false;
 async function ensureWasm() {
   if (wasmInited) return;
@@ -178,16 +190,20 @@ async function ensureWasm() {
 async function handle(id, type, payload, reply) {
   try {
     if (type === 'load') {
-      await ensureWasm();
-      engine = new LifeEngine(payload.width, payload.height);
+      const { LifeEngine } = await ensureLean();
+      // Free the previous engine's GPU buffers now rather than whenever the
+      // JS garbage collector gets to them: each one holds the whole model.
+      if (engine) { engine.free(); engine = null; }
+      engine = await LifeEngine.create(payload.width, payload.height);
       engineGrid = { width: payload.width, height: payload.height };
       const chunks = await fetchChunks(payload.ggufUrl, (f) =>
         self.postMessage({ type: 'progress', stage: 'download', fraction: f }), true);
       for (const c of chunks) engine.appendModelShard(c);
       const tokenizerJson = await cachedFetchText(payload.tokenizerUrl);
       await engine.load(tokenizerJson, payload.rulestring);
-      // Runtime LoRA (llm_wasm::lora - not the offline GGUF merge): applies
-      // q/k/v/o deltas onto the already-loaded base Q4 model, no reload.
+      // Runtime LoRA (lean's lora module - not the offline GGUF merge):
+      // applies q/k/v/o deltas onto the already-loaded base Q4 model, no
+      // reload.
       // Optional - if `adapterUrl` isn't set, the engine is byte-for-byte
       // the base model.
       let adapter = null;
@@ -198,7 +214,7 @@ async function handle(id, type, payload, reply) {
         // Variant A's resident prefix must match how this adapter was
         // trained/evaluated (`norules_prefix()` vs `rules_prefix()`, no
         // few-shot) - `LifeEngine::loadAdapter` rebuilds it from this flag.
-        engine.loadAdapter(bytes, name.includes('norules'));
+        await engine.loadAdapter(bytes, name.includes('norules'));
         adapter = { name, bytes: bytes.length };
       }
       reply(true, { packedTokens: engine.packedTokens(), cellTokens: engine.cellTokens(), adapter });
@@ -233,7 +249,7 @@ async function handle(id, type, payload, reply) {
       countDownload(payload.adapterUrl);
       const bytes = new Uint8Array(await (await fetch(payload.adapterUrl)).arrayBuffer());
       const name = payload.adapterUrl.split('/').pop().replace(/\.bin$/, '');
-      engine.loadAdapter(bytes, name.includes('norules'));
+      await engine.loadAdapter(bytes, name.includes('norules'));
       reply(true, { name, bytes: bytes.length });
     } else if (type === 'step' && payload.variant === 'bert') {
       // BERT of Life: a separate, much smaller engine - one forward per
@@ -417,7 +433,7 @@ async function handle(id, type, payload, reply) {
           at += q.length;
         }
       } else {
-        // engine.step() (crates/llm-life/src/web.rs) is a single async call that
+        // engine.step() (crates/llm-life-lean/src/web.rs) is a single async call that
         // packs the grid, tokenizes, runs the forward pass and reads the logits
         // back with no phase hooks - so 'forward' here covers all three; we
         // can't report them separately without restructuring the engine.
@@ -436,8 +452,8 @@ async function handle(id, type, payload, reply) {
       // paint wrong whenever the grid's own p(alive) distribution pushed
       // Otsu's cut point off of 0.5.
       const thresholdValue = payload.threshold === 'zscore'
-        ? zscoreThreshold(pArr, payload.k ?? 2.0)
-        : otsuThreshold(pArr);
+        ? lean.zscoreThreshold(pArr, payload.k ?? 2.0)
+        : lean.otsuThreshold(pArr);
       const binarized = Array.from(p, (v) => (v >= 0.5 ? 1 : 0));
       self.postMessage({ type: 'progress', stage: 'done' });
       reply(true, {

@@ -452,10 +452,10 @@
 </footer>
 
 <script type="module">
-// Bumped whenever worker.js or the pkg/pkg-llm wasm builds change. The pkg
+// Bumped whenever worker.js or the pkg/pkg-llm/pkg-lean wasm builds change. The pkg
 // import above is a static import specifier and can't take this variable,
 // so its own '?v=' literal is bumped by hand alongside this constant.
-const BUILD = '2026-09-23b';
+const BUILD = '2026-10-02';
 
 import init, { LifeApp } from './pkg/life.js?v=2026-09-23';
 import { MODEL_URLS } from './models.js';
