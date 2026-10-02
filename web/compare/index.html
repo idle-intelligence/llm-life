@@ -325,6 +325,8 @@
         <p><strong>ternary model, bit-packed (45 parameters):</strong> the trained 45-parameter model compiled to bit operations, 32 cells per word.</p>
         <p><strong>ternary model, compiled (89 parameters):</strong> the same rule learned by an 89-parameter ternary network, turned into bit operations automatically by a generic bit-slice compiler rather than written by hand like the row above.</p>
         <p><strong>ternary model, compiled, 2 steps per pass (9,601 parameters):</strong> a 32-channel ternary network trained to predict two generations at once, compiled the same way; one pass computes two generations, at the cost of a much larger circuit (about 13,000 gates against 92 for the one-step network).</p>
+        <p><strong>ternary model, float / integer adds, 2 steps per pass (9,601 parameters):</strong> the same 9,601-parameter network as the compiled row above, run as an ordinary network instead of a bit-sliced circuit: float multiplies against dequantized weights, or adds and subtracts of 0/1 activations, same as the one-step 45- and 177-parameter rows.</p>
+        <p><strong>2-step lookup table (GPU, resident):</strong> ground truth from the rule, not a trained model. Every possible 5x5 neighbourhood, 33.5 million of them, precomputed from Conway's rule applied twice and stored one bit each.</p>
         <p><strong>LLM per cell:</strong> Give a language model the rules and current cell's state, *as text*, and ask if it lives or dies. Repeat for each and every cell. Of course, it's very slow, and an off the shelf model doesn't work. Fine tuning a small LoRa adapter gets us perfect results, but it's still slow... Does it speed up if we batch the inference?</p>
         <p><strong>LLM whole grid:</strong> Look, there are many optimisation we could do. That's not the game we are playing. Yet, cell by cell _is_ stupid. Instead, we ask the model for the whole grid in one prompt, one token per cell. It's much faster, but training a 64x64 adapter gets expensive, and 256x256 doesn't fit in this small model's context. Another LoRa adapter gets us to 100% accuracy.</p>
         <p><strong>BERT of Life:</strong> Alive or Dead is a classification. What would a BERT do? A BERT-shaped classifier, one-layer encoder over the 9 cells as tokens, 3,490 parameters trained from scratch; it works.</p>
@@ -984,6 +986,249 @@ async function compiled2StepResidentRun(cells, w, h, generations, onProgress) {
 }
 
 // ---------------------------------------------------------------------------
+// Same 9,601-parameter 2-step model as the compiled row above, run as an
+// ordinary (uncompiled) network instead of a bit-sliced circuit --
+// life_quant_2step.wgsl. Two dispatches per pass (layer1 packs 32 binary
+// hidden activations per cell into one u32; layer2 + readout reads a 3x3 of
+// those words), resident ping-pong on the board buffer, one readback.
+// _float dequantizes every weight and multiplies; _int folds the ternary
+// weights into adds/subtracts and applies each layer's one scale once.
+// ---------------------------------------------------------------------------
+let lifeQuant2StepEngine = null;
+async function ensureLifeQuant2StepEngine() {
+  if (lifeQuant2StepEngine) return lifeQuant2StepEngine;
+  const { device } = await ensureGpuLookupEngine(); // shares the device (and its raised limits)
+  const code = await (await fetch('./life_quant_2step.wgsl')).text();
+  const module = device.createShaderModule({ code });
+  const [layer1Int, layer1Float, layer2Int, layer2Float] = await Promise.all([
+    device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'main_int_layer1' } }),
+    device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'main_float_layer1' } }),
+    device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'main_int_layer2' } }),
+    device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'main_float_layer2' } }),
+  ]);
+  lifeQuant2StepEngine = { device, layer1Int, layer1Float, layer2Int, layer2Float };
+  return lifeQuant2StepEngine;
+}
+// variant: 'int' (adds/subtracts only, one scale multiply per layer) or
+// 'float' (ordinary dequantized float forward, every tap a multiply).
+async function quant2StepResidentRun(model, variant, cells, w, h, generations, onProgress) {
+  const { device, layer1Int, layer1Float, layer2Int, layer2Float } = await ensureLifeQuant2StepEngine();
+  const layer1 = variant === 'float' ? layer1Float : layer1Int;
+  const layer2 = variant === 'float' ? layer2Float : layer2Int;
+  const n = w * h;
+  checkGpuBufferSize(device, n * 4);
+  const cellsU32 = new Uint32Array(n);
+  for (let i = 0; i < n; i++) cellsU32[i] = cells[i] ? 1 : 0;
+
+  const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
+  const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([w, h, 32, dispatchX]));
+  const scales1Buf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(scales1Buf, 0, new Float32Array([model.conv1_scale, 0, 0, 0]));
+  const scales2Buf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(scales2Buf, 0, new Float32Array([model.conv2_scale, model.readout_scale, model.readout_bias, 0]));
+  const conv1WeightBuf = device.createBuffer({ size: 32 * 9 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(conv1WeightBuf, 0, new Int32Array(model.conv1_weight.flat()));
+  const conv1BiasBuf = device.createBuffer({ size: 32 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(conv1BiasBuf, 0, new Float32Array(model.conv1_bias));
+  const conv2WeightBuf = device.createBuffer({ size: 32 * 32 * 9 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(conv2WeightBuf, 0, new Int32Array(model.conv2_weight));
+  const conv2BiasBuf = device.createBuffer({ size: 32 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(conv2BiasBuf, 0, new Float32Array(model.conv2_bias));
+  const readoutWeightBuf = device.createBuffer({ size: 32 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(readoutWeightBuf, 0, new Int32Array(model.readout_weight));
+  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
+  device.queue.writeBuffer(a, 0, cellsU32);
+  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
+  const hiddenBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE });
+  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+
+  const makeLayer1BindGroup = (src) => device.createBindGroup({
+    layout: layer1.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: paramsBuf } },
+      { binding: 1, resource: { buffer: scales1Buf } },
+      { binding: 2, resource: { buffer: conv1WeightBuf } },
+      { binding: 3, resource: { buffer: conv1BiasBuf } },
+      { binding: 4, resource: { buffer: src } },
+      { binding: 5, resource: { buffer: hiddenBuf } },
+    ],
+  });
+  const makeLayer2BindGroup = (dst) => device.createBindGroup({
+    layout: layer2.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: paramsBuf } },
+      { binding: 1, resource: { buffer: scales2Buf } },
+      { binding: 2, resource: { buffer: conv2WeightBuf } },
+      { binding: 3, resource: { buffer: conv2BiasBuf } },
+      { binding: 4, resource: { buffer: readoutWeightBuf } },
+      { binding: 5, resource: { buffer: hiddenBuf } },
+      { binding: 6, resource: { buffer: dst } },
+    ],
+  });
+  const l1A = makeLayer1BindGroup(a);
+  const l1B = makeLayer1BindGroup(b);
+  const l2ToB = makeLayer2BindGroup(b);
+  const l2ToA = makeLayer2BindGroup(a);
+
+  // One pass of this network advances two generations (same 5x5 receptive
+  // field as the compiled row), so for `generations` (always even) it runs
+  // generations/2 iterations, each iteration two dispatches (its own compute
+  // pass -- WebGPU guarantees pass N's writes are visible to pass N+1).
+  const iterations = generations / 2;
+  const t0 = performance.now();
+  for (let g = 0; g < iterations; g++) {
+    const fromA = g % 2 === 0;
+    const encoder = device.createCommandEncoder();
+    const pass1 = encoder.beginComputePass();
+    pass1.setPipeline(layer1);
+    pass1.setBindGroup(0, fromA ? l1A : l1B);
+    pass1.dispatchWorkgroups(dispatchXCount, dispatchY, 1);
+    pass1.end();
+    const pass2 = encoder.beginComputePass();
+    pass2.setPipeline(layer2);
+    pass2.setBindGroup(0, fromA ? l2ToB : l2ToA);
+    pass2.dispatchWorkgroups(dispatchXCount, dispatchY, 1);
+    pass2.end();
+    device.queue.submit([encoder.finish()]);
+    if (g % 100 === 99) {
+      await device.queue.onSubmittedWorkDone();
+      if (onProgress) onProgress((g + 1) * 2, generations);
+    }
+  }
+  const finalBuf = iterations % 2 === 0 ? a : b;
+  const readEncoder = device.createCommandEncoder();
+  readEncoder.copyBufferToBuffer(finalBuf, 0, stagingBuf, 0, n * 4);
+  device.queue.submit([readEncoder.finish()]);
+  await stagingBuf.mapAsync(GPUMapMode.READ);
+  const binarized = Array.from(new Uint32Array(stagingBuf.getMappedRange().slice(0)), (v) => (v ? 1 : 0));
+  stagingBuf.unmap();
+  const seconds = (performance.now() - t0) / 1000;
+
+  paramsBuf.destroy(); scales1Buf.destroy(); scales2Buf.destroy();
+  conv1WeightBuf.destroy(); conv1BiasBuf.destroy(); conv2WeightBuf.destroy(); conv2BiasBuf.destroy();
+  readoutWeightBuf.destroy(); a.destroy(); b.destroy(); hiddenBuf.destroy(); stagingBuf.destroy();
+  return { seconds, binarized, generations };
+}
+
+// ---------------------------------------------------------------------------
+// 2-step lookup table -- ground truth from the rule, not the trained model.
+// A 2^25-entry, 1-bit table (stored as one u32 per entry, 4 MB) over every
+// possible 5x5 neighbourhood, filled on the GPU at first use by lut2step.wgsl's
+// build_table (plain integer popcount/compare, Conway's rule applied twice,
+// bitslice_life2_exhaustive.py's own ground-truth convention: bit k of the
+// pattern index is the 5x5 window cell at row-major offset k, centre = bit
+// 12). Then a resident ping-pong run where each thread gathers its own 25
+// toroidal neighbours and reads one bit, same shape as every other resident
+// row. Table build time is tracked separately (it only happens once, at
+// first use, and is not part of any row's timed run).
+// ---------------------------------------------------------------------------
+let lut2StepEngine = null;
+let lut2StepTableBuf = null;
+let lut2StepBuildMs = null;
+const LUT2STEP_ENTRIES = 1 << 25; // 33,554,432
+async function ensureLut2StepEngine() {
+  if (lut2StepEngine) return lut2StepEngine;
+  const { device } = await ensureGpuLookupEngine(); // shares the device (and its raised limits)
+  const code = await (await fetch('./lut2step.wgsl')).text();
+  const module = device.createShaderModule({ code });
+  const [buildPipeline, lookupPipeline] = await Promise.all([
+    device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'build_table' } }),
+    device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'main_lookup2step' } }),
+  ]);
+  lut2StepEngine = { device, buildPipeline, lookupPipeline };
+  return lut2StepEngine;
+}
+async function ensureLut2StepTable() {
+  if (lut2StepTableBuf) return lut2StepTableBuf;
+  const { device, buildPipeline } = await ensureLut2StepEngine();
+  checkGpuBufferSize(device, LUT2STEP_ENTRIES * 4);
+  const buildParamsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(LUT2STEP_ENTRIES);
+  device.queue.writeBuffer(buildParamsBuf, 0, new Uint32Array([LUT2STEP_ENTRIES, dispatchX, 0, 0]));
+  const tableBuf = device.createBuffer({ size: LUT2STEP_ENTRIES * 4, usage: GPUBufferUsage.STORAGE });
+  const bindGroup = device.createBindGroup({
+    layout: buildPipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: buildParamsBuf } },
+      { binding: 1, resource: { buffer: tableBuf } },
+    ],
+  });
+  const t0 = performance.now();
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginComputePass();
+  pass.setPipeline(buildPipeline);
+  pass.setBindGroup(0, bindGroup);
+  pass.dispatchWorkgroups(dispatchXCount, dispatchY, 1);
+  pass.end();
+  device.queue.submit([encoder.finish()]);
+  await device.queue.onSubmittedWorkDone();
+  lut2StepBuildMs = performance.now() - t0;
+  buildParamsBuf.destroy();
+  lut2StepTableBuf = tableBuf;
+  return tableBuf;
+}
+async function lut2StepResidentRun(cells, w, h, generations, onProgress) {
+  const { device, lookupPipeline } = await ensureLut2StepEngine();
+  const table = await ensureLut2StepTable();
+  const n = w * h;
+  checkGpuBufferSize(device, n * 4);
+  const cellsU32 = new Uint32Array(n);
+  for (let i = 0; i < n; i++) cellsU32[i] = cells[i] ? 1 : 0;
+
+  const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
+  const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([w, h, dispatchX, 0]));
+  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
+  device.queue.writeBuffer(a, 0, cellsU32);
+  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
+  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+
+  const makeBindGroup = (src, dst) => device.createBindGroup({
+    layout: lookupPipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: paramsBuf } },
+      { binding: 1, resource: { buffer: table } },
+      { binding: 2, resource: { buffer: src } },
+      { binding: 3, resource: { buffer: dst } },
+    ],
+  });
+  const bgAB = makeBindGroup(a, b);
+  const bgBA = makeBindGroup(b, a);
+
+  // generations/2 passes, same as the compiled/float/int 2-step rows: each
+  // dispatch of this kernel advances two generations.
+  const iterations = generations / 2;
+  const t0 = performance.now();
+  for (let g = 0; g < iterations; g++) {
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(lookupPipeline);
+    pass.setBindGroup(0, g % 2 === 0 ? bgAB : bgBA);
+    pass.dispatchWorkgroups(dispatchXCount, dispatchY, 1);
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+    if (g % 100 === 99) {
+      await device.queue.onSubmittedWorkDone();
+      if (onProgress) onProgress((g + 1) * 2, generations);
+    }
+  }
+  const finalBuf = iterations % 2 === 0 ? a : b;
+  const readEncoder = device.createCommandEncoder();
+  readEncoder.copyBufferToBuffer(finalBuf, 0, stagingBuf, 0, n * 4);
+  device.queue.submit([readEncoder.finish()]);
+  await stagingBuf.mapAsync(GPUMapMode.READ);
+  const binarized = Array.from(new Uint32Array(stagingBuf.getMappedRange().slice(0)), (v) => (v ? 1 : 0));
+  stagingBuf.unmap();
+  const seconds = (performance.now() - t0) / 1000;
+
+  paramsBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
+  return { seconds, binarized, generations };
+}
+
+// ---------------------------------------------------------------------------
 // Bitwise models -- ternary/binary CNNs trained to reproduce Conway's rule
 // exactly (see docs/runs/2026-10-01-life-1bit.md in llm-life), run here with
 // life_quant.wgsl instead of bitpack.wgsl's hardcoded adder network: one
@@ -1304,6 +1549,9 @@ const RUNGS = [
   { key: 'quant-ternary-bitpack', name: 'ternary model, bit-packed (45 parameters)', params: '45 (ternary)' },
   { key: 'quant-ternary-compiled', name: 'ternary model, compiled (89 parameters)', params: '89 (ternary)' },
   { key: 'quant-ternary-2step-compiled', name: 'ternary model, compiled, 2 steps per pass (9,601 parameters)', params: '9,601 (ternary)' },
+  { key: 'quant-ternary-2step-float', name: 'ternary model, float, 2 steps per pass (9,601 parameters)', params: '9,601 (ternary)' },
+  { key: 'quant-ternary-2step-int', name: 'ternary model, integer adds, 2 steps per pass (9,601 parameters)', params: '9,601 (ternary)' },
+  { key: 'lut-2step', name: '2-step lookup table (GPU, resident)', params: '2^25-entry table (4 MB)' },
   { key: 'llm-percell-base', name: 'LLM per cell (base)', params: '0.5B (no adapter)' },
   { key: 'llm-percell-trained', name: 'LLM per cell (trained)', params: '0.5B (+ adapter)' },
   { key: 'llm-percell-batched', name: 'LLM per cell (trained, batched)', params: '0.5B (+ adapter)' },
@@ -1632,6 +1880,46 @@ async function runEveryRung() {
     lastResults = results;
     renderLadderTable();
 
+    // Same 9,601-parameter 2-step model as the compiled row, run as an
+    // ordinary network instead of a bit-sliced circuit -- one float-forward
+    // row and one integer-adds row, same resident ping-pong shape and N.
+    const quant2StepRuns = [
+      ['quant-ternary-2step-float', 'float', 'ternary model, float, 2 steps per pass'],
+      ['quant-ternary-2step-int', 'int', 'ternary model, integer adds, 2 steps per pass'],
+    ];
+    for (const [key, variant, label] of quant2StepRuns) {
+      setStatus('generating', `running ${label}, resident, ${residentN} generations...`);
+      try {
+        const model2step = await loadQuantModel('./life-2step-9601.json');
+        const r = await measureGpuRow(label, (b, w, h, gens, onProg) => quant2StepResidentRun(model2step, variant, b, w, h, gens, onProg));
+        results[key] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
+      } catch (e) {
+        results[key] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+      }
+      lastResults = results;
+      renderLadderTable();
+    }
+
+    setStatus('generating', `building the 2-step lookup table...`);
+    try {
+      await ensureLut2StepTable();
+    } catch (e) {
+      results['lut-2step'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+      lastResults = results;
+      renderLadderTable();
+    }
+    if (!results['lut-2step']) {
+      setStatus('generating', `running the 2-step lookup table, resident, ${residentN} generations...`);
+      try {
+        const r = await measureGpuRow('2-step lookup table', lut2StepResidentRun);
+        results['lut-2step'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
+      } catch (e) {
+        results['lut-2step'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+      }
+    }
+    lastResults = results;
+    renderLadderTable();
+
     if (maxDim > 64) {
       if (boardW !== boardH) {
         // Measured wrong in real Chrome at 3840x2160 (6244398/8294400
@@ -1822,6 +2110,28 @@ window.__testQuant = async function () {
     const r = await bitwiseResidentRun(board, boardW, boardH, 1, null, birthMask, surviveMask);
     out.ternaryBitpack = { correct: countMatches(r.binarized, truth), total };
   }
+  return out;
+};
+
+// Headless correctness check hook for the 2-step rows (gpu-lookup worktree):
+// the float/int uncompiled 9,601-parameter network and the 2^25-entry rule
+// lookup table, each run for one pass (two generations) and compared against
+// Life applied twice on the CPU. Not reachable from the page UI.
+window.__testQuant2Step = async function () {
+  const board = Uint8Array.from(app.cells());
+  const truth = jsLifeStepLoop(jsLifeStepLoop(board, boardW, boardH), boardW, boardH);
+  const total = boardW * boardH;
+  const out = {};
+  const model2step = await loadQuantModel('./life-2step-9601.json');
+  for (const [name, variant] of [['float', 'float'], ['int', 'int']]) {
+    const r = await quant2StepResidentRun(model2step, variant, board, boardW, boardH, 2);
+    out[name] = { correct: countMatches(r.binarized, truth), total };
+  }
+  const buildT0 = performance.now();
+  await ensureLut2StepTable();
+  out.tableBuildMs = performance.now() - buildT0;
+  const rLut = await lut2StepResidentRun(board, boardW, boardH, 2);
+  out.lut = { correct: countMatches(rLut.binarized, truth), total };
   return out;
 };
 </script>
