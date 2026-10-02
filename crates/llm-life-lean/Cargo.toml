@@ -1,0 +1,52 @@
+[package]
+name = "llm-life-lean"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The language-model methods of llm-life on lean, the project's raw wgpu + WGSL engine"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["native"]
+# Backend selection lives here, in the consumer crate: lean's `native-bin`
+# brings pollster (Engine::new) on native, `wasm` switches wgpu to WebGPU.
+native = ["lean/native-bin", "dep:pollster"]
+web = [
+    "lean/wasm",
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:js-sys",
+    "dep:web-sys",
+    "dep:console_error_panic_hook",
+]
+
+[dependencies]
+life = { path = "../life" }
+# The engine: crates/lean in idle-intelligence/llm-web, branch lean-lora
+# (55ac755: embedding-row sliced head, pool reset on adapter swap, K/V
+# scatter kernel). That branch is not published yet, so builds patch this
+# source to a local llm-web checkout (docs/runs/2026-10-02-lean-migration.md,
+# "Build"); pin `rev` here once it is.
+lean = { git = "https://github.com/idle-intelligence/llm-web", default-features = false }
+anyhow = { workspace = true }
+wgpu = "26"
+pollster = { version = "0.3", optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", features = ["console"], optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+
+# Same tokenizer build as lean's own (onig/esaxx_fast are not wasm32-safe).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokenizers = { version = "0.22", default-features = false, features = ["unstable_wasm", "fancy-regex"] }
+getrandom = { version = "0.3", default-features = false, features = ["wasm_js"] }
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

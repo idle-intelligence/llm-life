@@ -8,3 +8,4 @@
 target/
 /local/
 /tools/remote/  # remote-box tooling lives outside the repo
+/web/pkg-lean
