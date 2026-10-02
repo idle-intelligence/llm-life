@@ -322,6 +322,7 @@
         <p><strong>bitwise (GPU, resident):</strong> 32 cells packed into one 32-bit word, and a bitwise adder network counts all 32 cells' neighbours at once instead of looking each one up individually; same ping-pong, one readback at the end.</p>
         <p><strong>ternary model, float / integer adds (45 parameters):</strong> a tiny convolutional network trained from scratch with ternary ({-1,0,1}) weights that reproduces Conway's rule exactly; the float row runs it as an ordinary dequantized-weight network (a float multiply per weight), the integer row runs the same forward using only integer adds and subtracts of the 0/1 cell values, same ping-pong GPU kernel as the rows above.</p>
         <p><strong>binary model, float / integer adds (177 parameters):</strong> the same idea with binary ({-1,1}) weights instead of ternary, needing roughly 4x the parameters to still reproduce the rule exactly; same two kernels, float multiplies versus adds and subtracts.</p>
+        <p><strong>ternary model, bit-packed (45 parameters):</strong> the trained 45-parameter model compiled to bit operations, 32 cells per word.</p>
         <p><strong>LLM per cell:</strong> Give a language model the rules and current cell's state, *as text*, and ask if it lives or dies. Repeat for each and every cell. Of course, it's very slow, and an off the shelf model doesn't work. Fine tuning a small LoRa adapter gets us perfect results, but it's still slow... Does it speed up if we batch the inference?</p>
         <p><strong>LLM whole grid:</strong> Look, there are many optimisation we could do. That's not the game we are playing. Yet, cell by cell _is_ stupid. Instead, we ask the model for the whole grid in one prompt, one token per cell. It's much faster, but training a 64x64 adapter gets expensive, and 256x256 doesn't fit in this small model's context. Another LoRa adapter gets us to 100% accuracy.</p>
         <p><strong>BERT of Life:</strong> Alive or Dead is a classification. What would a BERT do? A BERT-shaped classifier, one-layer encoder over the 9 cells as tokens, 3,490 parameters trained from scratch; it works.</p>
@@ -755,8 +756,12 @@ async function ensureBitpackEngine() {
 }
 
 // Same ping-pong / one-readback shape as gpuLookupResidentRun, on the
-// packed board instead of one u32 per cell.
-async function bitwiseResidentRun(cells, w, h, generations, onProgress) {
+// packed board instead of one u32 per cell. birthMask/surviveMask default to
+// Conway's own (the hardcoded row above); the model-compiled row below
+// passes masks derived from a trained model's thresholds instead -- the
+// shader and packing are otherwise identical, since a popcount-only rule is
+// a popcount-only rule regardless of where its birth/survive bits came from.
+async function bitwiseResidentRun(cells, w, h, generations, onProgress, birthMask = CONWAY_BIRTH_MASK, surviveMask = CONWAY_SURVIVE_MASK) {
   const { device, pipeline } = await ensureBitpackEngine();
   const wpr = w / 32;
   const n = wpr * h;
@@ -767,7 +772,7 @@ async function bitwiseResidentRun(cells, w, h, generations, onProgress) {
   // BitpackParams is 5 u32 fields but padded to 8 (32 bytes), matching
   // life-lut-bench's native `gpu::BitpackParams` layout.
   const paramsBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([wpr, h, CONWAY_BIRTH_MASK, CONWAY_SURVIVE_MASK, dispatchX, 0, 0, 0]));
+  device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([wpr, h, birthMask, surviveMask, dispatchX, 0, 0, 0]));
   const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
   const a = device.createBuffer({ size: n * 4, usage: bufUsage });
   device.queue.writeBuffer(a, 0, words);
@@ -911,6 +916,56 @@ async function quantResidentRun(model, variant, cells, w, h, generations, onProg
   paramsBuf.destroy(); scalesBuf.destroy(); conv1WeightBuf.destroy(); conv1BiasBuf.destroy();
   conv2WeightBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
   return { seconds, binarized, generations };
+}
+
+// ---------------------------------------------------------------------------
+// Compiling a quant model down to bit operations: the model's own integer
+// forward (same math as life_quant.wgsl's main_int, run here on the CPU on a
+// single 3x3 case), used only to read off its birth/survive decision as a
+// function of neighbour count -- the actual run below still goes through
+// bitpack.wgsl's bit-sliced adder network, unchanged from the Conway row.
+// ---------------------------------------------------------------------------
+function quantForwardCpu(model, grid /* 9 values, row-major, index 4 = self */) {
+  const c = model.channels;
+  let sum2 = 0;
+  for (let k = 0; k < c; k++) {
+    const w = model.conv1_weight[k];
+    let sum1 = 0;
+    for (let i = 0; i < 9; i++) sum1 += w[i] * grid[i];
+    const hidden = Math.max(0, model.conv1_scale * sum1 + model.conv1_bias[k]);
+    const w2 = model.conv2_weight[k];
+    if (w2 === 1) sum2 += hidden;
+    else if (w2 === -1) sum2 -= hidden;
+  }
+  return (model.conv2_scale * sum2 + model.conv2_bias) >= 0 ? 1 : 0;
+}
+function canonicalGrid(self, n) {
+  // Row-major 3x3, index 4 = self; the first n of the other 8 slots alive.
+  const g = new Array(9).fill(0);
+  let placed = 0;
+  for (let i = 0; i < 9; i++) {
+    if (i === 4) continue;
+    g[i] = placed < n ? 1 : 0;
+    placed++;
+  }
+  g[4] = self;
+  return g;
+}
+// Derives bitpack.wgsl's birth_mask/survive_mask from a trained model: for
+// each neighbour count 0..8, evaluate the model's own forward (not an
+// assumption) on one representative grid and set that count's bit if it
+// predicts alive. Only valid for a model whose decision depends on
+// neighbour count and self alone, not on which specific neighbours are
+// alive -- checked against the real per-neighbourhood forward (not just the
+// canonical placement) by the same 512-case correctness check every other
+// row on this page runs, via countMatches against the rule below.
+function deriveMasksFromModel(model) {
+  let birthMask = 0, surviveMask = 0;
+  for (let n = 0; n <= 8; n++) {
+    if (quantForwardCpu(model, canonicalGrid(0, n))) birthMask |= (1 << n);
+    if (quantForwardCpu(model, canonicalGrid(1, n))) surviveMask |= (1 << n);
+  }
+  return { birthMask, surviveMask };
 }
 
 // ---------------------------------------------------------------------------
@@ -1081,6 +1136,7 @@ const RUNGS = [
   { key: 'quant-ternary-int', name: 'ternary model, integer adds (45 parameters)', params: '45 (ternary)' },
   { key: 'quant-binary-float', name: 'binary model, float (177 parameters)', params: '177 (binary)' },
   { key: 'quant-binary-int', name: 'binary model, integer adds (177 parameters)', params: '177 (binary)' },
+  { key: 'quant-ternary-bitpack', name: 'ternary model, bit-packed (45 parameters)', params: '45 (ternary)' },
   { key: 'llm-percell-base', name: 'LLM per cell (base)', params: '0.5B (no adapter)' },
   { key: 'llm-percell-trained', name: 'LLM per cell (trained)', params: '0.5B (+ adapter)' },
   { key: 'llm-percell-batched', name: 'LLM per cell (trained, batched)', params: '0.5B (+ adapter)' },
@@ -1364,6 +1420,23 @@ async function runEveryRung() {
       renderLadderTable();
     }
 
+    setStatus('generating', `running the ternary model, bit-packed, ${residentN} generations...`);
+    if (boardW % 32 !== 0) {
+      results['quant-ternary-bitpack'] = { note: 'N/A (needs a board width that is a multiple of 32)' };
+    } else {
+      try {
+        const ternaryModel = await loadQuantModel('./life-ternary-45.json');
+        const { birthMask, surviveMask } = deriveMasksFromModel(ternaryModel);
+        const r = await measureGpuRow('ternary model, bit-packed',
+          (b, w, h, gens, onProg) => bitwiseResidentRun(b, w, h, gens, onProg, birthMask, surviveMask));
+        results['quant-ternary-bitpack'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
+      } catch (e) {
+        results['quant-ternary-bitpack'] = { note: e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : NO_WEBGPU };
+      }
+    }
+    lastResults = results;
+    renderLadderTable();
+
     if (maxDim > 64) {
       if (boardW !== boardH) {
         // Measured wrong in real Chrome at 3840x2160 (6244398/8294400
@@ -1548,6 +1621,11 @@ window.__testQuant = async function () {
   ]) {
     const r = await quantResidentRun(model, variant, board, boardW, boardH, 1);
     out[name] = { correct: countMatches(r.binarized, truth), total };
+  }
+  if (boardW % 32 === 0) {
+    const { birthMask, surviveMask } = deriveMasksFromModel(ternaryModel);
+    const r = await bitwiseResidentRun(board, boardW, boardH, 1, null, birthMask, surviveMask);
+    out.ternaryBitpack = { correct: countMatches(r.binarized, truth), total };
   }
   return out;
 };
