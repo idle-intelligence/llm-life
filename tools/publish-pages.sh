@@ -5,8 +5,11 @@
 # models/).
 #
 # index.html and compare/index.html load `crates/life` at `./pkg/life.js`
-# (classical engine, no GGUF); the LLM/BERT/vector-space modes load
-# `crates/llm-life` through web/worker.js at `./pkg-llm/llm_life.js`. Model
+# (classical engine, no GGUF); the BERT/vector-space modes load
+# `crates/llm-life` (Burn) through web/worker.js at `./pkg-llm/llm_life.js`,
+# the LLM modes `crates/llm-life-lean` (lean) at `./pkg-lean/llm_life_lean.js`.
+# LEAN_PATH=<llm-web checkout>/crates/lean builds lean from a local checkout
+# instead of its git source (needed while that branch is unpublished). Model
 # weights come from Hugging Face at runtime (web/models.js), never shipped
 # here.
 #
@@ -27,17 +30,35 @@ trap cleanup EXIT
 
 echo "==> Building crates/life (classical engine)"
 wasm-pack build crates/life --target web --out-dir ../../web/pkg --features web
-echo "==> Building crates/llm-life (LLM/BERT/vector-space engine)"
+echo "==> Building crates/llm-life (BERT/vector-space engine, Burn)"
 wasm-pack build crates/llm-life --target web --out-dir ../../web/pkg-llm --no-default-features --features web
+echo "==> Building crates/llm-life-lean (LLM engine, lean)"
+if [ -n "${LEAN_PATH:-}" ]; then
+    # wasm-pack runs its own `cargo metadata`, which `-- --config` does not
+    # reach: the patch goes in a temporary .cargo/config.toml instead.
+    if [ -e .cargo/config.toml ]; then
+        echo "error: .cargo/config.toml exists; refusing to overwrite it" >&2
+        exit 1
+    fi
+    mkdir -p .cargo
+    printf '[patch."https://github.com/idle-intelligence/llm-web"]\nlean = { path = "%s" }\n' "$LEAN_PATH" > .cargo/config.toml
+    trap 'rm -f "$REPO_ROOT/.cargo/config.toml"; rmdir "$REPO_ROOT/.cargo" 2>/dev/null || true; cleanup' EXIT
+fi
+wasm-pack build crates/llm-life-lean --target web --out-dir ../../web/pkg-lean --no-default-features --features web
 
 LIFE_SRC="$REPO_ROOT/web/pkg"
 LLM_SRC="$REPO_ROOT/web/pkg-llm"
+LEAN_SRC="$REPO_ROOT/web/pkg-lean"
 if [ ! -f "$LIFE_SRC/life.js" ] || [ ! -f "$LIFE_SRC/life_bg.wasm" ]; then
     echo "error: expected build output not found in $LIFE_SRC" >&2
     exit 1
 fi
 if [ ! -f "$LLM_SRC/llm_life.js" ] || [ ! -f "$LLM_SRC/llm_life_bg.wasm" ]; then
     echo "error: expected build output not found in $LLM_SRC" >&2
+    exit 1
+fi
+if [ ! -f "$LEAN_SRC/llm_life_lean.js" ] || [ ! -f "$LEAN_SRC/llm_life_lean_bg.wasm" ]; then
+    echo "error: expected build output not found in $LEAN_SRC" >&2
     exit 1
 fi
 
@@ -57,13 +78,15 @@ if compgen -G "$EXPORT_DIR/web/*.bin" > /dev/null; then
     exit 1
 fi
 
-echo "==> Placing the built wasm at web/pkg and web/pkg-llm"
-rm -rf "$EXPORT_DIR/web/pkg" "$EXPORT_DIR/web/pkg-llm"
-mkdir -p "$EXPORT_DIR/web/pkg" "$EXPORT_DIR/web/pkg-llm"
+echo "==> Placing the built wasm at web/pkg, web/pkg-llm and web/pkg-lean"
+rm -rf "$EXPORT_DIR/web/pkg" "$EXPORT_DIR/web/pkg-llm" "$EXPORT_DIR/web/pkg-lean"
+mkdir -p "$EXPORT_DIR/web/pkg" "$EXPORT_DIR/web/pkg-llm" "$EXPORT_DIR/web/pkg-lean"
 cp "$LIFE_SRC"/life.js "$LIFE_SRC"/life_bg.wasm "$EXPORT_DIR/web/pkg/"
 [ -f "$LIFE_SRC/package.json" ] && cp "$LIFE_SRC/package.json" "$EXPORT_DIR/web/pkg/"
 cp "$LLM_SRC"/llm_life.js "$LLM_SRC"/llm_life_bg.wasm "$EXPORT_DIR/web/pkg-llm/"
 [ -f "$LLM_SRC/package.json" ] && cp "$LLM_SRC/package.json" "$EXPORT_DIR/web/pkg-llm/"
+cp "$LEAN_SRC"/llm_life_lean.js "$LEAN_SRC"/llm_life_lean_bg.wasm "$EXPORT_DIR/web/pkg-lean/"
+[ -f "$LEAN_SRC/package.json" ] && cp "$LEAN_SRC/package.json" "$EXPORT_DIR/web/pkg-lean/"
 
 echo "==> Preparing orphan gh-pages worktree at $WORKTREE_DIR"
 mkdir -p "$(dirname "$WORKTREE_DIR")"
