@@ -6,11 +6,15 @@ same tokenizer.json the Rust/Burn/transformers sides of this repo all read.
 
 from __future__ import annotations
 
+import os
+
 from tokenizers import Tokenizer
 
-QWEN_TOKENIZER_PATH = (
-    "~/models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json"
-)
+# Path to Qwen2.5-0.5B-Instruct's tokenizer.json, downloaded with `hf
+# download` into this repo's models directory (never ~/models). Set
+# QWEN_TOKENIZER_PATH to override; no default is baked in here since the
+# models directory is machine-local, not part of the repo.
+QWEN_TOKENIZER_PATH = os.environ.get("QWEN_TOKENIZER_PATH")
 FULL_VOCAB_SIZE = 151936  # config.json vocab_size (embedding row count incl. padding rows)
 
 
@@ -39,4 +43,9 @@ class ReducedVocab:
 
 
 def load_qwen_tokenizer() -> Tokenizer:
+    if not QWEN_TOKENIZER_PATH:
+        raise RuntimeError(
+            "Set QWEN_TOKENIZER_PATH to the local Qwen2.5-0.5B-Instruct "
+            "tokenizer.json (downloaded with `hf download`)."
+        )
     return Tokenizer.from_file(QWEN_TOKENIZER_PATH)
