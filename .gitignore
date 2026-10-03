@@ -8,3 +8,5 @@
 target/
 /local/
 /tools/remote/  # remote-box tooling lives outside the repo
+venv/
+pytorch/bert_text/__pycache__/
