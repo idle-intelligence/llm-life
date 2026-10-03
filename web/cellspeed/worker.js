@@ -1,15 +1,15 @@
 // Cell-speed measurement: all inference runs here, the page does UI only.
-// Loads Qwen2.5-0.5B (lean, pkg-lean) and the a-norules-300 adapter, then
+// Loads Qwen2.5-0.5B (lean: WebGPU, CPU threads or single-thread CPU, picked
+// by capability in ../lean-backend.js) and the a-norules-300 adapter, then
 // times one forward per cell against the resident prefix ("reuse") and the
 // same cell with the prefix forwarded again in the same call ("no reuse").
 // The GGUF fetch (fetchChunks, splitIntoChunks, cachedFetchText) is the one
 // in ../worker.js, with the same cache name so a load there is a hit here.
-const ENGINE_BUILD = '2026-10-03';
+const ENGINE_BUILD = '2026-10-03-cpu-01';
 const pending = [];
 self.onmessage = (e) => pending.push(e);
 
-const lean = await import(`../pkg-lean/llm_life_lean.js?v=${ENGINE_BUILD}`);
-await lean.default({ module_or_path: new URL(`../pkg-lean/llm_life_lean_bg.wasm?v=${ENGINE_BUILD}`, import.meta.url) });
+const { pickLeanBackend, createLifeEngine } = await import(`../lean-backend.js?v=${ENGINE_BUILD}`);
 
 const CHUNK = 64 * 1024 * 1024;
 const MODEL_CACHE = 'llm-life-model-v1';
@@ -81,10 +81,13 @@ async function cachedFetchText(url) {
 }
 
 let engine = null;
+let backend = null;
 
-async function load({ ggufUrl, tokenizerUrl, adapterUrl, width, height }) {
+async function load({ ggufUrl, tokenizerUrl, adapterUrl, width, height, requested }) {
   const t0 = performance.now();
-  engine = await lean.LifeEngine.create(width, height);
+  const picked = await pickLeanBackend(requested, ENGINE_BUILD);
+  backend = picked.backend;
+  engine = await createLifeEngine(picked, width, height);
   const tDevice = performance.now();
   const { chunks, cached } = await fetchChunks(ggufUrl, (f) => self.postMessage({ type: 'progress', fraction: f }));
   const tokenizerJson = await cachedFetchText(tokenizerUrl);
@@ -96,6 +99,11 @@ async function load({ ggufUrl, tokenizerUrl, adapterUrl, width, height }) {
   await engine.loadAdapter(bytes, true);
   const tAdapter = performance.now();
   return {
+    backend,
+    backendLabel: picked.label,
+    adapterInfo: picked.caps.adapter,
+    caps: picked.caps,
+    engineBuild: ENGINE_BUILD,
     deviceMs: tDevice - t0,
     fetchMs: tFetch - tDevice,
     ggufCached: cached,
@@ -109,7 +117,7 @@ async function load({ ggufUrl, tokenizerUrl, adapterUrl, width, height }) {
 
 // Rounds alternate the two variants over the same cells (reuse block, then
 // no-reuse block), after one warm-up call of each.
-async function run({ cells, order, rounds }) {
+async function run({ cells, order, rounds, chunkRuns }) {
   const board = new Uint8Array(cells);
   const call = async (variant, i) => {
     const t = performance.now();
@@ -127,10 +135,10 @@ async function run({ cells, order, rounds }) {
     }
   }
   // For scale: the first 64 cells in one forward (stepChunkA), after one
-  // warm-up call.
-  await engine.stepChunkA(board, 0);
+  // warm-up call on WebGPU (pipelines); `chunkRuns` timed calls.
   const chunkMs = [];
-  for (let k = 0; k < 3; k++) {
+  if (chunkRuns > 0 && backend === 'webgpu') await engine.stepChunkA(board, 0);
+  for (let k = 0; k < chunkRuns; k++) {
     const t = performance.now();
     await engine.stepChunkA(board, 0);
     chunkMs.push(performance.now() - t);

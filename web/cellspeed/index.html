@@ -267,11 +267,13 @@
 <script type="module">
 import { MODEL_URLS } from '../models.js';
 
-const BUILD = '2026-10-03';
+const BUILD = '2026-10-03-cpu-01';
 const W = 16, H = 16;
 const params = new URLSearchParams(location.search);
 const NCELLS = Math.min(W * H, Number(params.get('cells') || 64));
 const ROUNDS = Number(params.get('rounds') || 3);
+// auto (by capability), webgpu, threads or single.
+const BACKEND = params.get('backend') || 'auto';
 
 const els = {
   statusDot: document.getElementById('statusDot'),
@@ -344,9 +346,11 @@ let nextId = 1;
 const waiting = new Map();
 const samples = { reuse: [], full: [] };
 const firstRound = [];
+const logits0 = { reuse: [], full: [] };
 const tokens = { reuse: 0, full: 0 };
 const wrong = { reuse: 0, full: 0 };
 let done = 0;
+let backendLabel = '';
 const total = NCELLS * ROUNDS * 2;
 worker.onmessage = (e) => {
   const m = e.data;
@@ -359,11 +363,12 @@ worker.onmessage = (e) => {
     if (answer !== rule(m.index)) wrong[m.variant]++;
     if (m.kase !== caseIndex(m.index)) console.error(`case index mismatch at cell ${m.index}`);
     const p = 1 / (1 + Math.exp(m.dead - m.alive));
+    if (m.round === 0) logits0[m.variant].push([m.index, m.dead, m.alive]);
     if (m.round === 0 && m.variant === 'reuse') firstRound.push({ index: m.index, dead: m.dead, alive: m.alive, p, answer, rule: rule(m.index), ms: m.ms });
     answers.set(m.index, answer);
     draw(m.index);
     els.thinking.textContent = `cell ${m.index} (${m.index % W}, ${(m.index / W) | 0})\n${prompt(m.index)}${answer}\np(alive) ${p.toFixed(4)}   logits 0: ${m.dead.toFixed(3)}  1: ${m.alive.toFixed(3)}   ${m.ms.toFixed(1)} ms`;
-    setStatus('generating', `${m.variant === 'reuse' ? 'prefix reused' : 'no reuse'}, round ${m.round + 1}/${ROUNDS}, cell ${done}/${total}`);
+    setStatus('generating', `${backendLabel}: ${m.variant === 'reuse' ? 'prefix reused' : 'no reuse'}, round ${m.round + 1}/${ROUNDS}, cell ${done}/${total}`);
     return;
   }
   const w = waiting.get(m.id);
@@ -394,22 +399,29 @@ function row(label, value) {
 }
 
 try {
-  if (!navigator.gpu) throw new Error('WebGPU is not available in this browser');
-  const adapter = await navigator.gpu.requestAdapter();
-  const info = adapter ? adapter.info || {} : {};
   setStatus('loading', 'loading the model and the adapter...');
   // models.js paths are relative to web/, the worker's to web/cellspeed/.
   const abs = (u) => new URL(u, new URL('../', location.href)).href;
-  const load = await call('load', { ggufUrl: abs(MODEL_URLS.gguf), tokenizerUrl: abs(MODEL_URLS.tokenizer), adapterUrl: abs(MODEL_URLS.loraANorules), width: W, height: H });
+  const load = await call('load', { ggufUrl: abs(MODEL_URLS.gguf), tokenizerUrl: abs(MODEL_URLS.tokenizer), adapterUrl: abs(MODEL_URLS.loraANorules), width: W, height: H, requested: BACKEND });
+  // The 64-cell forward takes seconds on WebGPU and minutes on the CPU: CPU
+  // runs skip it unless the URL asks (?chunk=1).
+  backendLabel = load.backendLabel;
+  setStatus('generating', `${backendLabel}: warming up...`);
+  const CHUNK_RUNS = Number(params.get('chunk') ?? (load.backend === 'webgpu' ? 3 : 0));
   const order = Array.from({ length: NCELLS }, (_, i) => i);
   const t0 = performance.now();
-  const { chunkMs } = await call('run', { cells, order, rounds: ROUNDS });
+  const { chunkMs } = await call('run', { cells, order, rounds: ROUNDS, chunkRuns: CHUNK_RUNS });
   const runMs = performance.now() - t0;
   const reuse = stats(samples.reuse), full = stats(samples.full);
   const proj = (ms) => [8, 16, 32].map((n) => `${n}x${n}: ${(ms * n * n / 1000).toFixed(1)} s`).join(', ');
   const result = {
     build: BUILD,
-    adapter: `${info.vendor || '?'} ${info.architecture || ''} ${info.description || ''}`.trim(),
+    engineBuild: load.engineBuild,
+    backend: load.backend,
+    backendLabel: load.backendLabel,
+    requested: BACKEND,
+    adapter: load.adapterInfo,
+    caps: load.caps,
     board: { width: W, height: H, alive: cells.reduce((a, b) => a + b, 0), seed: 20261003 },
     cellsRun: NCELLS, rounds: ROUNDS,
     load,
@@ -421,14 +433,15 @@ try {
     runMs,
     chunk64Ms: chunkMs,
     examples: firstRound.slice(0, 16),
+    logitsRound0: logits0,
   };
-  row('GPU adapter', result.adapter);
-  row('model + adapter load', `${f1(load.totalMs)} ms (device ${f1(load.deviceMs)}, fetch ${f1(load.fetchMs)}${load.ggufCached ? ' from cache' : ''}, model ${f1(load.modelMs)}, adapter ${f1(load.adapterMs)})`);
+  row('backend', load.backend === 'webgpu' ? `WebGPU (${result.adapter})` : load.backendLabel);
+  row('model + adapter load', `${f1(load.totalMs)} ms (engine ${f1(load.deviceMs)}, fetch ${f1(load.fetchMs)}${load.ggufCached ? ' from cache' : ''}, model ${f1(load.modelMs)}, adapter ${f1(load.adapterMs)})`);
   row('prompt', `prefix ${load.prefixTokens} tokens (resident), cell prompt ${tokens.reuse} tokens`);
   for (const [name, s, v] of [['per cell, prefix reused', reuse, 'reuse'], ['per cell, no reuse', full, 'full']]) {
     row(name, `median ${f1(s.median)} ms, p10 ${f1(s.p10)}, p90 ${f1(s.p90)}, min ${f1(s.min)}, max ${f1(s.max)} (${s.n} calls, ${tokens[v]} tokens forwarded each)`);
   }
-  row('for scale: 64 cells in one forward', `${chunkMs.map(f1).join(', ')} ms (${f1(stats(chunkMs).median / 64)} ms per cell)`);
+  if (chunkMs.length) row('for scale: 64 cells in one forward', `${chunkMs.map(f1).join(', ')} ms (${f1(stats(chunkMs).median / 64)} ms per cell)`);
   row('correct vs the rule', `prefix reused ${NCELLS * ROUNDS - wrong.reuse}/${NCELLS * ROUNDS}, no reuse ${NCELLS * ROUNDS - wrong.full}/${NCELLS * ROUNDS}`);
   row('projected s / generation, prefix reused', proj(reuse.median));
   row('projected s / generation, no reuse', proj(full.median));
@@ -439,7 +452,7 @@ try {
   }
   els.json.textContent = JSON.stringify(result);
   draw();
-  setStatus('ready', `done: ${NCELLS} cells x ${ROUNDS} rounds, ${f1(reuse.median)} ms per cell with the prefix reused`);
+  setStatus('ready', `done: ${NCELLS} cells x ${ROUNDS} rounds on ${load.backendLabel}, ${f1(reuse.median)} ms per cell with the prefix reused`);
 } catch (err) {
   console.error(err);
   setStatus('error', `error: ${err.message}`);

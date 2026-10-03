@@ -8,7 +8,7 @@
 // Version tag on the engine URLs: browsers keep a wasm module at a fixed path
 // across rebuilds, even through a hard reload. Bump when either engine
 // (pkg-llm, pkg-lean) changes.
-const ENGINE_BUILD = '2026-10-03';
+const ENGINE_BUILD = '2026-10-03-cpu-01';
 // A message posted to this worker before its top-level `await import` below
 // finishes can be dropped rather than queued (observed in this browser: the
 // page's first 'load' message, sent right after `new Worker(...)`, arrived
@@ -18,17 +18,21 @@ const pending = [];
 self.onmessage = (e) => pending.push(e);
 
 // The small from-scratch models run on the Burn engine (pkg-llm); the
-// language model runs on lean (pkg-lean, crates/llm-life-lean), imported
-// only when the LLM is first loaded.
+// language model runs on lean (crates/llm-life-lean), imported only when the
+// LLM is first loaded, on the backend pickLeanBackend picks by capability
+// (lean-backend.js: WebGPU, else CPU threads, else single-thread CPU;
+// `backend` in the load payload forces one).
 const { default: init, BertEngine, VecMlpEngine, VecStencilEngine, initWgpuDevice } =
   await import(`./pkg-llm/llm_life.js?v=${ENGINE_BUILD}`);
+const { pickLeanBackend, createLifeEngine } = await import(`./lean-backend.js?v=${ENGINE_BUILD}`);
 let lean = null;
-async function ensureLean() {
-  if (lean) return lean;
-  const mod = await import(`./pkg-lean/llm_life_lean.js?v=${ENGINE_BUILD}`);
-  await mod.default({ module_or_path: new URL(`./pkg-lean/llm_life_lean_bg.wasm?v=${ENGINE_BUILD}`, import.meta.url) });
-  lean = mod;
-  return lean;
+let leanPicked = null;
+async function ensureLean(requested) {
+  if (!leanPicked) {
+    leanPicked = await pickLeanBackend(requested, ENGINE_BUILD);
+    lean = leanPicked.mod;
+  }
+  return leanPicked;
 }
 
 let engine = null;
@@ -190,11 +194,11 @@ async function ensureWasm() {
 async function handle(id, type, payload, reply) {
   try {
     if (type === 'load') {
-      const { LifeEngine } = await ensureLean();
-      // Free the previous engine's GPU buffers now rather than whenever the
-      // JS garbage collector gets to them: each one holds the whole model.
+      const picked = await ensureLean(payload.backend);
+      // Free the previous engine's buffers now rather than whenever the JS
+      // garbage collector gets to them: each one holds the whole model.
       if (engine) { engine.free(); engine = null; }
-      engine = await LifeEngine.create(payload.width, payload.height);
+      engine = await createLifeEngine(picked, payload.width, payload.height);
       engineGrid = { width: payload.width, height: payload.height };
       const chunks = await fetchChunks(payload.ggufUrl, (f) =>
         self.postMessage({ type: 'progress', stage: 'download', fraction: f }), true);
@@ -217,7 +221,7 @@ async function handle(id, type, payload, reply) {
         await engine.loadAdapter(bytes, name.includes('norules'));
         adapter = { name, bytes: bytes.length };
       }
-      reply(true, { packedTokens: engine.packedTokens(), cellTokens: engine.cellTokens(), adapter });
+      reply(true, { packedTokens: engine.packedTokens(), cellTokens: engine.cellTokens(), adapter, backend: picked.backend, backendLabel: picked.label });
     } else if (type === 'loadBert') {
       await ensureWasm();
       bertEngine = new BertEngine(payload.width, payload.height);

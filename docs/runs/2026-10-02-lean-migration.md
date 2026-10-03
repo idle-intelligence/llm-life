@@ -55,7 +55,16 @@ LEAN_PATH=<llm-web>/crates/lean tools/publish-pages.sh
 
 wasm-pack runs its own `cargo metadata`, which `-- --config` does not reach,
 so a wasm-pack build needs the same patch in a `.cargo/config.toml`
-(publish-pages.sh writes and removes one).
+(tools/build-lean.sh writes and removes one).
+
+`LEAN_PATH=<llm-web>/crates/lean tools/build-lean.sh` builds both browser
+modules: `web/pkg-lean` (WebGPU backend and the single-thread CPU backend,
+SIMD128) and `web/pkg-lean-mt` (the threaded CPU backend; nightly with
+rust-src, and a cross-origin-isolated page: web/serve.py sends COOP/COEP).
+The workers pick WebGPU, then CPU threads, then a single CPU thread by
+capability (web/lean-backend.js); `?backend=webgpu|threads|single` forces
+one. The CPU backend needs lean-cpu-lora or later (runtime LoRA, ForwardSpec
+chunks and the embedding-row head on the CPU).
 
 ## Parameters
 

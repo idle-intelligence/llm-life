@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Dev server for web/, stdlib only.
 
-No SharedArrayBuffer use in web/, so no COOP/COEP headers -- this matches
-how GitHub Pages serves the same tree.
+Sends COOP/COEP (cross-origin isolation) so the language model's threaded
+CPU backend (pkg-lean-mt: SharedArrayBuffer, wasm threads) can run. Hugging
+Face model fetches still work under COEP: they are CORS requests and HF
+answers them with Access-Control-Allow-Origin. A host without these headers
+(GitHub Pages) gets the single-thread CPU backend instead.
 
 Usage: python3 web/serve.py [--port 8010] [--bind 127.0.0.1]
 """
@@ -20,6 +23,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def end_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
 

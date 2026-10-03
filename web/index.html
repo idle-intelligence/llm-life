@@ -455,7 +455,10 @@
 // Bumped whenever worker.js or the pkg/pkg-llm/pkg-lean wasm builds change. The pkg
 // import above is a static import specifier and can't take this variable,
 // so its own '?v=' literal is bumped by hand alongside this constant.
-const BUILD = '2026-10-03';
+const BUILD = '2026-10-03-cpu-01';
+// The language model's backend: auto (by capability), webgpu, threads or single.
+const LEAN_BACKEND = new URLSearchParams(location.search).get('backend') || 'auto';
+let llmBackendLabel = '';
 
 import init, { LifeApp } from './pkg/life.js?v=2026-09-23';
 import { MODEL_URLS } from './models.js';
@@ -608,7 +611,7 @@ function adapterDisplayName(state) {
 function updateEngineTile() {
   if (isLlmMode(mode)) {
     els.engine.textContent = engineAdapterState
-      ? `Qwen2.5-0.5B + ${adapterDisplayName(engineAdapterState)}`
+      ? `Qwen2.5-0.5B + ${adapterDisplayName(engineAdapterState)}${llmBackendLabel ? ` · ${llmBackendLabel}` : ''}`
       : 'Qwen2.5-0.5B (loading...)';
   } else {
     els.engine.textContent = MODE_INFO[mode].engine;
@@ -805,8 +808,9 @@ function isPerCellNarrated(m) {
   return m === 'llm-a' || m === 'bert' || m === 'vec-mlp' || m === 'vec-stencil';
 }
 
-// WebGPU availability, probed once at load. Every model method runs on the
-// WebGPU engine; without an adapter only the rule runs.
+// WebGPU availability, probed once at load. The small models run on the
+// WebGPU engine only; the language model also runs on the CPU (the worker
+// picks its backend), so without an adapter the rule and the LLM run.
 let webGpuAvailable = null;
 (async () => {
   try { webGpuAvailable = !!(navigator.gpu && await navigator.gpu.requestAdapter()); }
@@ -815,7 +819,7 @@ let webGpuAvailable = null;
 })();
 
 function isModeReady(m) {
-  if (m !== 'classical' && webGpuAvailable === false) return false;
+  if (m !== 'classical' && !isLlmMode(m) && webGpuAvailable === false) return false;
   if (m === 'bert') return bertReady;
   if (m === 'vec-mlp') return vecMlpReady;
   if (m === 'vec-stencil') return vecStencilReady;
@@ -830,12 +834,13 @@ function updateStepPlayEnabled() {
   const ready = isModeReady(mode);
   els.play.disabled = !ready;
   els.step.disabled = !ready;
-  const title = ready ? '' : (mode !== 'classical' && webGpuAvailable === false ? "doesn't work without WebGPU, yet" : 'loading the model, then it will step');
+  const noGpu = mode !== 'classical' && !isLlmMode(mode) && webGpuAvailable === false;
+  const title = ready ? '' : (noGpu ? "doesn't work without WebGPU, yet" : 'loading the model, then it will step');
   els.play.title = title;
   els.step.title = title;
   const gs = document.getElementById('grid-status');
   if (gs) {
-    if (!ready && mode !== 'classical' && webGpuAvailable === false) gs.textContent = "doesn't work without WebGPU, yet";
+    if (!ready && noGpu) gs.textContent = "doesn't work without WebGPU, yet";
     else if (!ready) gs.textContent = 'loading the model, Play and Step wake up when it is ready';
     else if (/loading the model/.test(gs.textContent)) gs.textContent = `generation ${generation}`;
   }
@@ -1167,15 +1172,16 @@ function ensureWorker() {
 }
 
 async function loadLlm(spec) {
-  if (webGpuAvailable === false) { updateStepPlayEnabled(); return; }
   ensureWorker();
   if (!loading) {
     setStatus('loading', 'loading model...');
     debugLog('loading model into the worker...');
     lastProgressStage = null;
-    loading = ask('load', { ...spec, width: W, height: H, rulestring: app.rulestring() })
+    loading = ask('load', { ...spec, width: W, height: H, rulestring: app.rulestring(), backend: LEAN_BACKEND })
       .then((info) => {
         llmReady = true;
+        llmBackendLabel = info.backendLabel || '';
+        debugLog(`language model backend: ${info.backend}`);
         updateStepPlayEnabled();
         setStatus('ready', 'Ready');
         debugLog('model loaded');
@@ -1271,7 +1277,7 @@ async function ensureBaseModel() {
   if (engineAdapterState === 'base') return;
   ensureWorker();
   setStatus('loading', 'loading base model (no adapter)...');
-  const info = await ask('load', { ggufUrl: LLM_MODEL.ggufUrl, tokenizerUrl: LLM_MODEL.tokenizerUrl, width: W, height: H, rulestring: app.rulestring() });
+  const info = await ask('load', { ggufUrl: LLM_MODEL.ggufUrl, tokenizerUrl: LLM_MODEL.tokenizerUrl, width: W, height: H, rulestring: app.rulestring(), backend: LEAN_BACKEND });
   cellTokensCount = info.cellTokens ?? cellTokensCount;
   engineAdapterState = 'base';
   setStatus('ready', 'Ready');

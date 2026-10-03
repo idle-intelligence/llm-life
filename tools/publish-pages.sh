@@ -32,29 +32,24 @@ echo "==> Building crates/life (classical engine)"
 wasm-pack build crates/life --target web --out-dir ../../web/pkg --features web
 echo "==> Building crates/llm-life (BERT/vector-space engine, Burn)"
 wasm-pack build crates/llm-life --target web --out-dir ../../web/pkg-llm --no-default-features --features web
-echo "==> Building crates/llm-life-lean (LLM engine, lean)"
-if [ -n "${LEAN_PATH:-}" ]; then
-    # wasm-pack runs its own `cargo metadata`, which `-- --config` does not
-    # reach: the patch goes in a temporary .cargo/config.toml instead.
-    if [ -e .cargo/config.toml ]; then
-        echo "error: .cargo/config.toml exists; refusing to overwrite it" >&2
-        exit 1
-    fi
-    mkdir -p .cargo
-    printf '[patch."https://github.com/idle-intelligence/llm-web"]\nlean = { path = "%s" }\n' "$LEAN_PATH" > .cargo/config.toml
-    trap 'rm -f "$REPO_ROOT/.cargo/config.toml"; rmdir "$REPO_ROOT/.cargo" 2>/dev/null || true; cleanup' EXIT
-fi
-wasm-pack build crates/llm-life-lean --target web --out-dir ../../web/pkg-lean --no-default-features --features web
+echo "==> Building crates/llm-life-lean (LLM engine, lean: pkg-lean and the threaded pkg-lean-mt)"
+# Honours LEAN_PATH the same way (temporary .cargo/config.toml patch).
+tools/build-lean.sh
 
 LIFE_SRC="$REPO_ROOT/web/pkg"
 LLM_SRC="$REPO_ROOT/web/pkg-llm"
 LEAN_SRC="$REPO_ROOT/web/pkg-lean"
+LEAN_MT_SRC="$REPO_ROOT/web/pkg-lean-mt"
 if [ ! -f "$LIFE_SRC/life.js" ] || [ ! -f "$LIFE_SRC/life_bg.wasm" ]; then
     echo "error: expected build output not found in $LIFE_SRC" >&2
     exit 1
 fi
 if [ ! -f "$LLM_SRC/llm_life.js" ] || [ ! -f "$LLM_SRC/llm_life_bg.wasm" ]; then
     echo "error: expected build output not found in $LLM_SRC" >&2
+    exit 1
+fi
+if [ ! -f "$LEAN_MT_SRC/llm_life_lean.js" ] || [ ! -f "$LEAN_MT_SRC/llm_life_lean_bg.wasm" ]; then
+    echo "error: expected build output not found in $LEAN_MT_SRC" >&2
     exit 1
 fi
 if [ ! -f "$LEAN_SRC/llm_life_lean.js" ] || [ ! -f "$LEAN_SRC/llm_life_lean_bg.wasm" ]; then
@@ -78,9 +73,12 @@ if compgen -G "$EXPORT_DIR/web/*.bin" > /dev/null; then
     exit 1
 fi
 
-echo "==> Placing the built wasm at web/pkg, web/pkg-llm and web/pkg-lean"
-rm -rf "$EXPORT_DIR/web/pkg" "$EXPORT_DIR/web/pkg-llm" "$EXPORT_DIR/web/pkg-lean"
+echo "==> Placing the built wasm at web/pkg, web/pkg-llm, web/pkg-lean and web/pkg-lean-mt"
+rm -rf "$EXPORT_DIR/web/pkg" "$EXPORT_DIR/web/pkg-llm" "$EXPORT_DIR/web/pkg-lean" "$EXPORT_DIR/web/pkg-lean-mt"
 mkdir -p "$EXPORT_DIR/web/pkg" "$EXPORT_DIR/web/pkg-llm" "$EXPORT_DIR/web/pkg-lean"
+# The threaded module is only picked on a cross-origin-isolated host;
+# GitHub Pages is not one, so there the CPU backend runs single-threaded.
+cp -R "$LEAN_MT_SRC" "$EXPORT_DIR/web/pkg-lean-mt"
 cp "$LIFE_SRC"/life.js "$LIFE_SRC"/life_bg.wasm "$EXPORT_DIR/web/pkg/"
 [ -f "$LIFE_SRC/package.json" ] && cp "$LIFE_SRC/package.json" "$EXPORT_DIR/web/pkg/"
 cp "$LLM_SRC"/llm_life.js "$LLM_SRC"/llm_life_bg.wasm "$EXPORT_DIR/web/pkg-llm/"
