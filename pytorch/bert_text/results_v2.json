@@ -1,0 +1,203 @@
+{
+  "train_rulestrings": {
+    "conway": "B3/S23",
+    "highlife": "B36/S23",
+    "seeds": "B2/S",
+    "daynight": "B3678/S34678",
+    "life_without_death": "B3/S012345678",
+    "rand_B134578/S246": "B134578/S246",
+    "rand_B13456/S156": "B13456/S156",
+    "rand_B27/S0378": "B27/S0378",
+    "rand_B23567/S05": "B23567/S05",
+    "rand_B026/S12456": "B026/S12456",
+    "rand_B0136/S35678": "B0136/S35678",
+    "rand_B2568/S1245": "B2568/S1245",
+    "rand_B1378/S16": "B1378/S16"
+  },
+  "held_rulestrings": {
+    "2x2": "B36/S125",
+    "maze": "B3/S12345",
+    "rand_B157/S1347": "B157/S1347",
+    "rand_B13458/S18": "B13458/S18",
+    "rand_B3468/S1478": "B3468/S1478",
+    "rand_B134/S0678": "B134/S0678",
+    "rand_B14/S0135": "B14/S0135"
+  },
+  "vocab_size_v2": 22,
+  "n_base_tokens_v2": 19,
+  "full_vocab_size": 151936,
+  "lr": 0.001,
+  "max_steps": 800,
+  "n_unk_tokens_in_held_prompts": 0,
+  "results": [
+    {
+      "d_model": 32,
+      "n_layers": 2,
+      "n_heads": 4,
+      "seed": 1,
+      "steps_run": 700,
+      "params": {
+        "embedding": 2080,
+        "rest": 25474,
+        "total": 27554
+      },
+      "train_per_rule_acc": {
+        "conway": 1.0,
+        "highlife": 1.0,
+        "seeds": 1.0,
+        "daynight": 1.0,
+        "life_without_death": 1.0,
+        "rand_B134578/S246": 1.0,
+        "rand_B13456/S156": 1.0,
+        "rand_B27/S0378": 1.0,
+        "rand_B23567/S05": 1.0,
+        "rand_B026/S12456": 1.0,
+        "rand_B0136/S35678": 1.0,
+        "rand_B2568/S1245": 1.0,
+        "rand_B1378/S16": 1.0
+      },
+      "train_exact_rules": 13,
+      "train_total_rules": 13,
+      "held_per_rule_acc": {
+        "2x2": 0.65625,
+        "maze": 0.462890625,
+        "rand_B157/S1347": 0.5078125,
+        "rand_B13458/S18": 0.677734375,
+        "rand_B3468/S1478": 0.48828125,
+        "rand_B134/S0678": 0.49609375,
+        "rand_B14/S0135": 0.505859375
+      },
+      "held_cells_correct": 0.5421317219734192,
+      "held_exact_rules": 0,
+      "held_total_rules": 7,
+      "n_unk_tokens_in_held_prompts": 0
+    },
+    {
+      "d_model": 32,
+      "n_layers": 2,
+      "n_heads": 4,
+      "seed": 2,
+      "steps_run": 800,
+      "params": {
+        "embedding": 2080,
+        "rest": 25474,
+        "total": 27554
+      },
+      "train_per_rule_acc": {
+        "conway": 0.728515625,
+        "highlife": 0.580078125,
+        "seeds": 0.927734375,
+        "daynight": 0.5078125,
+        "life_without_death": 0.869140625,
+        "rand_B134578/S246": 0.615234375,
+        "rand_B13456/S156": 0.693359375,
+        "rand_B27/S0378": 0.794921875,
+        "rand_B23567/S05": 0.689453125,
+        "rand_B026/S12456": 0.783203125,
+        "rand_B0136/S35678": 0.70703125,
+        "rand_B2568/S1245": 0.82421875,
+        "rand_B1378/S16": 0.81640625
+      },
+      "train_exact_rules": 0,
+      "train_total_rules": 13,
+      "held_per_rule_acc": {
+        "2x2": 0.587890625,
+        "maze": 0.388671875,
+        "rand_B157/S1347": 0.56640625,
+        "rand_B13458/S18": 0.45703125,
+        "rand_B3468/S1478": 0.37109375,
+        "rand_B134/S0678": 0.33203125,
+        "rand_B14/S0135": 0.509765625
+      },
+      "held_cells_correct": 0.458984375,
+      "held_exact_rules": 0,
+      "held_total_rules": 7,
+      "n_unk_tokens_in_held_prompts": 0
+    },
+    {
+      "d_model": 64,
+      "n_layers": 2,
+      "n_heads": 4,
+      "seed": 1,
+      "steps_run": 800,
+      "params": {
+        "embedding": 4160,
+        "rest": 100098,
+        "total": 104258
+      },
+      "train_per_rule_acc": {
+        "conway": 1.0,
+        "highlife": 1.0,
+        "seeds": 1.0,
+        "daynight": 1.0,
+        "life_without_death": 1.0,
+        "rand_B134578/S246": 1.0,
+        "rand_B13456/S156": 1.0,
+        "rand_B27/S0378": 1.0,
+        "rand_B23567/S05": 1.0,
+        "rand_B026/S12456": 1.0,
+        "rand_B0136/S35678": 1.0,
+        "rand_B2568/S1245": 1.0,
+        "rand_B1378/S16": 1.0
+      },
+      "train_exact_rules": 13,
+      "train_total_rules": 13,
+      "held_per_rule_acc": {
+        "2x2": 0.439453125,
+        "maze": 0.48828125,
+        "rand_B157/S1347": 0.615234375,
+        "rand_B13458/S18": 0.7265625,
+        "rand_B3468/S1478": 0.5,
+        "rand_B134/S0678": 0.55078125,
+        "rand_B14/S0135": 0.533203125
+      },
+      "held_cells_correct": 0.5505022406578064,
+      "held_exact_rules": 0,
+      "held_total_rules": 7,
+      "n_unk_tokens_in_held_prompts": 0
+    },
+    {
+      "d_model": 64,
+      "n_layers": 2,
+      "n_heads": 4,
+      "seed": 2,
+      "steps_run": 800,
+      "params": {
+        "embedding": 4160,
+        "rest": 100098,
+        "total": 104258
+      },
+      "train_per_rule_acc": {
+        "conway": 1.0,
+        "highlife": 1.0,
+        "seeds": 1.0,
+        "daynight": 1.0,
+        "life_without_death": 1.0,
+        "rand_B134578/S246": 1.0,
+        "rand_B13456/S156": 1.0,
+        "rand_B27/S0378": 0.99609375,
+        "rand_B23567/S05": 1.0,
+        "rand_B026/S12456": 1.0,
+        "rand_B0136/S35678": 1.0,
+        "rand_B2568/S1245": 1.0,
+        "rand_B1378/S16": 1.0
+      },
+      "train_exact_rules": 12,
+      "train_total_rules": 13,
+      "held_per_rule_acc": {
+        "2x2": 0.55859375,
+        "maze": 0.48046875,
+        "rand_B157/S1347": 0.65234375,
+        "rand_B13458/S18": 0.548828125,
+        "rand_B3468/S1478": 0.458984375,
+        "rand_B134/S0678": 0.474609375,
+        "rand_B14/S0135": 0.462890625
+      },
+      "held_cells_correct": 0.51953125,
+      "held_exact_rules": 0,
+      "held_total_rules": 7,
+      "n_unk_tokens_in_held_prompts": 0
+    }
+  ],
+  "wall_clock_s": 5541.321184873581
+}
