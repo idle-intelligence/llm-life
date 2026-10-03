@@ -78,6 +78,14 @@ impl Seek for JsChunksReader {
     }
 }
 
+fn ensure_index(index: usize, n: usize) -> Result<(), JsError> {
+    if index < n {
+        Ok(())
+    } else {
+        Err(JsError::new("cell index past the end of the grid"))
+    }
+}
+
 #[wasm_bindgen]
 pub struct LifeEngine {
     width: usize,
@@ -163,6 +171,30 @@ impl LifeEngine {
     #[wasm_bindgen(js_name = stepCellA)]
     pub async fn step_cell_a(&mut self, cells: Vec<u8>, index: usize) -> Result<f32, JsError> {
         self.inner()?.step_cell_a(cells, index).await.map_err(js_err)
+    }
+
+    /// One cell, one forward against the resident prefix, for the
+    /// cell-speed page: `[dead logit, alive logit, case index, prompt tokens]`.
+    #[wasm_bindgen(js_name = logitsCellA)]
+    pub async fn logits_cell_a(&mut self, cells: Vec<u8>, index: usize) -> Result<Vec<f32>, JsError> {
+        let inner = self.inner()?;
+        let grid = inner.grid(cells).map_err(js_err)?;
+        ensure_index(index, grid.cells().len())?;
+        let k = crate::case_index(&grid, index);
+        let [d, a] = inner.logits_cases_a(&[k]).await.map_err(js_err)?[0];
+        Ok(vec![d, a, k as f32, inner.prompt_ids(k).len() as f32])
+    }
+
+    /// The same cell with no prefix reuse (`LifeLean::logits_case_a_full`):
+    /// `[dead logit, alive logit, case index, tokens forwarded]`.
+    #[wasm_bindgen(js_name = logitsCellAFull)]
+    pub async fn logits_cell_a_full(&mut self, cells: Vec<u8>, index: usize) -> Result<Vec<f32>, JsError> {
+        let inner = self.inner()?;
+        let grid = inner.grid(cells).map_err(js_err)?;
+        ensure_index(index, grid.cells().len())?;
+        let k = crate::case_index(&grid, index);
+        let [d, a] = inner.logits_case_a_full(k).await.map_err(js_err)?;
+        Ok(vec![d, a, k as f32, (inner.prefix_tokens_a() + inner.prompt_ids(k).len()) as f32])
     }
 
     #[wasm_bindgen(js_name = chunkCount)]

@@ -106,6 +106,7 @@ fn encode(tokenizer: &Tokenizer, text: &str) -> Result<Vec<u32>> {
 enum Bound {
     A(u64),
     B(u64),
+    Full(u64),
 }
 
 pub struct LifeLean {
@@ -138,6 +139,10 @@ pub struct LifeLean {
     /// Whole grid: the prefix and every cell token in one forward, written
     /// from position 0 each generation. Grown when the grid grows.
     cache_b: Option<(KvCache, u64)>,
+    /// Per cell without prefix reuse (`logits_case_a_full`): prefix and cell
+    /// prompt forwarded together from position 0 into this cache, so the
+    /// resident prefix in `cache_a` is never overwritten.
+    cache_full: Option<(KvCache, u64)>,
     next_id: u64,
     bound: Option<Bound>,
 }
@@ -199,6 +204,7 @@ impl LifeLean {
             cache_a,
             cache_a_id: 0,
             cache_b: None,
+            cache_full: None,
             next_id: 1,
             bound: None,
         };
@@ -277,12 +283,40 @@ impl LifeLean {
         Ok(chunk.answer_rows().into_iter().map(|r| [logits[r * 2], logits[r * 2 + 1]]).collect())
     }
 
+    /// One per-cell case with no prefix reuse: the resident prefix and case
+    /// `k`'s prompt in one plain causal forward from position 0, as a caller
+    /// that never kept a prefix would run it. Same answer position and head
+    /// as `logits_cases_a`; used to measure what reusing the prefix saves.
+    pub async fn logits_case_a_full(&mut self, k: usize) -> Result<[f32; 2]> {
+        let mut tokens = self.prefix_a.clone();
+        tokens.extend_from_slice(&self.prompts[k]);
+        let t = tokens.len();
+        ensure!(t < MAX_POS, "prompt too long for the RoPE table");
+        let id = match &self.cache_full {
+            Some((c, id)) if c.max_ctx as usize >= t => *id,
+            _ => {
+                let id = self.next_id;
+                self.next_id += 1;
+                let max_ctx = (self.prefix_a.len() + self.cell_tokens) as u32;
+                self.cache_full = Some((KvCache::new(&self.engine, &self.model.config, max_ctx), id));
+                id
+            }
+        };
+        self.bind(Bound::Full(id));
+        let cache = &mut self.cache_full.as_mut().unwrap().0;
+        cache.kv_len = 0;
+        let hidden = forward_chunk_spec(&self.engine, &self.model, cache, &tokens, &self.cos, &self.sin, &ForwardSpec::default()).await;
+        let logits = self.model.embed_head_sliced(&self.engine, &hidden, t as u32, &[self.dead, self.alive]).await;
+        let r = t - 1;
+        Ok([logits[r * 2], logits[r * 2 + 1]])
+    }
+
     /// p(alive) for a list of per-cell cases (see `logits_cases_a`).
     pub async fn step_cases_a(&mut self, cases: &[usize]) -> Result<Vec<f32>> {
         Ok(self.logits_cases_a(cases).await?.into_iter().map(p_alive).collect())
     }
 
-    fn grid(&self, cells: Vec<u8>) -> Result<Grid> {
+    pub fn grid(&self, cells: Vec<u8>) -> Result<Grid> {
         ensure!(cells.len() == self.width * self.height, "cells length does not match the grid");
         Ok(Grid::from_cells(self.width, self.height, cells))
     }

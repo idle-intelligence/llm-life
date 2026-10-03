@@ -114,6 +114,7 @@ fn per_cell(name: &str) {
     }
     let sampled: Vec<usize> = (0..512).step_by(8).collect();
     let per_call: Vec<[f32; 2]> = sampled.iter().map(|&k| pollster::block_on(life.logits_cases_a(&[k])).unwrap()[0]).collect();
+    let full: Vec<[f32; 2]> = sampled.iter().map(|&k| pollster::block_on(life.logits_case_a_full(k)).unwrap()).collect();
     let want_sampled: Vec<[f32; 2]> = sampled.iter().map(|&k| cfg.logits[k]).collect();
 
     let correct = batched.iter().enumerate().filter(|(k, l)| (l[1] > l[0]) == truth(*k)).count();
@@ -121,6 +122,7 @@ fn per_cell(name: &str) {
     for (mode, got, want, ids) in [
         ("64 cells per forward", &batched, &cfg.logits, &cases),
         ("one cell per forward", &per_call, &want_sampled, &sampled),
+        ("one cell, no reuse", &full, &want_sampled, &sampled),
     ] {
         let (diffs, max) = compare(got, want);
         println!(

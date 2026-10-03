@@ -24,9 +24,10 @@ web = [
 
 [dependencies]
 life = { path = "../life" }
-# The engine: crates/lean in idle-intelligence/llm-web, branch lean-lora
-# (55ac755: embedding-row sliced head, pool reset on adapter swap, K/V
-# scatter kernel). That branch is not published yet, so builds patch this
+# The engine: crates/lean in idle-intelligence/llm-web, branch lean-next
+# (b63ff51: lean-lora's embedding-row sliced head, pool reset on adapter
+# swap and K/V scatter kernel, plus the lean-mobile kernels). That branch is
+# not published yet, so builds patch this
 # source to a local llm-web checkout (docs/runs/2026-10-02-lean-migration.md,
 # "Build"); pin `rev` here once it is.
 lean = { git = "https://github.com/idle-intelligence/llm-web", default-features = false }
