@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>llm-life cell speed - idle intelligence</title>
+<link rel="icon" href="../favicon.ico">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+    :root {
+        --bg: #fdfdfd;
+        --text: #1a1a1a;
+        --muted: #555;
+        --faint: #999;
+        --border: #ddd;
+        --green: #2d7d46;
+        --yellow: #b58900;
+        --red: #c0392b;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 48px 24px 96px;
+        color: var(--text);
+        background: var(--bg);
+        line-height: 1.5;
+        font-size: 15px;
+    }
+    a { color: var(--text); }
+    a:hover { color: var(--muted); }
+
+    header { margin-bottom: 48px; }
+    .org {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        color: var(--muted);
+        letter-spacing: 0.02em;
+        margin-bottom: 2px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .org img {
+        width: 16px;
+        height: 16px;
+        border-radius: 2px;
+    }
+    h1 {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 24px;
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+    .tagline {
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.6;
+    }
+    .tagline a { text-decoration: underline; color: var(--muted); }
+    .tagline a:hover { color: var(--text); }
+    .repo {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        margin-top: 4px;
+    }
+    .repo a { color: var(--faint); text-decoration: none; }
+    .repo a:hover { color: var(--muted); }
+
+    section {
+        border-top: 1px solid var(--border);
+        padding: 24px 0;
+    }
+    section h2 {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        color: var(--faint);
+        margin-bottom: 12px;
+    }
+    section h2 .sub { font-weight: 400; }
+
+    .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+    }
+    .status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--faint);
+        flex-shrink: 0;
+    }
+    .status-dot.loading { background: var(--yellow); }
+    .status-dot.ready { background: var(--green); }
+    .status-dot.error { background: var(--red); }
+    .status-dot.generating {
+        background: var(--text);
+        animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+    }
+
+    .controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    button {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        font-weight: 500;
+        padding: 8px 16px;
+        cursor: pointer;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        border-radius: 0;
+        transition: border-color 0.15s;
+    }
+    button:hover:not(:disabled) { border-color: var(--text); }
+    button:disabled { opacity: 0.3; cursor: not-allowed; }
+    button.primary {
+        background: var(--text);
+        color: var(--bg);
+        border-color: var(--text);
+    }
+    button.primary:hover:not(:disabled) {
+        background: var(--muted);
+        border-color: var(--muted);
+    }
+    .info {
+        font-size: 13px;
+        color: var(--faint);
+        margin-top: 12px;
+    }
+
+    .grids {
+        display: flex;
+        gap: 16px;
+    }
+    .panel { text-align: center; }
+    .panel canvas {
+        border: 1px solid var(--border);
+        image-rendering: pixelated;
+        width: 176px;
+        height: 176px;
+        display: block;
+        background: #fff;
+    }
+    .panel .caption {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 11px;
+        color: var(--faint);
+        margin-top: 6px;
+    }
+
+    footer {
+        border-top: 1px solid var(--border);
+        padding-top: 24px;
+        margin-top: 24px;
+    }
+    footer a {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        color: var(--faint);
+        text-decoration: none;
+    }
+    footer a:hover { color: var(--muted); }
+    footer .credit {
+        font-size: 13px;
+        color: var(--faint);
+        line-height: 1.6;
+        margin-top: 16px;
+    }
+    footer .credit a { text-decoration: underline; color: var(--faint); }
+    footer .credit a:hover { color: var(--muted); }
+
+    /* ---- copied from compare/index.html: the ladder table styles. ---- */
+    /* The table breaks out of the text column like the worlds on the demo
+       page: as wide as the viewport allows (up to 1080 px), scrolling inside
+       itself only on phones. */
+    .ladder-wrap {
+        --wrap-w: min(100vw - 32px, 1080px);
+        width: var(--wrap-w);
+        margin-left: calc(50% - var(--wrap-w) / 2);
+        overflow-x: auto;
+    }
+    .ladder-wrap table { width: max-content; max-width: 100%; margin: 0 auto; }
+    .ladder-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 12px;
+    }
+    .ladder-table th, .ladder-table td {
+        border: 1px solid var(--border);
+        padding: 4px 8px;
+        text-align: left;
+        white-space: nowrap;
+    }
+    .panel canvas.board { width: 256px; height: 256px; }
+    .thinking {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 12px;
+        margin-top: 12px;
+        white-space: pre-wrap;
+        color: var(--muted);
+    }
+    pre.json {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 11px;
+        color: var(--faint);
+        white-space: pre-wrap;
+        word-break: break-all;
+        margin-top: 12px;
+    }
+</style>
+</head>
+<body>
+<header>
+    <p class="org"><img src="../apple-touch-icon.png" alt="II">idle intelligence</p>
+    <h1>llm-life cell speed</h1>
+    <p class="tagline">How fast a language model plays Game of Life one cell at a time in this browser: Qwen2.5-0.5B with the per-cell adapter, one forward per cell, on a fixed random 16&times;16 board.</p>
+    <p class="repo">
+        <a href="../">llm-life demo</a> · <a href="../compare/">compare</a>
+    </p>
+</header>
+
+<section>
+    <h2>status</h2>
+    <div class="status">
+        <span class="status-dot loading" id="statusDot"></span>
+        <span id="statusText">booting...</span>
+    </div>
+</section>
+
+<section>
+    <h2>board <span class="sub">· current cell</span></h2>
+    <div class="grids">
+        <div class="panel"><canvas class="board" id="board" width="256" height="256"></canvas><div class="caption" id="caption">16&times;16</div></div>
+    </div>
+    <div class="thinking" id="thinking"></div>
+</section>
+
+<section>
+    <h2>results</h2>
+    <div class="ladder-wrap"><table class="ladder-table" id="results"><tbody></tbody></table></div>
+</section>
+
+<section>
+    <h2>per-cell output <span class="sub">· first round, prefix reused</span></h2>
+    <div class="ladder-wrap"><table class="ladder-table" id="examples"><thead><tr><th>cell</th><th>prompt</th><th>logit 0</th><th>logit 1</th><th>p(alive)</th><th>answer</th><th>rule</th><th>ms</th></tr></thead><tbody></tbody></table></div>
+    <pre class="json" id="result-json"></pre>
+</section>
+
+<script type="module">
+import { MODEL_URLS } from '../models.js';
+
+const BUILD = '2026-10-03';
+const W = 16, H = 16;
+const params = new URLSearchParams(location.search);
+const NCELLS = Math.min(W * H, Number(params.get('cells') || 64));
+const ROUNDS = Number(params.get('rounds') || 3);
+
+const els = {
+  statusDot: document.getElementById('statusDot'),
+  statusText: document.getElementById('statusText'),
+  board: document.getElementById('board'),
+  caption: document.getElementById('caption'),
+  thinking: document.getElementById('thinking'),
+  results: document.querySelector('#results tbody'),
+  examples: document.querySelector('#examples tbody'),
+  json: document.getElementById('result-json'),
+};
+function setStatus(state, text) {
+  els.statusDot.className = 'status-dot ' + state;
+  els.statusText.textContent = text;
+}
+
+// Fixed random board: mulberry32, seed 20261003, 35% alive.
+function mulberry32(a) {
+  return () => {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const rand = mulberry32(20261003);
+const cells = Array.from({ length: W * H }, () => (rand() < 0.35 ? 1 : 0));
+
+// Same neighbour order and torus as crates/life Grid::neighbor_indices.
+function neighbors(i) {
+  const x = i % W, y = (i / W) | 0;
+  const xm = (x + W - 1) % W, xp = (x + 1) % W, ym = (y + H - 1) % H, yp = (y + 1) % H;
+  return [ym * W + xm, ym * W + x, ym * W + xp, y * W + xm, y * W + xp, yp * W + xm, yp * W + x, yp * W + xp];
+}
+function prompt(i) {
+  return `Neighbors: ${neighbors(i).map((j) => cells[j]).join(' ')} / Self: ${cells[i]} / Next: `;
+}
+function caseIndex(i) {
+  return neighbors(i).reduce((k, j, b) => k | (cells[j] << b), 0) | (cells[i] << 8);
+}
+function rule(i) {
+  const n = neighbors(i).reduce((s, j) => s + cells[j], 0);
+  return cells[i] ? (n === 2 || n === 3 ? 1 : 0) : (n === 3 ? 1 : 0);
+}
+
+const ctx = els.board.getContext('2d');
+const S = els.board.width / W;
+const answers = new Map();
+function draw(current) {
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, els.board.width, els.board.height);
+  for (let i = 0; i < W * H; i++) {
+    const x = (i % W) * S, y = ((i / W) | 0) * S;
+    if (cells[i]) { ctx.fillStyle = '#1a1a1a'; ctx.fillRect(x, y, S, S); }
+    if (answers.has(i)) {
+      ctx.fillStyle = answers.get(i) ? 'rgba(45,125,70,0.55)' : 'rgba(192,57,43,0.18)';
+      ctx.fillRect(x + S / 4, y + S / 4, S / 2, S / 2);
+    }
+  }
+  if (current !== undefined) {
+    ctx.strokeStyle = '#b58900';
+    ctx.lineWidth = 2;
+    ctx.strokeRect((current % W) * S + 1, ((current / W) | 0) * S + 1, S - 2, S - 2);
+  }
+}
+draw();
+
+const worker = new Worker(`./worker.js?v=${BUILD}`, { type: 'module' });
+let nextId = 1;
+const waiting = new Map();
+const samples = { reuse: [], full: [] };
+const firstRound = [];
+const tokens = { reuse: 0, full: 0 };
+const wrong = { reuse: 0, full: 0 };
+let done = 0;
+const total = NCELLS * ROUNDS * 2;
+worker.onmessage = (e) => {
+  const m = e.data;
+  if (m.type === 'progress') { setStatus('loading', `downloading the model... ${Math.round(m.fraction * 100)}%`); return; }
+  if (m.type === 'cell') {
+    done++;
+    samples[m.variant].push(m.ms);
+    tokens[m.variant] = m.tokens;
+    const answer = m.alive > m.dead ? 1 : 0;
+    if (answer !== rule(m.index)) wrong[m.variant]++;
+    if (m.kase !== caseIndex(m.index)) console.error(`case index mismatch at cell ${m.index}`);
+    const p = 1 / (1 + Math.exp(m.dead - m.alive));
+    if (m.round === 0 && m.variant === 'reuse') firstRound.push({ index: m.index, dead: m.dead, alive: m.alive, p, answer, rule: rule(m.index), ms: m.ms });
+    answers.set(m.index, answer);
+    draw(m.index);
+    els.thinking.textContent = `cell ${m.index} (${m.index % W}, ${(m.index / W) | 0})\n${prompt(m.index)}${answer}\np(alive) ${p.toFixed(4)}   logits 0: ${m.dead.toFixed(3)}  1: ${m.alive.toFixed(3)}   ${m.ms.toFixed(1)} ms`;
+    setStatus('generating', `${m.variant === 'reuse' ? 'prefix reused' : 'no reuse'}, round ${m.round + 1}/${ROUNDS}, cell ${done}/${total}`);
+    return;
+  }
+  const w = waiting.get(m.id);
+  waiting.delete(m.id);
+  if (m.ok) w.resolve(m.result); else w.reject(new Error(m.result));
+};
+function call(type, payload) {
+  return new Promise((resolve, reject) => {
+    const id = nextId++;
+    waiting.set(id, { resolve, reject });
+    worker.postMessage({ id, type, payload });
+  });
+}
+
+function quantile(sorted, q) {
+  const pos = (sorted.length - 1) * q, lo = Math.floor(pos), hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+function stats(xs) {
+  const s = [...xs].sort((a, b) => a - b);
+  return { n: s.length, median: quantile(s, 0.5), p10: quantile(s, 0.1), p90: quantile(s, 0.9), min: s[0], max: s[s.length - 1] };
+}
+const f1 = (x) => x.toFixed(1);
+function row(label, value) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<th>${label}</th><td>${value}</td>`;
+  els.results.appendChild(tr);
+}
+
+try {
+  if (!navigator.gpu) throw new Error('WebGPU is not available in this browser');
+  const adapter = await navigator.gpu.requestAdapter();
+  const info = adapter ? adapter.info || {} : {};
+  setStatus('loading', 'loading the model and the adapter...');
+  // models.js paths are relative to web/, the worker's to web/cellspeed/.
+  const abs = (u) => new URL(u, new URL('../', location.href)).href;
+  const load = await call('load', { ggufUrl: abs(MODEL_URLS.gguf), tokenizerUrl: abs(MODEL_URLS.tokenizer), adapterUrl: abs(MODEL_URLS.loraANorules), width: W, height: H });
+  const order = Array.from({ length: NCELLS }, (_, i) => i);
+  const t0 = performance.now();
+  const { chunkMs } = await call('run', { cells, order, rounds: ROUNDS });
+  const runMs = performance.now() - t0;
+  const reuse = stats(samples.reuse), full = stats(samples.full);
+  const proj = (ms) => [8, 16, 32].map((n) => `${n}x${n}: ${(ms * n * n / 1000).toFixed(1)} s`).join(', ');
+  const result = {
+    build: BUILD,
+    adapter: `${info.vendor || '?'} ${info.architecture || ''} ${info.description || ''}`.trim(),
+    board: { width: W, height: H, alive: cells.reduce((a, b) => a + b, 0), seed: 20261003 },
+    cellsRun: NCELLS, rounds: ROUNDS,
+    load,
+    prefixTokens: load.prefixTokens,
+    tokensPerCall: tokens,
+    reuse, full,
+    wrong, perVariantCalls: NCELLS * ROUNDS,
+    projectionSeconds: Object.fromEntries([8, 16, 32].map((n) => [`${n}x${n}`, { reuse: reuse.median * n * n / 1000, full: full.median * n * n / 1000 }])),
+    runMs,
+    chunk64Ms: chunkMs,
+    examples: firstRound.slice(0, 16),
+  };
+  row('GPU adapter', result.adapter);
+  row('model + adapter load', `${f1(load.totalMs)} ms (device ${f1(load.deviceMs)}, fetch ${f1(load.fetchMs)}${load.ggufCached ? ' from cache' : ''}, model ${f1(load.modelMs)}, adapter ${f1(load.adapterMs)})`);
+  row('prompt', `prefix ${load.prefixTokens} tokens (resident), cell prompt ${tokens.reuse} tokens`);
+  for (const [name, s, v] of [['per cell, prefix reused', reuse, 'reuse'], ['per cell, no reuse', full, 'full']]) {
+    row(name, `median ${f1(s.median)} ms, p10 ${f1(s.p10)}, p90 ${f1(s.p90)}, min ${f1(s.min)}, max ${f1(s.max)} (${s.n} calls, ${tokens[v]} tokens forwarded each)`);
+  }
+  row('for scale: 64 cells in one forward', `${chunkMs.map(f1).join(', ')} ms (${f1(stats(chunkMs).median / 64)} ms per cell)`);
+  row('correct vs the rule', `prefix reused ${NCELLS * ROUNDS - wrong.reuse}/${NCELLS * ROUNDS}, no reuse ${NCELLS * ROUNDS - wrong.full}/${NCELLS * ROUNDS}`);
+  row('projected s / generation, prefix reused', proj(reuse.median));
+  row('projected s / generation, no reuse', proj(full.median));
+  for (const ex of firstRound) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${ex.index}</td><td>${prompt(ex.index)}</td><td>${ex.dead.toFixed(3)}</td><td>${ex.alive.toFixed(3)}</td><td>${ex.p.toFixed(4)}</td><td>${ex.answer}</td><td>${ex.rule}</td><td>${f1(ex.ms)}</td>`;
+    els.examples.appendChild(tr);
+  }
+  els.json.textContent = JSON.stringify(result);
+  draw();
+  setStatus('ready', `done: ${NCELLS} cells x ${ROUNDS} rounds, ${f1(reuse.median)} ms per cell with the prefix reused`);
+} catch (err) {
+  console.error(err);
+  setStatus('error', `error: ${err.message}`);
+}
+</script>
+</body>
+</html>
