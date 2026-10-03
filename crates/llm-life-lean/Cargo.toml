@@ -21,6 +21,11 @@ web = [
     "dep:web-sys",
     "dep:console_error_panic_hook",
 ]
+# Threaded CPU backend for the browser: lean's `threads` (rayon over the
+# matmul columns) plus wasm-bindgen-rayon's worker pool (`initThreadPool`).
+# Needs the nightly atomics build (tools/build-lean-mt.sh) and a
+# cross-origin-isolated page (COOP/COEP).
+web-mt = ["web", "lean/threads", "dep:wasm-bindgen-rayon"]
 
 [dependencies]
 life = { path = "../life" }
@@ -47,6 +52,7 @@ tokenizers = { version = "0.22", default-features = false, features = ["fancy-re
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokenizers = { version = "0.22", default-features = false, features = ["unstable_wasm", "fancy-regex"] }
 getrandom = { version = "0.3", default-features = false, features = ["wasm_js"] }
+wasm-bindgen-rayon = { version = "1.3", optional = true }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

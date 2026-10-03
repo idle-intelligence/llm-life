@@ -13,6 +13,10 @@
 //!      answer position, greedy, for the four per-cell configurations and
 //!      the whole-grid grids (base and adapter, 16x16 and 32x32).
 //!
+//! The `cpu_*` tests run the same gates on lean's CPU backend
+//! (`LifeLean::load_cpu`; add `--features lean/threads` for the threaded
+//! build); they need no GPU.
+//!
 //! ```sh
 //! LLM_LIFE_GGUF=.../qwen2.5-0.5b-instruct-q4_0.gguf \
 //! LLM_LIFE_TOKENIZER=.../Qwen2.5-0.5B-Instruct/tokenizer.json \
@@ -57,10 +61,15 @@ fn env(k: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| panic!("set {k} to run this test"))
 }
 
-fn load() -> LifeLean {
-    let gguf = std::fs::File::open(env("LLM_LIFE_GGUF")).expect("open gguf");
+fn load(cpu: bool) -> LifeLean {
+    let gguf = BufReader::new(std::fs::File::open(env("LLM_LIFE_GGUF")).expect("open gguf"));
     let tok = std::fs::read(env("LLM_LIFE_TOKENIZER")).expect("read tokenizer.json");
-    pollster::block_on(LifeLean::load(Engine::new().expect("wgpu device"), BufReader::new(gguf), &tok, "B3/S23", 16, 16)).expect("load")
+    let life = if cpu {
+        pollster::block_on(LifeLean::load_cpu(gguf, &tok, "B3/S23", 16, 16))
+    } else {
+        pollster::block_on(LifeLean::load(Engine::new().expect("wgpu device"), gguf, &tok, "B3/S23", 16, 16))
+    };
+    life.expect("load")
 }
 
 fn adapter(name: &str) -> Vec<u8> {
@@ -92,10 +101,10 @@ fn fixture() -> Fixture {
 }
 
 /// One per-cell configuration of the fixture, gates (i) and (ii).
-fn per_cell(name: &str) {
+fn per_cell(name: &str, cpu: bool) {
     let fixture = fixture();
     let cfg = fixture.per_cell.iter().find(|c| c.name == name).expect("configuration in fixture");
-    let mut life = load();
+    let mut life = load(cpu);
     match (cfg.name.as_str(), cfg.adapter.as_deref()) {
         ("base-fewshot", None) => {}
         ("base-rules", None) => pollster::block_on(life.set_prefix_a(&variant_a::rules_prefix(&Rule::life()))).unwrap(),
@@ -126,7 +135,8 @@ fn per_cell(name: &str) {
     ] {
         let (diffs, max) = compare(got, want);
         println!(
-            "[gate] per-cell {:<14} {:<21} {:>3} cases, answers vs HF+PEFT: {} differ, max |logit diff| {max:.3e}",
+            "[gate] {} per-cell {:<14} {:<21} {:>3} cases, answers vs HF+PEFT: {} differ, max |logit diff| {max:.3e}",
+            life.backend_name(),
             cfg.name,
             mode,
             got.len(),
@@ -137,7 +147,7 @@ fn per_cell(name: &str) {
         }
         failed |= !diffs.is_empty();
     }
-    println!("[gate] per-cell {:<14} {correct}/512 correct", cfg.name);
+    println!("[gate] {} per-cell {:<14} {correct}/512 correct", life.backend_name(), cfg.name);
     match cfg.name.as_str() {
         "base-rules" => assert_eq!(correct, 215, "gate (i): base model, rules prefix"),
         "a-norules-300" => assert_eq!(correct, 512, "gate (i): a-norules-300 adapter"),
@@ -149,32 +159,54 @@ fn per_cell(name: &str) {
 #[test]
 #[ignore = "needs the GGUF, tokenizer and adapters on disk"]
 fn per_cell_base_fewshot() {
-    per_cell("base-fewshot");
+    per_cell("base-fewshot", false);
 }
 
 #[test]
 #[ignore = "needs the GGUF, tokenizer and adapters on disk"]
 fn per_cell_base_rules() {
-    per_cell("base-rules");
+    per_cell("base-rules", false);
 }
 
 #[test]
 #[ignore = "needs the GGUF, tokenizer and adapters on disk"]
 fn per_cell_a_norules() {
-    per_cell("a-norules-300");
+    per_cell("a-norules-300", false);
 }
 
 #[test]
 #[ignore = "needs the GGUF, tokenizer and adapters on disk"]
 fn per_cell_a_rules() {
-    per_cell("a-rules-300");
+    per_cell("a-rules-300", false);
+}
+
+#[test]
+#[ignore = "needs the GGUF, tokenizer and adapters on disk"]
+fn cpu_per_cell_a_norules() {
+    per_cell("a-norules-300", true);
+}
+
+#[test]
+#[ignore = "needs the GGUF, tokenizer and adapters on disk"]
+fn cpu_per_cell_base_rules() {
+    per_cell("base-rules", true);
 }
 
 #[test]
 #[ignore = "needs the GGUF, tokenizer and adapters on disk"]
 fn whole_grid() {
+    whole_grid_on(false);
+}
+
+#[test]
+#[ignore = "needs the GGUF, tokenizer and adapters on disk"]
+fn cpu_whole_grid() {
+    whole_grid_on(true);
+}
+
+fn whole_grid_on(cpu: bool) {
     let fixture = fixture();
-    let mut life = load();
+    let mut life = load(cpu);
     let mut failures = Vec::new();
     for g in &fixture.whole_grid {
         match g.adapter.as_deref() {
@@ -189,7 +221,8 @@ fn whole_grid() {
         let correct = got.iter().zip(next.cells()).filter(|(l, &t)| (l[1] > l[0]) == (t != 0)).count();
         let (diffs, max) = compare(&got, &g.logits);
         println!(
-            "[gate] whole grid {:<28} {correct}/{} correct, answers vs HF+PEFT: {} differ, max |logit diff| {max:.3e}",
+            "[gate] {} whole grid {:<28} {correct}/{} correct, answers vs HF+PEFT: {} differ, max |logit diff| {max:.3e}",
+            life.backend_name(),
             g.name,
             g.width * g.height,
             diffs.len()

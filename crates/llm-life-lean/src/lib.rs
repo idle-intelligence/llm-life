@@ -9,6 +9,11 @@
 //! `crates/llm-life/src` (they depend on nothing but the `life` crate), so
 //! the two engines can never drift apart on what they ask the model.
 //!
+//! Two backends, picked by the caller: WebGPU (`LifeLean::load`) or the
+//! CPU (`LifeLean::load_cpu`: lean's `CpuModel`, WASM SIMD128 in the
+//! browser, threaded when built with lean's `threads` feature). The prompts,
+//! packing, positions, masks and head are the same on both.
+//!
 //! Head: the `[dead, alive]` logits are read through the token embedding
 //! rows (`GpuModel::embed_head_sliced`), the head the adapters were trained
 //! against, not the GGUF's separately quantized `output.weight`.
@@ -24,6 +29,7 @@ pub mod variant_b;
 pub mod web;
 
 use anyhow::{anyhow, ensure, Context, Result};
+use lean::cpu::{CpuKvCache, CpuModel};
 use lean::engine::Engine;
 use lean::model::{build_rope_tables, forward_chunk_spec, ForwardSpec, GpuModel, KvCache};
 use life::{Grid, Rule};
@@ -31,6 +37,12 @@ use tokenizers::Tokenizer;
 use variant_b::{pack_sparse, PackedSparse, MAX_STENCIL_KEYS};
 
 pub use lean;
+
+/// wasm-bindgen-rayon's pool bootstrap: the page calls `await
+/// initThreadPool(navigator.hardwareConcurrency)` once after `init()`, before
+/// `LifeEngine.createCpu`, in the threaded build only.
+#[cfg(all(feature = "web-mt", target_arch = "wasm32"))]
+pub use wasm_bindgen_rayon::init_thread_pool;
 
 /// Cells per per-cell ("variant A") chunk: the same 64 the Burn engine
 /// packs, so the batched row forwards the same blocks.
@@ -109,12 +121,117 @@ enum Bound {
     Full(u64),
 }
 
-pub struct LifeLean {
+/// The three KV caches: `A` per cell (resident prefix at `[0, P)`, each
+/// chunk written at `[P, P + t)` and rewound by resetting `kv_len` to `P`,
+/// no copy), `B` whole grid (written from position 0 each generation),
+/// `Full` per cell without prefix reuse (prefix and prompt from position 0,
+/// so the resident prefix in `A` is never overwritten).
+#[derive(Clone, Copy)]
+enum Slot {
+    A,
+    B,
+    Full,
+}
+
+/// KV cache layout is lean's on both backends (`[kv_head][position][head_dim]`
+/// per layer, head-major, contiguous, `max_ctx` positions allocated up
+/// front).
+struct Gpu {
     engine: Engine,
     model: GpuModel,
-    tokenizer: Tokenizer,
     cos: wgpu::Buffer,
     sin: wgpu::Buffer,
+    caches: [Option<(KvCache, u64)>; 3],
+    next_id: u64,
+    bound: Option<Bound>,
+}
+
+struct Cpu {
+    model: CpuModel,
+    caches: [Option<CpuKvCache>; 3],
+}
+
+/// Where the forwards run: WebGPU (`GpuModel`) or the CPU (`CpuModel`,
+/// WASM SIMD128, threaded when built with lean's `threads`). Same packing,
+/// positions, masks and head on both.
+enum Backend {
+    Gpu(Box<Gpu>),
+    Cpu(Box<Cpu>),
+}
+
+impl Backend {
+    fn config(&self) -> &lean::config::Qwen2Config {
+        match self {
+            Backend::Gpu(g) => &g.model.config,
+            Backend::Cpu(c) => &c.model.config,
+        }
+    }
+
+    /// Forward `tokens` into cache `slot` starting at slot position
+    /// `kv_len`, and return the `[dead, alive]` logits at every row
+    /// (`[t, 2]`). The cache is (re)allocated with `max_ctx` positions when
+    /// `fresh`, absent, or smaller than `kv_len + t`.
+    #[allow(clippy::too_many_arguments)]
+    async fn forward(&mut self, slot: Slot, fresh: bool, max_ctx: usize, kv_len: usize, tokens: &[u32], spec: &ForwardSpec, head: [u32; 2]) -> Vec<f32> {
+        let t = tokens.len();
+        let i = slot as usize;
+        match self {
+            Backend::Gpu(g) => {
+                if fresh || g.caches[i].as_ref().is_none_or(|(c, _)| (c.max_ctx as usize) < kv_len + t) {
+                    g.caches[i] = Some((KvCache::new(&g.engine, &g.model.config, max_ctx.max(kv_len + t) as u32), g.next_id));
+                    g.next_id += 1;
+                }
+                let (cache, id) = g.caches[i].as_mut().unwrap();
+                let b = match slot {
+                    Slot::A => Bound::A(*id),
+                    Slot::B => Bound::B(*id),
+                    Slot::Full => Bound::Full(*id),
+                };
+                if g.bound != Some(b) {
+                    g.model.pool.reset();
+                    g.bound = Some(b);
+                }
+                cache.kv_len = kv_len as u32;
+                let hidden = forward_chunk_spec(&g.engine, &g.model, cache, tokens, &g.cos, &g.sin, spec).await;
+                g.model.embed_head_sliced(&g.engine, &hidden, t as u32, &head).await
+            }
+            Backend::Cpu(c) => {
+                if fresh || c.caches[i].as_ref().is_none_or(|cache| cache.max_ctx() < kv_len + t) {
+                    c.caches[i] = Some(CpuKvCache::new(&c.model.config, max_ctx.max(kv_len + t)));
+                }
+                let cache = c.caches[i].as_mut().unwrap();
+                cache.kv_len = kv_len;
+                let hidden = lean::cpu::forward_chunk_spec(&c.model, cache, tokens, spec);
+                c.model.embed_head_sliced(&hidden, t, &head)
+            }
+        }
+    }
+
+    fn apply_lora(&mut self, bytes: &[u8]) -> Result<()> {
+        match self {
+            Backend::Gpu(g) => {
+                g.model.apply_lora(&g.engine, bytes)?;
+                g.bound = None; // apply_lora reset the pool
+            }
+            Backend::Cpu(c) => c.model.apply_lora(bytes)?,
+        }
+        Ok(())
+    }
+
+    fn clear_lora(&mut self) {
+        match self {
+            Backend::Gpu(g) => {
+                g.model.clear_lora();
+                g.bound = None;
+            }
+            Backend::Cpu(c) => c.model.clear_lora(),
+        }
+    }
+}
+
+pub struct LifeLean {
+    backend: Backend,
+    tokenizer: Tokenizer,
     rule: Rule,
     dead: u32,
     alive: u32,
@@ -129,29 +246,13 @@ pub struct LifeLean {
     /// The 512 per-cell prompts, tokenized once (`case_cells` order).
     prompts: Vec<Vec<u32>>,
     cell_tokens: usize,
-    /// KV cache layout is lean's (`[kv_head][position][head_dim]` per layer,
-    /// head-major, contiguous, `max_ctx` positions allocated up front).
-    /// Per cell: positions `[0, P)` hold the resident prefix, prefilled once
-    /// per prefix/adapter; each chunk is written at `[P, P + t)` and the
-    /// cache is rewound by resetting `kv_len` to `P` (no copy).
-    cache_a: KvCache,
-    cache_a_id: u64,
-    /// Whole grid: the prefix and every cell token in one forward, written
-    /// from position 0 each generation. Grown when the grid grows.
-    cache_b: Option<(KvCache, u64)>,
-    /// Per cell without prefix reuse (`logits_case_a_full`): prefix and cell
-    /// prompt forwarded together from position 0 into this cache, so the
-    /// resident prefix in `cache_a` is never overwritten.
-    cache_full: Option<(KvCache, u64)>,
-    next_id: u64,
-    bound: Option<Bound>,
 }
 
 impl LifeLean {
-    /// Parse the GGUF (two-phase: each tensor's bytes are dropped right
-    /// after their GPU upload inside `GpuModel::load_from_reader`), tokenize
-    /// the prefixes and the 512 per-cell prompts, prefill the base model's
-    /// per-cell prefix.
+    /// WebGPU backend. Parse the GGUF (two-phase: each tensor's bytes are
+    /// dropped right after their GPU upload inside
+    /// `GpuModel::load_from_reader`), tokenize the prefixes and the 512
+    /// per-cell prompts, prefill the base model's per-cell prefix.
     pub async fn load<R: std::io::Read + std::io::Seek>(
         engine: Engine,
         gguf: R,
@@ -160,6 +261,22 @@ impl LifeLean {
         width: usize,
         height: usize,
     ) -> Result<Self> {
+        let model = GpuModel::load_from_reader(&engine, gguf, true).context("load gguf")?;
+        let (cos, sin) = build_rope_tables(model.config.head_dim, model.config.rope_theta, MAX_POS);
+        let cos = engine.buf_f32(&cos, "rope_cos");
+        let sin = engine.buf_f32(&sin, "rope_sin");
+        let backend = Backend::Gpu(Box::new(Gpu { engine, model, cos, sin, caches: [None, None, None], next_id: 1, bound: None }));
+        Self::finish_load(backend, tokenizer_json, rulestring, width, height).await
+    }
+
+    /// CPU backend: the same model, held as the GGUF's quantized bytes
+    /// (`CpuModel`), the same prompts, packing and head.
+    pub async fn load_cpu<R: std::io::Read + std::io::Seek>(gguf: R, tokenizer_json: &[u8], rulestring: &str, width: usize, height: usize) -> Result<Self> {
+        let model = CpuModel::load_from_reader(gguf).context("load gguf")?;
+        Self::finish_load(Backend::Cpu(Box::new(Cpu { model, caches: [None, None, None] })), tokenizer_json, rulestring, width, height).await
+    }
+
+    async fn finish_load(backend: Backend, tokenizer_json: &[u8], rulestring: &str, width: usize, height: usize) -> Result<Self> {
         let rule = Rule::parse(rulestring).ok_or_else(|| anyhow!("bad rulestring {rulestring:?}"))?;
         let tokenizer = Tokenizer::from_bytes(tokenizer_json).map_err(|e| anyhow!("tokenizer: {e}"))?;
         let single = |s: &str| -> Result<u32> {
@@ -180,54 +297,29 @@ impl LifeLean {
         }
         let cell_tokens = prompts.iter().map(|p| p.len()).max().unwrap();
 
-        let model = GpuModel::load_from_reader(&engine, gguf, true).context("load gguf")?;
-        let (cos, sin) = build_rope_tables(model.config.head_dim, model.config.rope_theta, MAX_POS);
-        let cos = engine.buf_f32(&cos, "rope_cos");
-        let sin = engine.buf_f32(&sin, "rope_sin");
-        let cache_a = KvCache::new(&engine, &model.config, 1);
-
-        let mut me = LifeLean {
-            engine,
-            model,
-            tokenizer,
-            cos,
-            sin,
-            rule,
-            dead,
-            alive,
-            width,
-            height,
-            prefix_b,
-            prefix_a,
-            prompts,
-            cell_tokens,
-            cache_a,
-            cache_a_id: 0,
-            cache_b: None,
-            cache_full: None,
-            next_id: 1,
-            bound: None,
-        };
+        let mut me = LifeLean { backend, tokenizer, rule, dead, alive, width, height, prefix_b, prefix_a, prompts, cell_tokens };
         me.prefill_a().await;
         Ok(me)
     }
 
-    fn bind(&mut self, b: Bound) {
-        if self.bound != Some(b) {
-            self.model.pool.reset();
-            self.bound = Some(b);
+    /// "webgpu" or "cpu".
+    pub fn backend_name(&self) -> &'static str {
+        match self.backend {
+            Backend::Gpu(_) => "webgpu",
+            Backend::Cpu(_) => "cpu",
         }
+    }
+
+    fn head(&self) -> [u32; 2] {
+        [self.dead, self.alive]
     }
 
     /// Fresh per-cell cache sized for the current prefix plus one chunk,
     /// with the prefix prefilled (plain causal, whatever adapter is applied).
     async fn prefill_a(&mut self) {
         let p = self.prefix_a.len();
-        self.cache_a = KvCache::new(&self.engine, &self.model.config, (p + CHUNK_CELLS * self.cell_tokens) as u32);
-        self.cache_a_id = self.next_id;
-        self.next_id += 1;
-        self.bind(Bound::A(self.cache_a_id));
-        let _ = forward_chunk_spec(&self.engine, &self.model, &mut self.cache_a, &self.prefix_a, &self.cos, &self.sin, &ForwardSpec::default()).await;
+        let head = self.head();
+        let _ = self.backend.forward(Slot::A, true, p + CHUNK_CELLS * self.cell_tokens, 0, &self.prefix_a, &ForwardSpec::default(), head).await;
     }
 
     /// Apply a runtime LoRA adapter (LLMLIFE2, q/k/v/o), replacing any
@@ -237,8 +329,7 @@ impl LifeLean {
     /// that prefix *before* applying the adapter; training (and the HF+PEFT
     /// reference) run the prefix through the adapter too, as here.
     pub async fn load_adapter(&mut self, bytes: &[u8], norules: bool) -> Result<()> {
-        self.model.apply_lora(&self.engine, bytes).context("apply adapter")?;
-        self.bound = None; // apply_lora reset the pool
+        self.backend.apply_lora(bytes).context("apply adapter")?;
         let text = if norules { variant_a::norules_prefix() } else { variant_a::rules_prefix(&self.rule) };
         self.set_prefix_a(&text).await
     }
@@ -246,8 +337,7 @@ impl LifeLean {
     /// Back to the base model (no adapter). The per-cell prefix is left as
     /// is; `set_prefix_a` picks the one to run against.
     pub fn clear_adapter(&mut self) {
-        self.model.clear_lora();
-        self.bound = None;
+        self.backend.clear_lora();
     }
 
     /// Replace the per-cell resident prefix and prefill it.
@@ -275,11 +365,8 @@ impl LifeLean {
         let spec = ForwardSpec::default()
             .with_positions(chunk.positions.clone())
             .with_allowed(&chunk.allowed, t, p + t);
-        self.bind(Bound::A(self.cache_a_id));
-        self.cache_a.kv_len = p as u32;
-        let hidden = forward_chunk_spec(&self.engine, &self.model, &mut self.cache_a, &chunk.tokens, &self.cos, &self.sin, &spec).await;
-        let logits = self.model.embed_head_sliced(&self.engine, &hidden, t as u32, &[self.dead, self.alive]).await;
-        self.cache_a.kv_len = p as u32;
+        let head = self.head();
+        let logits = self.backend.forward(Slot::A, false, p + CHUNK_CELLS * self.cell_tokens, p, &chunk.tokens, &spec, head).await;
         Ok(chunk.answer_rows().into_iter().map(|r| [logits[r * 2], logits[r * 2 + 1]]).collect())
     }
 
@@ -292,21 +379,9 @@ impl LifeLean {
         tokens.extend_from_slice(&self.prompts[k]);
         let t = tokens.len();
         ensure!(t < MAX_POS, "prompt too long for the RoPE table");
-        let id = match &self.cache_full {
-            Some((c, id)) if c.max_ctx as usize >= t => *id,
-            _ => {
-                let id = self.next_id;
-                self.next_id += 1;
-                let max_ctx = (self.prefix_a.len() + self.cell_tokens) as u32;
-                self.cache_full = Some((KvCache::new(&self.engine, &self.model.config, max_ctx), id));
-                id
-            }
-        };
-        self.bind(Bound::Full(id));
-        let cache = &mut self.cache_full.as_mut().unwrap().0;
-        cache.kv_len = 0;
-        let hidden = forward_chunk_spec(&self.engine, &self.model, cache, &tokens, &self.cos, &self.sin, &ForwardSpec::default()).await;
-        let logits = self.model.embed_head_sliced(&self.engine, &hidden, t as u32, &[self.dead, self.alive]).await;
+        let head = self.head();
+        let max_ctx = self.prefix_a.len() + self.cell_tokens;
+        let logits = self.backend.forward(Slot::Full, false, max_ctx, 0, &tokens, &ForwardSpec::default(), head).await;
         let r = t - 1;
         Ok([logits[r * 2], logits[r * 2 + 1]])
     }
@@ -346,23 +421,11 @@ impl LifeLean {
         let packed = pack_sparse(&grid, &self.prefix_b, self.dead, self.alive);
         let t = packed.tokens.len();
         ensure!(self.prefix_b.len() < MAX_POS, "prefix too long for the RoPE table");
-        let id = match &self.cache_b {
-            Some((c, id)) if c.max_ctx as usize >= t => *id,
-            _ => {
-                let id = self.next_id;
-                self.next_id += 1;
-                self.cache_b = Some((KvCache::new(&self.engine, &self.model.config, t as u32), id));
-                id
-            }
-        };
-        self.bind(Bound::B(id));
         let spec = ForwardSpec::default()
             .with_positions(packed.positions.clone())
             .with_allowed_bits(stencil_bits(&packed));
-        let cache = &mut self.cache_b.as_mut().unwrap().0;
-        cache.kv_len = 0;
-        let hidden = forward_chunk_spec(&self.engine, &self.model, cache, &packed.tokens, &self.cos, &self.sin, &spec).await;
-        let logits = self.model.embed_head_sliced(&self.engine, &hidden, t as u32, &[self.dead, self.alive]).await;
+        let head = self.head();
+        let logits = self.backend.forward(Slot::B, false, t, 0, &packed.tokens, &spec, head).await;
         let g = packed.grid_start;
         Ok((0..grid.cells().len()).map(|c| [logits[(g + c) * 2], logits[(g + c) * 2 + 1]]).collect())
     }
@@ -407,6 +470,6 @@ impl LifeLean {
     }
 
     pub fn num_layers(&self) -> usize {
-        self.model.config.num_layers
+        self.backend.config().num_layers
     }
 }

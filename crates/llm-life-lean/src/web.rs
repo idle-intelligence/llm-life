@@ -2,8 +2,9 @@
 //! Burn engine (`crates/llm-life/src/web.rs`), so web/worker.js changes only
 //! where the engine comes from. Two differences: the engine is built with
 //! `await LifeEngine.create(w, h)` (lean requests its own WebGPU device,
-//! which is async), and `loadAdapter` is async (it re-prefills the per-cell
-//! prefix with the adapter applied). All readback is async.
+//! which is async) or `LifeEngine.createCpu(w, h)` (the CPU backend: same
+//! calls, same answers), and `loadAdapter` is async (it re-prefills the
+//! per-cell prefix with the adapter applied). All readback is async.
 
 use std::io::{Read, Seek, SeekFrom};
 
@@ -90,7 +91,10 @@ fn ensure_index(index: usize, n: usize) -> Result<(), JsError> {
 pub struct LifeEngine {
     width: usize,
     height: usize,
+    /// `None` before `load` for the CPU backend (`createCpu`), and after
+    /// `load` for both.
     engine: Option<Engine>,
+    cpu: bool,
     shards: Vec<js_sys::Uint8Array>,
     inner: Option<LifeLean>,
 }
@@ -102,7 +106,21 @@ impl LifeEngine {
     pub async fn create(width: usize, height: usize) -> Result<LifeEngine, JsError> {
         console_error_panic_hook::set_once();
         let engine = Engine::new_async().await.map_err(js_err)?;
-        Ok(LifeEngine { width, height, engine: Some(engine), shards: Vec::new(), inner: None })
+        Ok(LifeEngine { width, height, engine: Some(engine), cpu: false, shards: Vec::new(), inner: None })
+    }
+
+    /// The CPU backend (WASM SIMD128; threaded in the `web-mt` build once
+    /// `initThreadPool` ran): no device to request.
+    #[wasm_bindgen(js_name = createCpu)]
+    pub fn create_cpu(width: usize, height: usize) -> LifeEngine {
+        console_error_panic_hook::set_once();
+        LifeEngine { width, height, engine: None, cpu: true, shards: Vec::new(), inner: None }
+    }
+
+    /// "webgpu" or "cpu".
+    #[wasm_bindgen(js_name = backend)]
+    pub fn backend(&self) -> String {
+        if self.cpu { "cpu" } else { "webgpu" }.to_string()
     }
 
     #[wasm_bindgen(js_name = setGrid)]
@@ -125,14 +143,21 @@ impl LifeEngine {
         if self.shards.is_empty() {
             return Err(JsError::new("no shards appended"));
         }
-        let engine = self.engine.take().ok_or_else(|| JsError::new("already loaded"))?;
+        if self.inner.is_some() {
+            return Err(JsError::new("already loaded"));
+        }
         let reader = JsChunksReader::new(std::mem::take(&mut self.shards));
-        let inner = LifeLean::load(engine, reader, tokenizer_json.as_bytes(), &rulestring, self.width, self.height)
-            .await
-            .map_err(js_err)?;
+        let inner = if self.cpu {
+            LifeLean::load_cpu(reader, tokenizer_json.as_bytes(), &rulestring, self.width, self.height).await
+        } else {
+            let engine = self.engine.take().ok_or_else(|| JsError::new("already loaded"))?;
+            LifeLean::load(engine, reader, tokenizer_json.as_bytes(), &rulestring, self.width, self.height).await
+        }
+        .map_err(js_err)?;
         web_sys::console::log_1(
             &format!(
-                "[llm-life] lean engine loaded: {} layers, whole-grid prefix {} tokens, grid {}x{}",
+                "[llm-life] lean engine loaded ({}): {} layers, whole-grid prefix {} tokens, grid {}x{}",
+                inner.backend_name(),
                 inner.num_layers(),
                 inner.packed_tokens() - self.width * self.height,
                 self.width,
