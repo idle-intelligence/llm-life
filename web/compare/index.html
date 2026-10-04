@@ -277,8 +277,9 @@
     </div>
     <div class="controls" style="margin-top:12px;">
         <button id="run-all" class="primary">run every method</button>
-        <button id="load-llm">load the LLM (about 430 MB, stored locally)</button>
     </div>
+    <p class="info">Running every method downloads all the models locally, including a 430 MB LLM.</p>
+    <p class="info">The LLM is not run on grids larger than 64x64: it is too slow.</p>
 </section>
 
 <section>
@@ -324,7 +325,6 @@
             <tbody id="ladder2-body"></tbody>
         </table>
     </div>
-    <p class="info" id="llm-hint">load the LLM above to measure the LLM rows, or "run every method" will load it.</p>
     <p class="info" id="genNote"></p>
     <div class="thumbs" id="thumbs"></div>
 </section>
@@ -392,10 +392,8 @@ const els = {
   board: document.getElementById('c-board'),
   boardCaption: document.getElementById('board-caption'),
   runAll: document.getElementById('run-all'),
-  loadLlm: document.getElementById('load-llm'),
   ladderBody: document.getElementById('ladder-body'),
   ladder2Body: document.getElementById('ladder2-body'),
-  llmHint: document.getElementById('llm-hint'),
   genNote: document.getElementById('genNote'),
   thumbs: document.getElementById('thumbs'),
 };
@@ -1502,32 +1500,9 @@ const GPU_LIMIT_ERR = "does not fit in this browser's GPU limits";
   try { webGpuAvailable = !!(navigator.gpu && await navigator.gpu.requestAdapter()); }
   catch (e) { webGpuAvailable = false; }
   if (webGpuAvailable === false) {
-    els.loadLlm.disabled = true;
-    els.loadLlm.textContent = NO_WEBGPU;
     setStatus('ready', NO_WEBGPU + ', the two naive rows still run');
   }
 })();
-
-els.loadLlm.onclick = async () => {
-  if (webGpuAvailable === false) return;
-  if (llmReady || llmLoading) return;
-  ensureWorker();
-  els.loadLlm.disabled = true;
-  setStatus('loading', 'loading the LLM...');
-  llmLoading = ask('load', { ...LLM_MODEL, width: boardW, height: boardH, rulestring: app.rulestring() })
-    .then(() => {
-      llmReady = true;
-      els.loadLlm.textContent = 'LLM loaded';
-      els.llmHint.style.display = 'none';
-      setStatus('ready', 'ready');
-    })
-    .catch((e) => {
-      llmLoading = null;
-      els.loadLlm.disabled = false;
-      setStatus('error', 'LLM load failed: ' + e.message);
-    });
-  await llmLoading;
-};
 
 // ---------------------------------------------------------------------------
 // Board and rung run
@@ -1545,12 +1520,6 @@ function setBoardSize(w, h) {
   els.thumbs.innerHTML = '';
   for (const btn of document.querySelectorAll('.gridsize-btn')) {
     btn.classList.toggle('primary', Number(btn.dataset.w) === boardW && Number(btn.dataset.h) === boardH);
-  }
-  const maxDim = Math.max(boardW, boardH);
-  if (webGpuAvailable !== false) {
-    els.loadLlm.disabled = maxDim > 64;
-    els.loadLlm.textContent = maxDim > 64 ? 'not run above 64×64'
-      : llmReady ? 'LLM loaded' : 'load the LLM (about 430 MB, stored locally)';
   }
 }
 function drawBoard() {
@@ -2004,9 +1973,6 @@ async function runEveryRung() {
       const { adapterUrl: _unused, ...baseModel } = LLM_MODEL;
       await ask('load', { ...baseModel, width: boardW, height: boardH, rulestring: app.rulestring() });
       llmReady = true;
-      els.loadLlm.disabled = true;
-      els.loadLlm.textContent = 'LLM loaded';
-      els.llmHint.style.display = 'none';
 
       setStatus('generating', 'running the LLM per cell, base model...');
       results['llm-percell-base'] = await measureWorkerStep('a', board, { calls: 'percell', liveKey: 'llm-percell-base' });
