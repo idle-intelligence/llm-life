@@ -148,8 +148,8 @@ The native "picture" driver, variant B, against Qwen2.5-0.5B-Instruct Q4_0:
 
 ```bash
 cargo run --release -p llm-life -- picture \
-  --gguf ~/models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf \
-  --tokenizer ~/models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json \
+  --gguf models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf \
+  --tokenizer models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json \
   --size 64 --generations 10
 ```
 

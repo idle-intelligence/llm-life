@@ -6,7 +6,7 @@
 
 Same family as "ask the LLM what time it is" (Hive/SWARM): take something a for-loop does perfectly, do it with 64k forward passes, and show the residual.
 
-Sibling repo: `~/Code/jacobi2000` (physics track, floats not tokens). They share Burn-on-wgpu, the web glue, and eventually the stencil attention kernel. Nothing else.
+Sibling repo: `jacobi2000` (physics track, floats not tokens). They share Burn-on-wgpu, the web glue, and eventually the stencil attention kernel. Nothing else.
 
 ---
 

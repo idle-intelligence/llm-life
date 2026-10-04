@@ -11,7 +11,7 @@ in f32 and never re-quantizes anything, so no such attenuation applies.
 Code: `crates/llm-wasm/src/lora.rs` (parser/GPU upload), `model.rs`
 (`Q4Attention::lora`, `LlmModel::apply_lora`), `web.rs`
 (`LlmEngine::loadAdapter`) in the llm-web worktree
-(`.claude/worktrees/llm-life`, branch `llm-life`); `crates/llm-life/src/
+(branch `llm-life`); `crates/llm-life/src/
 web.rs`'s `LifeEngine::loadAdapter` and `web/worker.js` in this repo.
 
 ## Verification command
