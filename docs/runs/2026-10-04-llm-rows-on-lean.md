@@ -78,6 +78,12 @@ cost (see Observations).
   median of three calls (not the single-first-call path above), so this
   is not the same first-call artifact. Reported as observed; not
   investigated further here.
+  Follow-up, same day: re-measured on the same build with nothing else
+  on the GPU, 16x16, real Metal, fresh browser each time: 0.1045 and
+  0.0963 s with the LLM never loaded, 0.0956 and 0.0990 s after the five
+  LLM rows ran (BERT and 9 numbers unchanged too). No regression: the
+  0.89-0.96 s came from GPU contention during this run. The compare
+  page's code and the pkg-llm wasm are byte-identical to 2026-09-22.
 - LLM per cell (base) stays wrong on the same 100 of 256 cells both runs
   (156 / 256 correct), and LLM whole grid (base) stays wrong on the same
   83 (173 / 256): the base model without the adapter is deterministic
