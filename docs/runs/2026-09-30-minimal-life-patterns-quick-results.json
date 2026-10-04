@@ -1,0 +1,373 @@
+[
+  {
+    "name": "n=1 MinimalCNN(c=8)",
+    "n_steps": 1,
+    "params": 89,
+    "converged_at": 600,
+    "stopped_early": null,
+    "steps_run": 600,
+    "random_soup_cells_correct": 1.0,
+    "random_soup_all_dead_baseline": 0.6323828125,
+    "patterns": {
+      "block": {
+        "exact_boards": 4,
+        "total_boards": 4,
+        "masked_cells_correct": 1.0
+      },
+      "beehive": {
+        "exact_boards": 8,
+        "total_boards": 8,
+        "masked_cells_correct": 1.0
+      },
+      "blinker": {
+        "exact_boards": 8,
+        "total_boards": 8,
+        "masked_cells_correct": 1.0
+      },
+      "toad": {
+        "exact_boards": 16,
+        "total_boards": 16,
+        "masked_cells_correct": 1.0
+      },
+      "beacon": {
+        "exact_boards": 8,
+        "total_boards": 8,
+        "masked_cells_correct": 1.0
+      },
+      "glider": {
+        "exact_boards": 32,
+        "total_boards": 32,
+        "masked_cells_correct": 1.0
+      },
+      "lwss": {
+        "exact_boards": 32,
+        "total_boards": 32,
+        "masked_cells_correct": 1.0
+      },
+      "r_pentomino": {
+        "exact_boards": 32,
+        "total_boards": 32,
+        "masked_cells_correct": 1.0
+      }
+    },
+    "wall_seconds": 4.74812126159668
+  },
+  {
+    "name": "A untied DeepCNN n=2 c=8",
+    "n_steps": 2,
+    "params": 1257,
+    "converged_at": 3600,
+    "stopped_early": null,
+    "steps_run": 3600,
+    "random_soup_cells_correct": 0.9999609375,
+    "random_soup_all_dead_baseline": 0.68537109375,
+    "patterns": {
+      "block": {
+        "exact_boards": 4,
+        "total_boards": 4,
+        "masked_cells_correct": 1.0
+      },
+      "beehive": {
+        "exact_boards": 8,
+        "total_boards": 8,
+        "masked_cells_correct": 1.0
+      },
+      "blinker": {
+        "exact_boards": 8,
+        "total_boards": 8,
+        "masked_cells_correct": 1.0
+      },
+      "toad": {
+        "exact_boards": 16,
+        "total_boards": 16,
+        "masked_cells_correct": 1.0
+      },
+      "beacon": {
+        "exact_boards": 8,
+        "total_boards": 8,
+        "masked_cells_correct": 1.0
+      },
+      "glider": {
+        "exact_boards": 32,
+        "total_boards": 32,
+        "masked_cells_correct": 1.0
+      },
+      "lwss": {
+        "exact_boards": 32,
+        "total_boards": 32,
+        "masked_cells_correct": 1.0
+      },
+      "r_pentomino": {
+        "exact_boards": 32,
+        "total_boards": 32,
+        "masked_cells_correct": 1.0
+      }
+    },
+    "wall_seconds": 27.96070885658264
+  },
+  {
+    "name": "B tied MinimalCNN(c=8) n=2",
+    "n_steps": 2,
+    "params": 89,
+    "converged_at": null,
+    "stopped_early": "hopeless",
+    "steps_run": 2000,
+    "random_soup_cells_correct": 0.68375,
+    "random_soup_all_dead_baseline": 0.68537109375,
+    "patterns": {
+      "block": {
+        "exact_boards": 0,
+        "total_boards": 4,
+        "masked_cells_correct": 0.0
+      },
+      "beehive": {
+        "exact_boards": 0,
+        "total_boards": 8,
+        "masked_cells_correct": 0.0
+      },
+      "blinker": {
+        "exact_boards": 0,
+        "total_boards": 8,
+        "masked_cells_correct": 0.0
+      },
+      "toad": {
+        "exact_boards": 0,
+        "total_boards": 16,
+        "masked_cells_correct": 0.0
+      },
+      "beacon": {
+        "exact_boards": 0,
+        "total_boards": 8,
+        "masked_cells_correct": 0.0
+      },
+      "glider": {
+        "exact_boards": 0,
+        "total_boards": 32,
+        "masked_cells_correct": 0.0
+      },
+      "lwss": {
+        "exact_boards": 0,
+        "total_boards": 32,
+        "masked_cells_correct": 0.0
+      },
+      "r_pentomino": {
+        "exact_boards": 0,
+        "total_boards": 32,
+        "masked_cells_correct": 0.0
+      }
+    },
+    "wall_seconds": 14.729808330535889
+  },
+  {
+    "name": "A untied DeepCNN n=3 c=8",
+    "n_steps": 3,
+    "params": 1841,
+    "converged_at": null,
+    "stopped_early": "hopeless",
+    "steps_run": 2000,
+    "random_soup_cells_correct": 0.72029296875,
+    "random_soup_all_dead_baseline": 0.6977734375,
+    "patterns": {
+      "block": {
+        "exact_boards": 0,
+        "total_boards": 4,
+        "masked_cells_correct": 0.0
+      },
+      "beehive": {
+        "exact_boards": 0,
+        "total_boards": 8,
+        "masked_cells_correct": 0.75
+      },
+      "blinker": {
+        "exact_boards": 0,
+        "total_boards": 8,
+        "masked_cells_correct": 0.3333333333333333
+      },
+      "toad": {
+        "exact_boards": 0,
+        "total_boards": 16,
+        "masked_cells_correct": 0.375
+      },
+      "beacon": {
+        "exact_boards": 0,
+        "total_boards": 8,
+        "masked_cells_correct": 0.75
+      },
+      "glider": {
+        "exact_boards": 0,
+        "total_boards": 32,
+        "masked_cells_correct": 0.5
+      },
+      "lwss": {
+        "exact_boards": 0,
+        "total_boards": 32,
+        "masked_cells_correct": 0.18556701030927836
+      },
+      "r_pentomino": {
+        "exact_boards": 0,
+        "total_boards": 32,
+        "masked_cells_correct": 0.4027777777777778
+      }
+    },
+    "wall_seconds": 17.78108501434326
+  },
+  {
+    "name": "B tied MinimalCNN(c=8) n=3",
+    "n_steps": 3,
+    "params": 89,
+    "converged_at": null,
+    "stopped_early": "hopeless",
+    "steps_run": 2000,
+    "random_soup_cells_correct": 0.6977734375,
+    "random_soup_all_dead_baseline": 0.6977734375,
+    "patterns": {
+      "block": {
+        "exact_boards": 0,
+        "total_boards": 4,
+        "masked_cells_correct": 0.0
+      },
+      "beehive": {
+        "exact_boards": 0,
+        "total_boards": 8,
+        "masked_cells_correct": 0.0
+      },
+      "blinker": {
+        "exact_boards": 0,
+        "total_boards": 8,
+        "masked_cells_correct": 0.0
+      },
+      "toad": {
+        "exact_boards": 0,
+        "total_boards": 16,
+        "masked_cells_correct": 0.0
+      },
+      "beacon": {
+        "exact_boards": 0,
+        "total_boards": 8,
+        "masked_cells_correct": 0.0
+      },
+      "glider": {
+        "exact_boards": 0,
+        "total_boards": 32,
+        "masked_cells_correct": 0.0
+      },
+      "lwss": {
+        "exact_boards": 0,
+        "total_boards": 32,
+        "masked_cells_correct": 0.0
+      },
+      "r_pentomino": {
+        "exact_boards": 0,
+        "total_boards": 32,
+        "masked_cells_correct": 0.0
+      }
+    },
+    "wall_seconds": 17.100858449935913
+  },
+  {
+    "name": "A untied DeepCNN n=10 c=8",
+    "n_steps": 10,
+    "params": 5929,
+    "converged_at": null,
+    "stopped_early": "hopeless",
+    "steps_run": 2000,
+    "random_soup_cells_correct": 0.77169921875,
+    "random_soup_all_dead_baseline": 0.77169921875,
+    "patterns": {
+      "block": {
+        "exact_boards": 0,
+        "total_boards": 4,
+        "masked_cells_correct": 0.0
+      },
+      "beehive": {
+        "exact_boards": 0,
+        "total_boards": 8,
+        "masked_cells_correct": 0.0
+      },
+      "blinker": {
+        "exact_boards": 0,
+        "total_boards": 8,
+        "masked_cells_correct": 0.0
+      },
+      "toad": {
+        "exact_boards": 0,
+        "total_boards": 16,
+        "masked_cells_correct": 0.0
+      },
+      "beacon": {
+        "exact_boards": 0,
+        "total_boards": 8,
+        "masked_cells_correct": 0.0
+      },
+      "glider": {
+        "exact_boards": 0,
+        "total_boards": 32,
+        "masked_cells_correct": 0.0
+      },
+      "lwss": {
+        "exact_boards": 0,
+        "total_boards": 32,
+        "masked_cells_correct": 0.0
+      },
+      "r_pentomino": {
+        "exact_boards": 0,
+        "total_boards": 32,
+        "masked_cells_correct": 0.0
+      }
+    },
+    "wall_seconds": 30.39367914199829
+  },
+  {
+    "name": "B tied MinimalCNN(c=8) n=10",
+    "n_steps": 10,
+    "params": 89,
+    "converged_at": null,
+    "stopped_early": "hopeless",
+    "steps_run": 2000,
+    "random_soup_cells_correct": 0.77169921875,
+    "random_soup_all_dead_baseline": 0.77169921875,
+    "patterns": {
+      "block": {
+        "exact_boards": 0,
+        "total_boards": 4,
+        "masked_cells_correct": 0.0
+      },
+      "beehive": {
+        "exact_boards": 0,
+        "total_boards": 8,
+        "masked_cells_correct": 0.0
+      },
+      "blinker": {
+        "exact_boards": 0,
+        "total_boards": 8,
+        "masked_cells_correct": 0.0
+      },
+      "toad": {
+        "exact_boards": 0,
+        "total_boards": 16,
+        "masked_cells_correct": 0.0
+      },
+      "beacon": {
+        "exact_boards": 0,
+        "total_boards": 8,
+        "masked_cells_correct": 0.0
+      },
+      "glider": {
+        "exact_boards": 0,
+        "total_boards": 32,
+        "masked_cells_correct": 0.0
+      },
+      "lwss": {
+        "exact_boards": 0,
+        "total_boards": 32,
+        "masked_cells_correct": 0.0
+      },
+      "r_pentomino": {
+        "exact_boards": 0,
+        "total_boards": 32,
+        "masked_cells_correct": 0.0
+      }
+    },
+    "wall_seconds": 33.19248938560486
+  }
+]
