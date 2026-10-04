@@ -7,7 +7,7 @@
 // Bit convention: pattern index i in [0, 2^25); bit k of i is the state of
 // the 5x5 window cell at row-major offset k, for (dy, dx) with dy, dx both
 // ranging -2..2 and k = (dy+2)*5 + (dx+2) -- so k=12 is the centre cell.
-// Same convention bitslice_life2_exhaustive.py uses for its independent
+// Same convention life_2step_truth.py uses for its independent
 // ground-truth check (window_offsets(5), row-major), chosen so this table
 // and the compiled 2-step circuit's own exhaustive check describe the same
 // 2^25 patterns, even though this table is built from the rule directly and

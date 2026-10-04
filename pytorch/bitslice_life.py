@@ -21,7 +21,7 @@ Weight quantization is the same absmean ternary scheme as
 minimal_life_1bit.py (BitNet b1.58 style): gamma = mean(|W|), Wq =
 clip(round(W/gamma), -1, 1). The per-layer bias stays full precision during
 training; after training it is folded with the scale into a single integer
-threshold per output unit (see bitslice_compiler.py), so nothing but
+threshold per output unit (see the bit-slice compiler), so nothing but
 ternary weights and integer thresholds survive into the compiled kernel.
 
 Rules: Conway's Life (B3/S23) and HighLife (B36/S23), both via the ported

@@ -1,6 +1,6 @@
 """QAT for a single network that predicts Game of Life two generations
 ahead in one forward pass, architecture made compilable by the generic
-bit-slice compiler (bitslice_compiler.py): binary input, ternary weights
+bit-slice compiler: binary input, ternary weights
 (BitNet b1.58 absmean, same scheme as bitslice_life.py), binary
 inter-layer activations via the same soft-surrogate straight-through
 estimator that fixed convergence in bitslice_life.py (1/(1+|y|)^2, not the
@@ -55,7 +55,7 @@ def quantize_ternary(w: torch.Tensor):
 def quantize_binary(w: torch.Tensor):
     """XNOR-Net style (arXiv:1603.05279): wq = sign(w) in {-1, +1} (never
     0), scale = mean(|w|). Step 5's optional binary-weight variant: the
-    bitslice_compiler.py split into a positive/negative set needs no
+    bit-slice compiler's split into a positive/negative set needs no
     change, a weight of 0 simply never occurs."""
     scale = w.detach().abs().mean().clamp(min=1e-8)
     wq = torch.sign(w)
@@ -82,7 +82,7 @@ step_ste = StepSTE.apply
 
 class QuantConv2d(nn.Module):
     """y = scale * circular_conv2d(x, Wq) + bias, Wq ternary, x binary ->
-    per-output-location integer sum (bitslice_compiler.py's
+    per-output-location integer sum (the bit-slice compiler's
     compile_conv_layer assumes exactly this: one scalar scale per layer,
     full-precision bias folded into an integer threshold per output
     channel after training)."""

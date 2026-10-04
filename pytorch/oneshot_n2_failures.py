@@ -12,7 +12,7 @@ import json
 import numpy as np
 import torch
 
-from bitslice_life2_exhaustive import OFFSETS5, TOTAL_WORDS, make_planes_chunk, ground_truth_2step
+from life_2step_truth import OFFSETS5, TOTAL_WORDS, make_planes_chunk, ground_truth_2step
 from oneshot_n2_exhaustive import words_to_bits_2d
 from oneshot_model import make_mlp
 

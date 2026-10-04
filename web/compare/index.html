@@ -1139,7 +1139,7 @@ async function quant2StepResidentRun(model, variant, cells, w, h, generations, o
 // A 2^25-entry, 1-bit table (stored as one u32 per entry, 4 MB) over every
 // possible 5x5 neighbourhood, filled on the GPU at first use by lut2step.wgsl's
 // build_table (plain integer popcount/compare, Conway's rule applied twice,
-// bitslice_life2_exhaustive.py's own ground-truth convention: bit k of the
+// life_2step_truth.py's own ground-truth convention: bit k of the
 // pattern index is the 5x5 window cell at row-major offset k, centre = bit
 // 12). Then a resident ping-pong run where each thread gathers its own 25
 // toroidal neighbours and reads one bit, same shape as every other resident

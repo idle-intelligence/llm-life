@@ -3,7 +3,7 @@ logistic-regression probe recover the centre cell's intermediate state at
 t+1 (one Life step, not two) from that layer's activations? Probing only,
 no interpretation beyond the reported numbers.
 
-Ground truth for the probe label reuses bitslice_life2_exhaustive's
+Ground truth for the probe label reuses life_2step_truth's
 `life_step_planes` applied to the centre 3x3 sub-window of the 5x5 input
 (offsets INNER3 are exactly the centre cell's own 1-step neighbourhood,
 since the centre cell sits at (0,0) of the window) -- the same function
@@ -21,7 +21,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from bitslice_life2_exhaustive import INNER3, make_planes_chunk, life_step_planes
+from life_2step_truth import INNER3, make_planes_chunk, life_step_planes
 from oneshot_n2_exhaustive import words_to_bits_2d
 from oneshot_model import make_mlp
 
@@ -34,7 +34,7 @@ def sample_dataset(n_words: int, seed: int):
     for w in w_starts:
         planes = make_planes_chunk(int(w), int(w) + 1)
         x = np.empty((32, 25), dtype=np.float32)
-        from bitslice_life2_exhaustive import OFFSETS5
+        from life_2step_truth import OFFSETS5
         for k, off in enumerate(OFFSETS5):
             x[:, k] = words_to_bits_2d(planes[off]).reshape(-1)
         centre_sub = {off: planes[off] for off in INNER3}

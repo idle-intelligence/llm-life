@@ -45,7 +45,7 @@ document and its data cover N=2 exclusively.
 ## Architecture
 
 Plain MLP family, `pytorch/oneshot_model.py`, input is the flattened 5x5
-window (25 bits, `bitslice_compiler.window_offsets(5)` order, i.e. the same
+window (25 bits, `life_2step_truth.OFFSETS5` order, i.e. the same
 row-major (dy,dx) for dy,dx in -2..2 convention
 `docs/runs/2026-10-02-bitslice-2step.md`'s exhaustive checker uses), output
 a single logit for the centre cell's state after 2 Life steps. No
@@ -66,12 +66,12 @@ a free hyperparameter, not derived from N.
 
 Trained on the **full set of 2**25 5x5-window patterns**, not boards or a
 sample: `pytorch/oneshot_n2_exhaustive.py` reuses
-`bitslice_life2_exhaustive.py`'s already-verified bit-sliced generator and
+`pytorch/life_2step_truth.py`'s already-verified bit-sliced generator and
 ground truth (`make_planes_chunk`, `ground_truth_2step`,
-`OFFSETS5`) from branch `bitslice-2step` directly -- no new ground-truth
+`OFFSETS5`) directly -- no new ground-truth
 code was written for this run. `ground_truth_2step` is a from-scratch
-bitwise popcount/Life-step-twice reference (not reusing
-`bitslice_ops`' popcount primitives, so a shared bug cannot cancel out),
+bitwise popcount/Life-step-twice reference (not reusing shared
+popcount primitives, so a shared bug cannot cancel out),
 itself cross-checked against `life.py`/`vec_step` on 20,000 random windows
 in the prior run before being trusted.
 
@@ -262,8 +262,7 @@ with scattered near-boundary errors rather than one systematic blind spot.
 ## Data
 
 Model family: `pytorch/oneshot_model.py`. Training/exhaustive verification:
-`pytorch/oneshot_n2_exhaustive.py` (depends on `bitslice_life2_exhaustive.py`
-and `bitslice_compiler.py` from branch `bitslice-2step`, synced unchanged).
+`pytorch/oneshot_n2_exhaustive.py` (depends on `pytorch/life_2step_truth.py`).
 Probes: `pytorch/oneshot_probe.py`. Failure-case dump:
 `pytorch/oneshot_n2_failures.py`. Raw results:
 `docs/runs/2026-10-02-oneshot-nstep-n2-results.json`,

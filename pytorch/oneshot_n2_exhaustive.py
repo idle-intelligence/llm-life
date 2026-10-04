@@ -1,13 +1,13 @@
 """N=2, one-shot MLP, trained on the FULL set of 2**25 5x5-window patterns
 (not sampled boards) and verified exhaustively against the same independent
 ground truth as docs/runs/2026-10-02-bitslice-2step.md's compiled-circuit
-check: `bitslice_life2_exhaustive.ground_truth_2step`, a from-scratch
-bitwise popcount/Life-step-twice reference (not reusing bitslice_ops'
+check: `life_2step_truth.ground_truth_2step`, a from-scratch
+bitwise popcount/Life-step-twice reference (not reusing shared
 popcount primitives), itself cross-checked against life.py/vec_step on
 20,000 random windows before being trusted there.
 
 Model: oneshot_model.make_mlp (plain MLP depth<=4, residual+LayerNorm MLP
-depth>8) on the flattened 25-bit window (bitslice_compiler.window_offsets(5)
+depth>8) on the flattened 25-bit window (the project's 5x5 window-offset
 order) -- no convolution, no recurrence, no weight tying, depth not derived
 from N.
 
@@ -30,7 +30,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from bitslice_life2_exhaustive import (
+from life_2step_truth import (
     OFFSETS5, TOTAL_WORDS, make_planes_chunk, ground_truth_2step,
 )
 from oneshot_model import make_mlp, num_params
@@ -40,7 +40,7 @@ ARANGE32 = np.arange(32, dtype=np.uint32)
 
 def words_to_bits_2d(words: np.ndarray) -> np.ndarray:
     """uint32[n] -> float32[n, 32], bit b of word w at [w, b] (pattern index
-    w*32+b), matching bitslice_life2_exhaustive's word/lane convention."""
+    w*32+b), matching life_2step_truth's word/lane convention."""
     return ((words[:, None] >> ARANGE32) & np.uint32(1)).astype(np.float32)
 
 
