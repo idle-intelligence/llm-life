@@ -13,3 +13,4 @@ target/
 /venv
 /export-out
 /pytorch/__pycache__
+pytorch/bert_text/__pycache__/
