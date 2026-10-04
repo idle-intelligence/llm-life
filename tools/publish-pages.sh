@@ -28,10 +28,34 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The workspace lists crates/llm-life-lean as a member, so `cargo metadata`
+# (which wasm-pack runs even to build crates/life or crates/llm-life, which
+# don't depend on lean at all) tries to resolve the whole workspace,
+# including llm-life-lean's `lean` git dependency -- and fails outright while
+# that branch is unpublished ("no matching package named `lean`"). Apply the
+# same temporary LEAN_PATH patch tools/build-lean.sh uses for its own build,
+# here too, before either plain wasm-pack call, and remove it once they're
+# done so build-lean.sh (which writes and removes its own copy) doesn't find
+# a stale one and refuse to run.
+if [ -n "${LEAN_PATH:-}" ]; then
+    if [ -e .cargo/config.toml ]; then
+        echo "error: .cargo/config.toml exists; refusing to overwrite it" >&2
+        exit 1
+    fi
+    mkdir -p .cargo
+    printf '[patch."https://github.com/idle-intelligence/llm-web"]\nlean = { path = "%s" }\n' "$LEAN_PATH" > .cargo/config.toml
+fi
+
 echo "==> Building crates/life (classical engine)"
 wasm-pack build crates/life --target web --out-dir ../../web/pkg --features web
 echo "==> Building crates/llm-life (BERT/vector-space engine, Burn)"
 wasm-pack build crates/llm-life --target web --out-dir ../../web/pkg-llm --no-default-features --features web
+
+if [ -n "${LEAN_PATH:-}" ]; then
+    rm -f "$REPO_ROOT/.cargo/config.toml"
+    rmdir "$REPO_ROOT/.cargo" 2>/dev/null || true
+fi
+
 echo "==> Building crates/llm-life-lean (LLM engine, lean: pkg-lean and the threaded pkg-lean-mt)"
 # Honours LEAN_PATH the same way (temporary .cargo/config.toml patch).
 tools/build-lean.sh
