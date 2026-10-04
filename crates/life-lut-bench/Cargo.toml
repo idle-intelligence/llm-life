@@ -1,0 +1,30 @@
+[package]
+name = "life-lut-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Lookup-table Game of Life on the GPU (WGSL) vs the CPU: byte-per-cell LUT and bit-packed neighbour-count kernels, benchmarked from 16x16 up to the memory limit."
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "life-lut-bench"
+path = "src/bin/main.rs"
+
+# Raw wgpu + hand-written WGSL, same shape as llm-web's lean crate: no
+# framework graph, one command encoder per timed run, async-only GPU
+# readback so the kernels and host code stay portable to a wasm32+WebGPU
+# build even though this benchmark only runs natively (SSH Linux box +
+# Mac). CPU baselines (rayon threads) are native-only by nature.
+[dependencies]
+life = { path = "../life" }
+anyhow = { workspace = true }
+bytemuck = { version = "1.25", features = ["derive"] }
+wgpu = { version = "26", features = ["fragile-send-sync-non-atomic-wasm"] }
+futures-channel = "0.3"
+pollster = "0.3"
+rayon = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
