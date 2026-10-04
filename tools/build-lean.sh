@@ -13,7 +13,17 @@
 # .cargo/config.toml because wasm-pack runs its own `cargo metadata`.
 # RUSTFLAGS replaces any config rustflags, so the home-directory remaps are
 # passed here too: the built wasm carries no local paths.
+#
+# ENGINE_BUILD is required and is the same `?v=` tag the pages put on their
+# loading URLs; it tags pkg-lean-mt's worker chain the way llm-web's
+# scripts/build_lean_mt.sh does, so a worker never runs a cached glue file
+# from an older build. MAX_MEMORY (bytes) overrides pkg-lean-mt's shared
+# memory maximum; the default matches build_lean_mt.sh's 2.5 GiB
+# (SmolLM2-1.7B Q4_0 trapped at 1-2 GiB, see llm-web docs/runs/2026-10-04-lean-release.md).
 set -euo pipefail
+
+: "${ENGINE_BUILD:?set ENGINE_BUILD to the ?v= tag the pages load this build with}"
+MAX_MEMORY="${MAX_MEMORY:-2684354560}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -38,7 +48,7 @@ RUSTFLAGS="-C target-feature=+simd128 $REMAP" \
 
 echo "==> $OUT_MT (threads, nightly build-std)"
 RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals,+simd128 \
--C link-arg=--shared-memory -C link-arg=--max-memory=2147483648 \
+-C link-arg=--shared-memory -C link-arg=--max-memory=$MAX_MEMORY \
 -C link-arg=--import-memory \
 -C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size \
 -C link-arg=--export=__tls_align -C link-arg=--export=__tls_base $REMAP" \
@@ -51,7 +61,18 @@ rm -rf "$OUT_MT"
 mkdir -p "$OUT_MT"
 wasm-bindgen --target web --out-dir "$OUT_MT" --out-name llm_life_lean "$WASM_IN"
 HELPER=$(find "$OUT_MT/snippets" -name workerHelpers.js | head -1)
-sed -i.bak "s#await import('\.\./\.\./\.\.')#await import('../../../llm_life_lean.js')#" "$HELPER"
+if [ -z "$HELPER" ]; then
+    echo "error: workerHelpers.js not found under $OUT_MT/snippets" >&2
+    exit 1
+fi
+sed -i.bak \
+    -e "s#await import('\.\./\.\./\.\.')#await import('../../../llm_life_lean.js?v=$ENGINE_BUILD')#" \
+    -e "s#new URL('\./workerHelpers\.js', import\.meta\.url)#new URL('./workerHelpers.js?v=$ENGINE_BUILD', import.meta.url)#" \
+    "$HELPER"
+if ! grep -q "llm_life_lean.js?v=$ENGINE_BUILD" "$HELPER" || ! grep -q "workerHelpers.js?v=$ENGINE_BUILD" "$HELPER"; then
+    echo "error: workerHelpers.js patch did not apply" >&2
+    exit 1
+fi
 rm -f "$HELPER.bak"
 
 for f in "$OUT_ST/llm_life_lean_bg.wasm" "$OUT_MT/llm_life_lean_bg.wasm"; do
