@@ -8,11 +8,10 @@
 # nightly -Z build-std with atomics, wasm-bindgen by hand, then the
 # workerHelpers.js import fixed for a no-bundler `--target web` page.
 #
-# LEAN_PATH=<llm-web checkout>/crates/lean builds lean from a local checkout
-# (the branch is unpublished); the patch goes in a temporary
-# .cargo/config.toml because wasm-pack runs its own `cargo metadata`.
-# RUSTFLAGS replaces any config rustflags, so the home-directory remaps are
-# passed here too: the built wasm carries no local paths.
+# lean is a pinned git dependency (crates/llm-life-lean/Cargo.toml); no
+# local checkout or `.cargo/config.toml` patch is needed to build it.
+# RUSTFLAGS carries the home-directory remap so the built wasm carries no
+# local paths.
 #
 # ENGINE_BUILD is required and is the same `?v=` tag the pages put on their
 # loading URLs; it tags pkg-lean-mt's worker chain the way llm-web's
@@ -28,28 +27,14 @@ MAX_MEMORY="${MAX_MEMORY:-2684354560}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-if [ -n "${LEAN_PATH:-}" ]; then
-    if [ -e .cargo/config.toml ]; then
-        echo "error: .cargo/config.toml exists; refusing to overwrite it" >&2
-        exit 1
-    fi
-    mkdir -p .cargo
-    printf '[patch."https://github.com/idle-intelligence/llm-web"]\nlean = { path = "%s" }\n' "$LEAN_PATH" > .cargo/config.toml
-    trap 'rm -f "$REPO_ROOT/.cargo/config.toml"; rmdir "$REPO_ROOT/.cargo" 2>/dev/null || true' EXIT
-fi
-
 # Order matters: when several --remap-path-prefix rules match the same
 # path, rustc applies the LAST matching rule in the argument list (verified
 # against rustc 1.93: a later rule overrides an earlier one, not the other
-# way round), so the most specific (deepest) prefixes must come LAST or
-# they'd be overridden by the more general $HOME rule. LEAN_PATH (when set)
-# and REPO_ROOT are both under $HOME, so they go last, each remapped to a
-# neutral crate name rather than ~/..., which would otherwise survive
-# as a private workspace/worktree layout.
+# way round), so the most specific (deepest) prefix must come LAST or it'd
+# be overridden by the more general $HOME rule. REPO_ROOT is under $HOME,
+# so it goes last, remapped to a neutral crate name rather than ~/..., which
+# would otherwise survive as a private workspace/worktree layout.
 REMAP="--remap-path-prefix=$HOME=~ --remap-path-prefix=$HOME/.cargo=cargo --remap-path-prefix=$REPO_ROOT=llm-life"
-if [ -n "${LEAN_PATH:-}" ]; then
-    REMAP="$REMAP --remap-path-prefix=$LEAN_PATH=lean"
-fi
 OUT_ST="${OUT_ST:-web/pkg-lean}"
 OUT_MT="${OUT_MT:-web/pkg-lean-mt}"
 
@@ -87,11 +72,11 @@ fi
 rm -f "$HELPER.bak"
 
 # Fail the build if any private path fragment survived remapping: the
-# literal $HOME, any "Code/" or "local-tool-state/" workspace/worktree layout,
-# "~/" (macOS home root), or the user name as a path component. The
-# user name is anchored to slashes so it doesn't false-positive on ordinary
-# words like "match" or "dispatch" that happen to contain the same letters.
-LEAK_PATTERN="$HOME|Code/|\\local-tool-state/|~/|/$(id -un)/"
+# literal $HOME, any "Code/" or ".claude" workspace/worktree layout, the
+# macOS home root, or the user name as a path component. The user name is
+# anchored to slashes so it doesn't false-positive on ordinary words like
+# "match" or "dispatch" that happen to contain the same letters.
+LEAK_PATTERN="$HOME|Code/|[.]claude[/]|[/]Users[/]|/$(id -un)/"
 for f in "$OUT_ST/llm_life_lean_bg.wasm" "$OUT_MT/llm_life_lean_bg.wasm"; do
     leak_count=$(strings "$f" | grep -cE "$LEAK_PATTERN" || true)
     echo "==> $f: $(wc -c < "$f") bytes, $leak_count leaked-path strings, sha256 $(shasum -a 256 "$f" | cut -d' ' -f1)"

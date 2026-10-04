@@ -46,6 +46,14 @@ jobs:
       - name: Build llm-life (LLM/BERT/vector-space engine)
         run: wasm-pack build crates/llm-life --target web --out-dir ../../web/pkg-llm --no-default-features --features web
 
+      - name: Build llm-life-lean (lean engine, WebGPU + single-thread CPU)
+        # Pages serves no COOP/COEP headers, so the threaded pkg-lean-mt
+        # variant (crossOriginIsolated-only) can never be selected here;
+        # only the single-thread/WebGPU pkg-lean build is needed.
+        run: |
+          RUSTFLAGS="$RUSTFLAGS -C target-feature=+simd128" \
+            wasm-pack build crates/llm-life-lean --target web --out-dir ../../web/pkg-lean --no-default-features --features web
+
       - name: Assemble site
         run: |
           set -euo pipefail
@@ -62,17 +70,17 @@ jobs:
             exit 1
           fi
 
-          # wasm-pack also writes .d.ts and .gitignore into web/pkg and
-          # web/pkg-llm; only life.js/life_bg.wasm and
-          # llm_life.js/llm_life_bg.wasm (plus package.json) are published.
-          for d in _site/web/pkg _site/web/pkg-llm; do
+          # wasm-pack also writes .d.ts and .gitignore into web/pkg,
+          # web/pkg-llm and web/pkg-lean; only the .js/.wasm/package.json
+          # files are published.
+          for d in _site/web/pkg _site/web/pkg-llm _site/web/pkg-lean; do
             find "$d" -mindepth 1 -maxdepth 1 ! -name '*.js' ! -name '*.wasm' ! -name 'package.json' -exec rm -rf {} +
           done
 
       - name: Tag and rewrite ?v= build tag
         run: |
           set -euo pipefail
-          TAG="$(cat web/pkg/life_bg.wasm web/pkg-llm/llm_life_bg.wasm | sha256sum | cut -c1-7)"
+          TAG="$(cat web/pkg/life_bg.wasm web/pkg-llm/llm_life_bg.wasm web/pkg-lean/llm_life_lean_bg.wasm | sha256sum | cut -c1-7)"
           echo "build tag: $TAG"
 
           # './pkg/life.js?v=...' is a static import specifier (must be a
@@ -109,8 +117,8 @@ jobs:
         run: |
           set -euo pipefail
           FAILED=0
-          for f in _site/web/pkg/life_bg.wasm _site/web/pkg-llm/llm_life_bg.wasm; do
-            for pat in '/Users/' '/home/runner/.cargo'; do
+          for f in _site/web/pkg/life_bg.wasm _site/web/pkg-llm/llm_life_bg.wasm _site/web/pkg-lean/llm_life_lean_bg.wasm; do
+            for pat in '~/' '/home/runner/.cargo'; do
               COUNT="$(grep -c -a "$pat" "$f" || true)"
               if [ "$COUNT" -gt 0 ]; then
                 echo "error: found '$pat' $COUNT time(s) in $f" >&2

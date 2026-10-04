@@ -2652,6 +2652,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 [[package]]
 name = "lean"
 version = "0.1.0"
+source = "git+https://github.com/idle-intelligence/llm-web?rev=f9698f6f1f227f2d1e45329f6cc4e7faf1ed91b6#f9698f6f1f227f2d1e45329f6cc4e7faf1ed91b6"
 dependencies = [
  "anyhow",
  "bytemuck",

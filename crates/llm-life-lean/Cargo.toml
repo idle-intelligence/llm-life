@@ -29,13 +29,9 @@ web-mt = ["web", "lean/threads", "dep:wasm-bindgen-rayon"]
 
 [dependencies]
 life = { path = "../life" }
-# The engine: crates/lean in idle-intelligence/llm-web, branch lean-next
-# (b63ff51: lean-lora's embedding-row sliced head, pool reset on adapter
-# swap and K/V scatter kernel, plus the lean-mobile kernels). That branch is
-# not published yet, so builds patch this
-# source to a local llm-web checkout (docs/runs/2026-10-02-lean-migration.md,
-# "Build"); pin `rev` here once it is.
-lean = { git = "https://github.com/idle-intelligence/llm-web", default-features = false }
+# The engine: crates/lean in idle-intelligence/llm-web, pinned to a rev on
+# that repo's lean-release branch.
+lean = { git = "https://github.com/idle-intelligence/llm-web", rev = "f9698f6f1f227f2d1e45329f6cc4e7faf1ed91b6", default-features = false }
 anyhow = { workspace = true }
 wgpu = "26"
 pollster = { version = "0.3", optional = true }
