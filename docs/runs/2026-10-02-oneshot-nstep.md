@@ -16,7 +16,7 @@ References:
   non-monotonic-in-width, non-monotonic-in-seed results (below) are a
   sharper version of the same difficulty this paper documents for
   conv-prior networks on the easier n=1 problem.
-- Jiang and Rivest, "LifeGPT: Topology-Agnostic Generative Pretrained
+- Berkovich and Buehler, "LifeGPT: Topology-Agnostic Generative Pretrained
   Transformer Model for Cellular Automata", arXiv:2409.12182 -- the
   comparison point for "transformer with no locality bias, trained on raw
   cell tokens, can it learn a CA update rule"; this run's optional
