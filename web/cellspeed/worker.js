@@ -5,7 +5,7 @@
 // same cell with the prefix forwarded again in the same call ("no reuse").
 // The GGUF fetch (fetchChunks, splitIntoChunks, cachedFetchText) is the one
 // in ../worker.js, with the same cache name so a load there is a hit here.
-const ENGINE_BUILD = '2026-10-04-release-01';
+const ENGINE_BUILD = '2026-10-04-release-02';
 const pending = [];
 self.onmessage = (e) => pending.push(e);
 

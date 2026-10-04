@@ -38,7 +38,18 @@ if [ -n "${LEAN_PATH:-}" ]; then
     trap 'rm -f "$REPO_ROOT/.cargo/config.toml"; rmdir "$REPO_ROOT/.cargo" 2>/dev/null || true' EXIT
 fi
 
-REMAP="--remap-path-prefix=$HOME=~ --remap-path-prefix=$HOME/.cargo=cargo"
+# Order matters: when several --remap-path-prefix rules match the same
+# path, rustc applies the LAST matching rule in the argument list (verified
+# against rustc 1.93: a later rule overrides an earlier one, not the other
+# way round), so the most specific (deepest) prefixes must come LAST or
+# they'd be overridden by the more general $HOME rule. LEAN_PATH (when set)
+# and REPO_ROOT are both under $HOME, so they go last, each remapped to a
+# neutral crate name rather than ~/..., which would otherwise survive
+# as a private workspace/worktree layout.
+REMAP="--remap-path-prefix=$HOME=~ --remap-path-prefix=$HOME/.cargo=cargo --remap-path-prefix=$REPO_ROOT=llm-life"
+if [ -n "${LEAN_PATH:-}" ]; then
+    REMAP="$REMAP --remap-path-prefix=$LEAN_PATH=lean"
+fi
 OUT_ST="${OUT_ST:-web/pkg-lean}"
 OUT_MT="${OUT_MT:-web/pkg-lean-mt}"
 
@@ -75,6 +86,18 @@ if ! grep -q "llm_life_lean.js?v=$ENGINE_BUILD" "$HELPER" || ! grep -q "workerHe
 fi
 rm -f "$HELPER.bak"
 
+# Fail the build if any private path fragment survived remapping: the
+# literal $HOME, any "Code/" or "local-tool-state/" workspace/worktree layout,
+# "~/" (macOS home root), or the user name as a path component. The
+# user name is anchored to slashes so it doesn't false-positive on ordinary
+# words like "match" or "dispatch" that happen to contain the same letters.
+LEAK_PATTERN="$HOME|Code/|\\local-tool-state/|~/|/$(id -un)/"
 for f in "$OUT_ST/llm_life_lean_bg.wasm" "$OUT_MT/llm_life_lean_bg.wasm"; do
-    echo "==> $f: $(wc -c < "$f") bytes, $(strings "$f" | grep -c "$HOME" || true) home-directory strings, sha256 $(shasum -a 256 "$f" | cut -d' ' -f1)"
+    leak_count=$(strings "$f" | grep -cE "$LEAK_PATTERN" || true)
+    echo "==> $f: $(wc -c < "$f") bytes, $leak_count leaked-path strings, sha256 $(shasum -a 256 "$f" | cut -d' ' -f1)"
+    if [ "$leak_count" -ne 0 ]; then
+        echo "error: $f still contains private path strings:" >&2
+        strings "$f" | grep -E "$LEAK_PATTERN" | sort -u >&2
+        exit 1
+    fi
 done
