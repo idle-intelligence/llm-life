@@ -353,8 +353,8 @@
     <h2>methods <span class="sub">· 2 steps per pass</span></h2>
     <div class="method-notes">
         <p><strong>2-step lookup table (GPU, resident):</strong> ground truth from the rule, not a trained model. Every possible 5x5 neighbourhood, 33.5 million of them, precomputed from Conway's rule applied twice and stored one bit each.</p>
+        <p><strong>ternary model, float / integer adds, 2 steps per pass (9,601 parameters):</strong> the same 9,601-parameter network as the compiled row below, run as an ordinary network instead of a bit-sliced circuit: float multiplies against dequantized weights, or adds and subtracts of 0/1 activations, same as the one-step 45- and 177-parameter rows.</p>
         <p><strong>ternary model, compiled, 2 steps per pass (9,601 parameters):</strong> a 32-channel ternary network trained to predict two generations at once, compiled the same way; one pass computes two generations, at the cost of a much larger circuit (about 13,000 gates against 92 for the one-step network).</p>
-        <p><strong>ternary model, float / integer adds, 2 steps per pass (9,601 parameters):</strong> the same 9,601-parameter network as the compiled row above, run as an ordinary network instead of a bit-sliced circuit: float multiplies against dequantized weights, or adds and subtracts of 0/1 activations, same as the one-step 45- and 177-parameter rows.</p>
     </div>
 </section>
 
@@ -1541,9 +1541,9 @@ const RUNGS = [
   { key: 'quant-binary-int', name: 'binary model, integer adds (177 parameters)', params: '177 (binary)' },
   { key: 'quant-ternary-bitpack', name: 'ternary model, bit-packed (45 parameters)', params: '45 (ternary)' },
   { key: 'quant-ternary-compiled', name: 'ternary model, compiled (89 parameters)', params: '89 (ternary)' },
-  { key: 'quant-ternary-2step-compiled', name: 'ternary model, compiled, 2 steps per pass (9,601 parameters)', params: '9,601 (ternary)' },
   { key: 'quant-ternary-2step-float', name: 'ternary model, float, 2 steps per pass (9,601 parameters)', params: '9,601 (ternary)' },
   { key: 'quant-ternary-2step-int', name: 'ternary model, integer adds, 2 steps per pass (9,601 parameters)', params: '9,601 (ternary)' },
+  { key: 'quant-ternary-2step-compiled', name: 'ternary model, compiled, 2 steps per pass (9,601 parameters)', params: '9,601 (ternary)' },
   { key: 'lut-2step', name: '2-step lookup table (GPU, resident)', params: '2^25-entry table (4 MB)' },
   { key: 'llm-percell-base', name: 'LLM per cell (base)', params: '0.5B (no adapter)' },
   { key: 'llm-percell-trained', name: 'LLM per cell (trained)', params: '0.5B (+ adapter)' },
@@ -1560,7 +1560,7 @@ const RUNGS = [
 // Display order only (the blog-post story), independent of RUNGS (which
 // stays in run order for runEveryRung and renderThumbs). The four 2-step
 // rows live in their own table (ladder2), in the order given below.
-const LADDER2_KEYS = ['lut-2step', 'quant-ternary-2step-compiled', 'quant-ternary-2step-float', 'quant-ternary-2step-int'];
+const LADDER2_KEYS = ['lut-2step', 'quant-ternary-2step-float', 'quant-ternary-2step-int', 'quant-ternary-2step-compiled'];
 const LADDER_ORDER = [
   'cpu', 'llm-percell-base', 'llm-percell-trained', 'bert-cell', 'vec-mlp-cell',
   'llm-grid-base', 'llm-grid-trained', 'llm-percell-batched', 'bert-batched', 'vec-mlp-batched',
