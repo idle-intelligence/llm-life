@@ -1738,14 +1738,13 @@ async function runEveryRung() {
     lastResults = results;
     renderLadderTable();
 
-    setStatus('generating', `running the lookup table, ${cpuN} generations...`);
-    results.lookup = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, boardW, boardH, cpuN, onGen('lookup table'));
-    results.lookup.correctCount = countMatches(results.lookup.binarized, results.cpu.binarized);
-    results.lookup.total = total;
-    lastResults = results;
-    renderLadderTable();
-
     if (webGpuAvailable === false) {
+      setStatus('generating', `running the lookup table, ${cpuN} generations...`);
+      results.lookup = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, boardW, boardH, cpuN, onGen('lookup table'));
+      results.lookup.correctCount = countMatches(results.lookup.binarized, results.cpu.binarized);
+      results.lookup.total = total;
+      lastResults = results;
+      renderLadderTable();
       for (const r of RUNGS) if (!(r.key in results)) results[r.key] = { note: NO_WEBGPU };
       lastResults = results;
       renderLadderTable();
@@ -1771,6 +1770,174 @@ async function runEveryRung() {
       const check = await chainFn(board, boardW, boardH, cpuN);
       return { seconds: main.seconds, totalSeconds: main.totalSeconds ?? main.seconds, binarized: check.binarized, generations: residentN, displayGenerations: cpuN };
     }
+
+    // Run order is the display order (LADDER_ORDER), so the table fills in
+    // top to bottom as the story goes: the rule, then the LLM/BERT/vector
+    // rows (base, trained, batched, the whole-grid variants, the stencil),
+    // then the quantized/bit-level rows, then the 2-step group below.
+    if (maxDim > 64) {
+      // Above 64x64 the per-cell/worker model rows (positions 2-10 in
+      // LADDER_ORDER) don't run at all -- only the stencil does, linear in
+      // cell count. It sits at the vec-stencil position; everything else in
+      // that span gets filled in as "not run above 64x64" once the whole
+      // table (quant rows and the 2-step group below) has run.
+      if (total <= 4096 * 4096) {
+        setStatus('generating', 'running the stencil, grid to grid...');
+        const stencilGens = 3;
+        try {
+          const stencilResult = await measureStencilLarge(board, boardW, boardH, stencilGens);
+          const stencilRef = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, boardW, boardH, stencilGens);
+          results['vec-stencil'] = {
+            seconds: stencilResult.seconds,
+            totalSeconds: stencilResult.totalSeconds,
+            binarized: stencilResult.binarized,
+            correctCount: countMatches(stencilResult.binarized, stencilRef.binarized),
+            total,
+            generations: stencilGens,
+          };
+        } catch (e) {
+          results['vec-stencil'] = { note: "does not fit in this browser's GPU memory" };
+          restartWorker();
+        }
+      } else {
+        results['vec-stencil'] = { note: 'not run above 4096' };
+      }
+      lastResults = results;
+      renderLadderTable();
+    } else {
+      // Going back to the base model after an adapter means a full reload
+      // (there is no unload); it comes from the browser cache, a few
+      // seconds.
+      setStatus('generating', llmReady ? 'reloading the LLM, base model...' : 'loading the LLM, base model...');
+      ensureWorker();
+      const { adapterUrl: _unused, ...baseModel } = LLM_MODEL;
+      await ask('load', { ...baseModel, width: boardW, height: boardH, rulestring: app.rulestring() });
+      llmReady = true;
+
+      setStatus('generating', 'running the LLM per cell, base model...');
+      results['llm-percell-base'] = await measureWorkerStep('a', board, { calls: 'percell', liveKey: 'llm-percell-base' });
+      results['llm-percell-base'].correctCount = countMatches(results['llm-percell-base'].binarized, trueNext);
+      results['llm-percell-base'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
+      setStatus('generating', 'loading the per-cell adapter...');
+      await ask('loadAdapter', { adapterUrl: LLM_MODEL.adapterUrl });
+
+      setStatus('generating', 'running the LLM per cell, trained, one cell per call...');
+      results['llm-percell-trained'] = await measureWorkerStep('a', board, { calls: 'percell', liveKey: 'llm-percell-trained' });
+      results['llm-percell-trained'].correctCount = countMatches(results['llm-percell-trained'].binarized, trueNext);
+      results['llm-percell-trained'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
+      setStatus('generating', 'running BERT of Life, cell by cell...');
+      await ensureBert();
+      results['bert-cell'] = await measureWorkerStep('bert', board);
+      results['bert-cell'].correctCount = countMatches(results['bert-cell'].binarized, trueNext);
+      results['bert-cell'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
+      setStatus('generating', 'running 9 numbers to centre, cell by cell...');
+      await ensureVecMlp();
+      results['vec-mlp-cell'] = await measureWorkerStep('vec-mlp', board);
+      results['vec-mlp-cell'].correctCount = countMatches(results['vec-mlp-cell'].binarized, trueNext);
+      results['vec-mlp-cell'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
+      const bAdapterUrl = B_ADAPTER_BY_SIZE[boardW];
+      setStatus('generating', 'reloading the LLM, base model...');
+      await ask('load', { ...baseModel, width: boardW, height: boardH, rulestring: app.rulestring() });
+      setStatus('generating', 'running the LLM whole grid, base model...');
+      results['llm-grid-base'] = await measureWorkerStep('b', board);
+      results['llm-grid-base'].correctCount = countMatches(results['llm-grid-base'].binarized, trueNext);
+      results['llm-grid-base'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
+      setStatus('generating', 'running the LLM whole grid, trained...');
+      if (bAdapterUrl) {
+        await ask('loadAdapter', { adapterUrl: bAdapterUrl });
+        results['llm-grid-trained'] = await measureWorkerStep('b', board);
+        results['llm-grid-trained'].correctCount = countMatches(results['llm-grid-trained'].binarized, trueNext);
+        results['llm-grid-trained'].total = total;
+      } else {
+        results['llm-grid-trained'] = { note: 'no adapter' };
+      }
+      lastResults = results;
+      renderLadderTable();
+
+      // llm-percell-batched sits after the whole-grid rows in display order,
+      // but the worker now holds the whole-grid adapter (or no adapter) from
+      // the two rows just above -- an extra reload back to the per-cell
+      // adapter, same as the fresh-load/loadAdapter pair above, kept outside
+      // the measured step the same way.
+      setStatus('generating', 'reloading the LLM, base model...');
+      await ask('load', { ...baseModel, width: boardW, height: boardH, rulestring: app.rulestring() });
+      setStatus('generating', 'loading the per-cell adapter...');
+      await ask('loadAdapter', { adapterUrl: LLM_MODEL.adapterUrl });
+      setStatus('generating', 'running the LLM per cell, trained, batched...');
+      results['llm-percell-batched'] = await measureWorkerStep('a', board, { liveKey: 'llm-percell-batched' });
+      results['llm-percell-batched'].correctCount = countMatches(results['llm-percell-batched'].binarized, trueNext);
+      results['llm-percell-batched'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
+      setStatus('generating', 'running BERT of Life, batched...');
+      results['bert-batched'] = await measureWorkerStep('bert-batched', board);
+      results['bert-batched'].correctCount = countMatches(results['bert-batched'].binarized, trueNext);
+      results['bert-batched'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
+      setStatus('generating', 'running 9 numbers to centre, batched...');
+      results['vec-mlp-batched'] = await measureWorkerStep('vec-mlp-batched', board);
+      results['vec-mlp-batched'].correctCount = countMatches(results['vec-mlp-batched'].binarized, trueNext);
+      results['vec-mlp-batched'].total = total;
+      lastResults = results;
+      renderLadderTable();
+
+      setStatus('generating', 'running the stencil, grid to grid...');
+      await ensureVecStencil();
+      results['vec-stencil'] = await measureWorkerStep('vec-stencil', board);
+      results['vec-stencil'].correctCount = countMatches(results['vec-stencil'].binarized, trueNext);
+      results['vec-stencil'].total = total;
+      lastResults = results;
+      renderLadderTable();
+    }
+
+    // Four rows: each of the two models run once as an ordinary float
+    // forward and once as the adds/subtracts-only integer kernel, same
+    // resident ping-pong shape and same N as the GPU lookup/bitwise rows
+    // below so the float-vs-integer and model-vs-model comparisons are all
+    // direct.
+    const quantRuns = [
+      ['quant-ternary-float', './life-ternary-45.json', 'float', 'ternary model, float'],
+      ['quant-ternary-int', './life-ternary-45.json', 'int', 'ternary model, integer adds'],
+      ['quant-binary-float', './life-binary-177.json', 'float', 'binary model, float'],
+      ['quant-binary-int', './life-binary-177.json', 'int', 'binary model, integer adds'],
+    ];
+    for (const [key, path, variant, label] of quantRuns) {
+      setStatus('generating', `running ${label}, resident, ${residentN} generations...`);
+      try {
+        const model = await loadQuantModel(path);
+        const r = await measureGpuRow(label, (b, w, h, gens, onProg) => quantResidentRun(model, variant, b, w, h, gens, onProg));
+        results[key] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
+      } catch (e) {
+        results[key] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+      }
+      lastResults = results;
+      renderLadderTable();
+    }
+
+    setStatus('generating', `running the lookup table, ${cpuN} generations...`);
+    results.lookup = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, boardW, boardH, cpuN, onGen('lookup table'));
+    results.lookup.correctCount = countMatches(results.lookup.binarized, results.cpu.binarized);
+    results.lookup.total = total;
+    lastResults = results;
+    renderLadderTable();
 
     // Unlike the resident/bitwise rows, "GPU lookup" reads back every
     // generation, so its cost scales with N the same way the CPU rows do --
@@ -1819,30 +1986,6 @@ async function runEveryRung() {
     }
     lastResults = results;
     renderLadderTable();
-
-    // Four rows: each of the two models run once as an ordinary float
-    // forward and once as the adds/subtracts-only integer kernel, same
-    // resident ping-pong shape and same N as the GPU lookup/bitwise rows
-    // above so the float-vs-integer and model-vs-model comparisons are all
-    // direct.
-    const quantRuns = [
-      ['quant-ternary-float', './life-ternary-45.json', 'float', 'ternary model, float'],
-      ['quant-ternary-int', './life-ternary-45.json', 'int', 'ternary model, integer adds'],
-      ['quant-binary-float', './life-binary-177.json', 'float', 'binary model, float'],
-      ['quant-binary-int', './life-binary-177.json', 'int', 'binary model, integer adds'],
-    ];
-    for (const [key, path, variant, label] of quantRuns) {
-      setStatus('generating', `running ${label}, resident, ${residentN} generations...`);
-      try {
-        const model = await loadQuantModel(path);
-        const r = await measureGpuRow(label, (b, w, h, gens, onProg) => quantResidentRun(model, variant, b, w, h, gens, onProg));
-        results[key] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
-      } catch (e) {
-        results[key] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
-      }
-      lastResults = results;
-      renderLadderTable();
-    }
 
     setStatus('generating', `running the ternary model, bit-packed, ${residentN} generations...`);
     if (boardW % 32 !== 0) {
@@ -1930,135 +2073,13 @@ async function runEveryRung() {
     renderLadderTable();
 
     if (maxDim > 64) {
-      if (total <= 4096 * 4096) {
-        setStatus('generating', 'running the stencil, grid to grid...');
-        const stencilGens = 3;
-        try {
-          const stencilResult = await measureStencilLarge(board, boardW, boardH, stencilGens);
-          const stencilRef = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, boardW, boardH, stencilGens);
-          results['vec-stencil'] = {
-            seconds: stencilResult.seconds,
-            totalSeconds: stencilResult.totalSeconds,
-            binarized: stencilResult.binarized,
-            correctCount: countMatches(stencilResult.binarized, stencilRef.binarized),
-            total,
-            generations: stencilGens,
-          };
-        } catch (e) {
-          results['vec-stencil'] = { note: "does not fit in this browser's GPU memory" };
-          restartWorker();
-        }
-      } else {
-        results['vec-stencil'] = { note: 'not run above 4096' };
-      }
-      lastResults = results;
-      renderLadderTable();
-
       for (const r of RUNGS) {
         if (!(r.key in results)) results[r.key] = { note: 'not run above 64x64' };
       }
       lastResults = results;
       renderLadderTable();
-      renderThumbs(trueNext);
-      setStatus('ready', 'ready');
-      return;
     }
 
-    {
-      // Run order is the display order. Going back to the base model after an
-      // adapter means a full reload (there is no unload); it comes from the
-      // browser cache, a few seconds.
-      setStatus('generating', llmReady ? 'reloading the LLM, base model...' : 'loading the LLM, base model...');
-      ensureWorker();
-      const { adapterUrl: _unused, ...baseModel } = LLM_MODEL;
-      await ask('load', { ...baseModel, width: boardW, height: boardH, rulestring: app.rulestring() });
-      llmReady = true;
-
-      setStatus('generating', 'running the LLM per cell, base model...');
-      results['llm-percell-base'] = await measureWorkerStep('a', board, { calls: 'percell', liveKey: 'llm-percell-base' });
-      results['llm-percell-base'].correctCount = countMatches(results['llm-percell-base'].binarized, trueNext);
-      results['llm-percell-base'].total = total;
-      lastResults = results;
-      renderLadderTable();
-
-      setStatus('generating', 'loading the per-cell adapter...');
-      await ask('loadAdapter', { adapterUrl: LLM_MODEL.adapterUrl });
-
-      setStatus('generating', 'running the LLM per cell, trained, one cell per call...');
-      results['llm-percell-trained'] = await measureWorkerStep('a', board, { calls: 'percell', liveKey: 'llm-percell-trained' });
-      results['llm-percell-trained'].correctCount = countMatches(results['llm-percell-trained'].binarized, trueNext);
-      results['llm-percell-trained'].total = total;
-      lastResults = results;
-      renderLadderTable();
-
-      setStatus('generating', 'running the LLM per cell, trained, batched...');
-      results['llm-percell-batched'] = await measureWorkerStep('a', board, { liveKey: 'llm-percell-batched' });
-      results['llm-percell-batched'].correctCount = countMatches(results['llm-percell-batched'].binarized, trueNext);
-      results['llm-percell-batched'].total = total;
-      lastResults = results;
-      renderLadderTable();
-
-      const bAdapterUrl = B_ADAPTER_BY_SIZE[boardW];
-      setStatus('generating', 'reloading the LLM, base model...');
-      await ask('load', { ...baseModel, width: boardW, height: boardH, rulestring: app.rulestring() });
-      setStatus('generating', 'running the LLM whole grid, base model...');
-      results['llm-grid-base'] = await measureWorkerStep('b', board);
-      results['llm-grid-base'].correctCount = countMatches(results['llm-grid-base'].binarized, trueNext);
-      results['llm-grid-base'].total = total;
-      lastResults = results;
-      renderLadderTable();
-
-      setStatus('generating', 'running the LLM whole grid, trained...');
-      if (bAdapterUrl) {
-        await ask('loadAdapter', { adapterUrl: bAdapterUrl });
-        results['llm-grid-trained'] = await measureWorkerStep('b', board);
-        results['llm-grid-trained'].correctCount = countMatches(results['llm-grid-trained'].binarized, trueNext);
-        results['llm-grid-trained'].total = total;
-      } else {
-        results['llm-grid-trained'] = { note: 'no adapter' };
-      }
-      lastResults = results;
-      renderLadderTable();
-    }
-
-    setStatus('generating', 'running BERT of Life, cell by cell...');
-    await ensureBert();
-    results['bert-cell'] = await measureWorkerStep('bert', board);
-    results['bert-cell'].correctCount = countMatches(results['bert-cell'].binarized, trueNext);
-    results['bert-cell'].total = total;
-    lastResults = results;
-    renderLadderTable();
-
-    setStatus('generating', 'running BERT of Life, batched...');
-    results['bert-batched'] = await measureWorkerStep('bert-batched', board);
-    results['bert-batched'].correctCount = countMatches(results['bert-batched'].binarized, trueNext);
-    results['bert-batched'].total = total;
-    lastResults = results;
-    renderLadderTable();
-
-    setStatus('generating', 'running 9 numbers to centre, cell by cell...');
-    await ensureVecMlp();
-    results['vec-mlp-cell'] = await measureWorkerStep('vec-mlp', board);
-    results['vec-mlp-cell'].correctCount = countMatches(results['vec-mlp-cell'].binarized, trueNext);
-    results['vec-mlp-cell'].total = total;
-    lastResults = results;
-    renderLadderTable();
-
-    setStatus('generating', 'running 9 numbers to centre, batched...');
-    results['vec-mlp-batched'] = await measureWorkerStep('vec-mlp-batched', board);
-    results['vec-mlp-batched'].correctCount = countMatches(results['vec-mlp-batched'].binarized, trueNext);
-    results['vec-mlp-batched'].total = total;
-    lastResults = results;
-    renderLadderTable();
-
-    setStatus('generating', 'running the stencil, grid to grid...');
-    await ensureVecStencil();
-    results['vec-stencil'] = await measureWorkerStep('vec-stencil', board);
-    results['vec-stencil'].correctCount = countMatches(results['vec-stencil'].binarized, trueNext);
-    results['vec-stencil'].total = total;
-    lastResults = results;
-
-    renderLadderTable();
     renderThumbs(trueNext);
     setStatus('ready', 'ready');
   } catch (e) {
