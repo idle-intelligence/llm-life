@@ -1875,21 +1875,27 @@ async function runEveryRung() {
     lastResults = results;
     renderLadderTable();
 
-    setStatus('generating', `running the ternary model, compiled, 2 steps per pass, ${residentN} generations...`);
-    if (boardW % 32 !== 0) {
-      results['quant-ternary-2step-compiled'] = { note: 'N/A (needs a board width that is a multiple of 32)' };
-    } else {
+    setStatus('generating', `building the 2-step lookup table...`);
+    try {
+      await ensureLut2StepTable();
+    } catch (e) {
+      results['lut-2step'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+      lastResults = results;
+      renderLadderTable();
+    }
+    if (!results['lut-2step']) {
+      setStatus('generating', `running the 2-step lookup table, resident, ${residentN} generations...`);
       try {
-        const r = await measureGpuRow('ternary model, compiled, 2 steps per pass', compiled2StepResidentRun);
-        results['quant-ternary-2step-compiled'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
+        const r = await measureGpuRow('2-step lookup table', lut2StepResidentRun);
+        results['lut-2step'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
       } catch (e) {
-        results['quant-ternary-2step-compiled'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+        results['lut-2step'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
       }
     }
     lastResults = results;
     renderLadderTable();
 
-    // Same 9,601-parameter 2-step model as the compiled row, run as an
+    // Same 9,601-parameter 2-step model as the compiled row (run after these two), run as an
     // ordinary network instead of a bit-sliced circuit -- one float-forward
     // row and one integer-adds row, same resident ping-pong shape and N.
     const quant2StepRuns = [
@@ -1909,21 +1915,15 @@ async function runEveryRung() {
       renderLadderTable();
     }
 
-    setStatus('generating', `building the 2-step lookup table...`);
-    try {
-      await ensureLut2StepTable();
-    } catch (e) {
-      results['lut-2step'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
-      lastResults = results;
-      renderLadderTable();
-    }
-    if (!results['lut-2step']) {
-      setStatus('generating', `running the 2-step lookup table, resident, ${residentN} generations...`);
+    setStatus('generating', `running the ternary model, compiled, 2 steps per pass, ${residentN} generations...`);
+    if (boardW % 32 !== 0) {
+      results['quant-ternary-2step-compiled'] = { note: 'N/A (needs a board width that is a multiple of 32)' };
+    } else {
       try {
-        const r = await measureGpuRow('2-step lookup table', lut2StepResidentRun);
-        results['lut-2step'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
+        const r = await measureGpuRow('ternary model, compiled, 2 steps per pass', compiled2StepResidentRun);
+        results['quant-ternary-2step-compiled'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
       } catch (e) {
-        results['lut-2step'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+        results['quant-ternary-2step-compiled'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
       }
     }
     lastResults = results;
