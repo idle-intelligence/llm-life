@@ -14,20 +14,16 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
-# Keep the runner's paths out of the compiled wasm (dependency source paths
-# end up in panic messages otherwise).
-env:
-  RUSTFLAGS: --remap-path-prefix=/home/runner/.cargo=/cargo --remap-path-prefix=/home/runner/work=/src
-
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0
         with:
           targets: wasm32-unknown-unknown
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
 
@@ -40,95 +36,8 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Build life (classical engine)
-        run: wasm-pack build crates/life --target web --out-dir ../../web/pkg --features web
-
-      - name: Build llm-life (LLM/BERT/vector-space engine)
-        run: wasm-pack build crates/llm-life --target web --out-dir ../../web/pkg-llm --no-default-features --features web
-
-      - name: Build llm-life-lean (lean engine, WebGPU + single-thread CPU)
-        # Pages serves no COOP/COEP headers, so the threaded pkg-lean-mt
-        # variant (crossOriginIsolated-only) can never be selected here;
-        # only the single-thread/WebGPU pkg-lean build is needed.
-        run: |
-          RUSTFLAGS="$RUSTFLAGS -C target-feature=+simd128" \
-            wasm-pack build crates/llm-life-lean --target web --out-dir ../../web/pkg-lean --no-default-features --features web
-
-      - name: Assemble site
-        run: |
-          set -euo pipefail
-          rm -rf _site
-          mkdir -p _site
-          cp -R web _site/web
-
-          if [ -d _site/web/models ]; then
-            echo "error: unexpected web/models in export -- refusing to publish weights" >&2
-            exit 1
-          fi
-          if compgen -G "_site/web/*.bin" > /dev/null; then
-            echo "error: unexpected *.bin in export -- refusing to publish weights" >&2
-            exit 1
-          fi
-
-          # wasm-pack also writes .d.ts and .gitignore into web/pkg,
-          # web/pkg-llm and web/pkg-lean; only the .js/.wasm/package.json
-          # files are published.
-          for d in _site/web/pkg _site/web/pkg-llm _site/web/pkg-lean; do
-            find "$d" -mindepth 1 -maxdepth 1 ! -name '*.js' ! -name '*.wasm' ! -name 'package.json' -exec rm -rf {} +
-          done
-
-      - name: Tag and rewrite ?v= build tag
-        run: |
-          set -euo pipefail
-          TAG="$(cat web/pkg/life_bg.wasm web/pkg-llm/llm_life_bg.wasm web/pkg-lean/llm_life_lean_bg.wasm | sha256sum | cut -c1-7)"
-          echo "build tag: $TAG"
-
-          # './pkg/life.js?v=...' is a static import specifier (must be a
-          # string literal, can't take a JS variable) in both pages.
-          sed -i "s#pkg/life.js?v=[A-Za-z0-9_.-]*#pkg/life.js?v=$TAG#" \
-            _site/web/index.html _site/web/compare/index.html
-          # BUILD (worker.js's own URL, bumped alongside pkg/pkg-llm) and
-          # ENGINE_BUILD (the pkg-llm wasm's URL) are JS constants read by
-          # a template literal, so the tag goes into the assignment.
-          sed -i "s/const BUILD = '[^']*'/const BUILD = '$TAG'/" \
-            _site/web/index.html _site/web/compare/index.html
-          sed -i "s/const ENGINE_BUILD = '[^']*'/const ENGINE_BUILD = '$TAG'/" \
-            _site/web/worker.js
-
-          STATIC_COUNT="$(grep -rEo "pkg/life\.js\?v=[0-9a-fA-F]{7}" _site/web/index.html _site/web/compare/index.html | wc -l)"
-          if [ "$STATIC_COUNT" -ne 2 ]; then
-            echo "error: expected 2 'pkg/life.js?v=$TAG' static imports, found $STATIC_COUNT" >&2
-            exit 1
-          fi
-          BUILD_COUNT="$(grep -rEo "BUILD = '[0-9a-fA-F]{7}'" _site/web/index.html _site/web/compare/index.html _site/web/worker.js | wc -l)"
-          if [ "$BUILD_COUNT" -ne 3 ]; then
-            echo "error: expected 3 BUILD/ENGINE_BUILD assignments rewritten to $TAG, found $BUILD_COUNT" >&2
-            exit 1
-          fi
-
-          BAD="$(grep -rEo "\?v=[0-9a-fA-F.-]+" _site/web | grep -v ":?v=$TAG\$" || true)"
-          if [ -n "$BAD" ]; then
-            echo "error: found ?v= URLs not rewritten to $TAG:" >&2
-            echo "$BAD" >&2
-            exit 1
-          fi
-
-      - name: Check built wasm has no local build paths
-        run: |
-          set -euo pipefail
-          FAILED=0
-          for f in _site/web/pkg/life_bg.wasm _site/web/pkg-llm/llm_life_bg.wasm _site/web/pkg-lean/llm_life_lean_bg.wasm; do
-            for pat in '~/' '/home/runner/.cargo'; do
-              COUNT="$(grep -c -a "$pat" "$f" || true)"
-              if [ "$COUNT" -gt 0 ]; then
-                echo "error: found '$pat' $COUNT time(s) in $f" >&2
-                FAILED=1
-              fi
-            done
-          done
-          if [ "$FAILED" -ne 0 ]; then
-            exit 1
-          fi
+      - name: Build and assemble the site
+        run: ENGINE_BUILD="${{ github.sha }}" scripts/build.sh
 
       - uses: actions/upload-pages-artifact@v3
         with:
