@@ -139,17 +139,20 @@ if [ -n "$BAD" ]; then
   exit 1
 fi
 
-# --- Check built wasm has no local build paths ---
+# --- Local-path / user-name leak check on built wasm outputs ---
+# Matches on extracted printable strings, not raw bytes (llm-web's
+# scripts/build.sh): the old raw `grep -c -a '~/'` matched two-byte
+# coincidences inside wasm opcode/table bytes, not actual leaked paths.
 echo "==> Checking for local build paths"
 FAILED=0
 for f in _site/web/pkg/life_bg.wasm _site/web/pkg-llm/llm_life_bg.wasm _site/web/pkg-lean/llm_life_lean_bg.wasm; do
-  for pat in '~/' '/home/runner/.cargo' "$HOME"; do
-    COUNT="$(grep -c -a "$pat" "$f" || true)"
-    if [ "$COUNT" -gt 0 ]; then
-      echo "error: found '$pat' $COUNT time(s) in $f" >&2
-      FAILED=1
-    fi
-  done
+  LEAKS="$(strings "$f" | grep -F -e "$HOME" -e "Code/" -e ".claude/" -e "/Users/" -e "/home/runner/" || true)"
+  USER_HITS="$(strings "$f" | grep -Fw -e "$(id -un)" || true)"
+  if [ -n "$LEAKS$USER_HITS" ]; then
+    echo "error: $f contains local paths or the user name:" >&2
+    printf '%s\n%s\n' "$LEAKS" "$USER_HITS" | grep -v '^$' | head -20 >&2
+    FAILED=1
+  fi
 done
 if [ "$FAILED" -ne 0 ]; then
   exit 1
