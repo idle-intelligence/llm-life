@@ -450,10 +450,8 @@ mod tests {
         for (case, c) in cases {
             match case {
                 LifeCase::Birth => assert_eq!(c.fraction(), 0.0),
-                LifeCase::StayDead | LifeCase::DeathLonely | LifeCase::DeathCrowded => {
-                    if c.count > 0 {
-                        assert_eq!(c.fraction(), 1.0);
-                    }
+                LifeCase::StayDead | LifeCase::DeathLonely | LifeCase::DeathCrowded if c.count > 0 => {
+                    assert_eq!(c.fraction(), 1.0);
                 }
                 _ => {}
             }

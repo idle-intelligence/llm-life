@@ -64,8 +64,10 @@ pub fn load<B: Backend>(
         let len = r * c;
         ensure!(off + len * 4 <= bytes.len(), "LoRA file truncated in tensor {i}");
         let data: Vec<f32> = bytes[off..off + len * 4]
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
             .collect();
         off += len * 4;
         out.push(Tensor::from_data(TensorData::new(data, [r, c]), device));

@@ -4,6 +4,13 @@
 //! crate owns the CA-to-model glue — packing, stencil masks, reading p(alive)
 //! out of logits — and scores the model against that ground truth.
 
+// burn's `#[derive(Config)]` generates a `new(...)` constructor with
+// field-init-shorthand-shaped `Self { field: field, ... }` assignments;
+// clippy attributes redundant_field_names to the field declaration, not
+// anything this crate's own code wrote. Silenced crate-wide rather than
+// per struct, since every `*Config` type triggers it the same way.
+#![allow(clippy::redundant_field_names)]
+
 pub mod bert;
 pub mod pgm;
 pub mod score;

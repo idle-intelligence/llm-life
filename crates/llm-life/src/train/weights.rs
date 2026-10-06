@@ -129,12 +129,16 @@ impl<R: Read + Seek> GgufF32Reader<R> {
         let bytes = self.loader.tensor_bytes(name)?;
         match info.dtype() {
             GgmlDtype::F32 => Ok(bytes
-                .chunks_exact(4)
-                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| f32::from_le_bytes(*b))
                 .collect()),
             GgmlDtype::F16 => Ok(bytes
-                .chunks_exact(2)
-                .map(|b| f16_to_f32(u16::from_le_bytes([b[0], b[1]])))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|b| f16_to_f32(u16::from_le_bytes(*b)))
                 .collect()),
             GgmlDtype::Q4_0 => dequant_q4_0(&bytes, n),
             GgmlDtype::Q8_0 => dequant_q8_0(&bytes, n),
