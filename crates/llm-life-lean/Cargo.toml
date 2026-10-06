@@ -23,8 +23,8 @@ web = [
 ]
 # Threaded CPU backend for the browser: lean's `threads` (rayon over the
 # matmul columns) plus wasm-bindgen-rayon's worker pool (`initThreadPool`).
-# Needs the nightly atomics build (tools/build-lean-mt.sh) and a
-# cross-origin-isolated page (COOP/COEP).
+# Needs the nightly atomics build (scripts/build.sh with BUILD_THREADS=1)
+# and a cross-origin-isolated page (COOP/COEP).
 web-mt = ["web", "lean/threads", "dep:wasm-bindgen-rayon"]
 
 [dependencies]
