@@ -2,8 +2,8 @@
 
 Machines: the stencil-life and LoRA-parity work below ran on a Mac (CPU
 only, no MPS/GPU — this repo's inference GPU is shared with another job).
-The variant-A/B retrains that need real GPU timing ran on the team's Linux
-GPU box (RTX 3080), CUDA for PyTorch and Vulkan (via `wgpu`) for Burn, one
+The variant-A/B retrains that need real GPU timing ran on an RTX 3080
+machine, CUDA for PyTorch and Vulkan (via `wgpu`) for Burn, one
 job at a time under a shared lock. Base model: `qwen2.5-0.5b-instruct-q4_0.gguf`,
 loaded through `transformers`' own GGUF loader (PyTorch) or the native GGUF
 reader (Burn) — same Q4_0 block dequant either way. Data: `pytorch/life.py`'s
@@ -60,7 +60,7 @@ Published (Burn, same hyperparameters): reaches 256/256 cells correct at
 16x16 (README's "LLM whole grid (trained)" row). This retrain: 100% held-out
 accuracy/IoU on 8 held-out grids after 300 steps — matches.
 
-Wall clock: 927s / 300 steps on Mac CPU (~3.1s/step). Rerun on the GPU box
+Wall clock: 927s / 300 steps on Mac CPU (~3.1s/step). Rerun on the RTX 3080 machine
 (CUDA): 33.2s / 300 steps (~0.111s/step), same convergence (loss 0.486 ->
 0.0003, accuracy/IoU 0.765/0.0 -> 1.0/1.0), ~28x faster than the Mac CPU
 run. See "Same-hardware framework comparison" below for PyTorch/CUDA vs.
@@ -87,10 +87,10 @@ always uses the full 512, so its step-0 numbers are not directly comparable
 to the published step-0 line; the **final/best-checkpoint** numbers in both
 are always over the full 512 and are the ones to compare.
 
-Ran on the GPU box (CUDA), 100 steps each. A full `batch=64` forward+backward
+Ran on the RTX 3080 machine (CUDA), 100 steps each. A full `batch=64` forward+backward
 (dense `[14 heads, ~1871, ~1871]` attention score+softmax tensors retained
 for backward across 24 layers) needs roughly 8.5-9 GB, which doesn't fit
-the box's 10 GB 3080 alongside the base model's own ~2 GB. Rather than
+the machine's 10 GB 3080 alongside the base model's own ~2 GB. Rather than
 shrinking the hyperparameter, `pytorch/train_variant_a.py` gained a
 `--micro-batch` flag: each step's 64 cells are split into `ceil(64/32) = 2`
 micro-batches of 32, each forward/backwarded separately with its loss
@@ -118,11 +118,11 @@ confirms the forward math is exact.
 
 ## Same-hardware framework comparison: PyTorch/CUDA vs. Burn/Vulkan, RTX 3080
 
-Both trainers ran on the same box, one at a time under a shared lock.
+Both trainers ran on the same machine, one at a time under a shared lock.
 PyTorch: `pytorch/train_variant_b.py`. Burn: `crates/llm-life/src/bin/llm-life.rs`'s
 `train` subcommand (native build, `--features native,cpu`; the `native`
 feature pulls in `llm-wasm`'s `wgpu` backend, which picked Vulkan on this
-Linux box — the box already has `glslc`/`vulkaninfo` set up from another
+machine — it already has `glslc`/`vulkaninfo` set up from another
 worker's `lean` engine work). Same hyperparameters: 16x16, rank 8, alpha
 16, 300 steps, lr 5e-5, seed 3.
 
@@ -134,7 +134,7 @@ worker's `lean` engine work). Same hyperparameters: 16x16, rank 8, alpha
 PyTorch/CUDA is roughly **8x faster** than Burn/Vulkan for this workload on
 the same GPU. Both reach identical final accuracy/IoU (1.0/1.0) and an
 identical step-0 base loss (0.4860 Burn vs. 0.486 PyTorch) and step-1 loss
-(0.2138, both) — a third confirmation (Mac CPU, box CUDA, box Vulkan) that
+(0.2138, both) — a third confirmation (Mac CPU, RTX 3080 CUDA, RTX 3080 Vulkan) that
 the two frameworks' forward math agrees exactly; the speed gap is
 implementation/backend overhead (cuBLAS/cuDNN-backed PyTorch ops vs.
 cubecl-generated WGSL through wgpu's Vulkan backend for a workload this
@@ -156,12 +156,12 @@ existing test's 2e-2 tolerance. See `tests/lean-parity/README.md` for the
 artifacts and how to rerun this against an `llm-web` checkout.
 
 Burn's published run (`docs/runs/2026-09-20-ft-b-16-s3-300.md`) reports
-`machine: Linux 6.18.45-1-MANJARO x86_64` — the exact same `uname` as this
-box, so it is the same physical 3080 — at 92.4s/300 steps, roughly 3x
+`machine: Linux x86_64` — the exact same `uname` as this
+machine, so it is the same physical 3080 — at 92.4s/300 steps, roughly 3x
 faster than this section's uncontended 276.4s. Its doc also carries a
 templated "the Metal GPU is shared with another repo's training job" line
 (boilerplate left over from when that doc-writing code was first written
-for a Mac; it does not describe this box, which has no Metal GPU) alongside
+for a Mac; it does not describe this machine, which has no Metal GPU) alongside
 the real, believable "shared" claim, so contention at the time is plausible
 but the 3x gap could equally be an engine/driver/cubecl-autotune change
 between that run and this one (`llm-wasm` is pinned to a fixed git rev for

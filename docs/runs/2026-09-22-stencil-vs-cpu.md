@@ -23,7 +23,7 @@ where, if anywhere, is the crossover.
   committed ones.
 - Command: `cargo build --release --features native -p llm-life --bin
   bench-sizes` then `./target/release/bench-sizes`, run from the repo root.
-- Linux: a desktop with an RTX 3080, wgpu on Vulkan, one job on the GPU,
+- RTX 3080 desktop, wgpu on Vulkan, one job on the GPU,
   nothing else running (`nvidia-smi` at 0% util / 519 MiB used before
   launch).
 - Mac: Apple M2, wgpu on Metal. Run natively, nothing else running.
@@ -80,5 +80,5 @@ Source: the headless run's log.
   well before either machine's grid gets anywhere near where the model
   might have caught up on throughput.
 - The scratch binary (`crates/llm-life/src/bin/bench-sizes.rs`) has been
-  removed from both the Mac and Linux checkouts; it is not part of
+  removed from both the Mac and RTX 3080 machine's checkouts; it is not part of
   this commit.

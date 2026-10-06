@@ -1,6 +1,6 @@
 # Compare page, all twelve rows in one tab (2026-09-22)
 
-TC's Chrome on an Apple M2 (WebGPU on Metal), web/compare/index.html at main feb0810, grid 16x16, one random board, "run every method". Cells correct is against the true B3/S23 update of the same board. Times are one generation, as the page reports them.
+Chrome on an Apple M2 (WebGPU on Metal), web/compare/index.html at main feb0810, grid 16x16, one random board, "run every method". Cells correct is against the true B3/S23 update of the same board. Times are one generation, as the page reports them.
 
 | method | s / generation | parameters | cells correct |
 |---|---|---|---|

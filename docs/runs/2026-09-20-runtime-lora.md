@@ -33,7 +33,7 @@ by IoU against true Life.
 # (drop --norules for lora-a-rules-300.bin)
 ```
 
-Machine: RTX 3080, Linux, Vulkan backend. Commit: `930cca1` (llm-web
+Machine: RTX 3080, Vulkan backend. Commit: `930cca1` (llm-web
 worktree) / `baaf120`.
 
 ## Results

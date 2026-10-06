@@ -25,7 +25,7 @@ and a non-Conway rule (HighLife, B36/S23) — see `correctness` in
   workgroup grid once the workgroup count exceeds WebGPU's 65535-per-axis
   cap — first hit at 4096x4096, 65536 workgroups).
 - CPU parallelism: rayon over rows, `rayon::current_num_threads()` (8
-  logical cores on the Mac, 24 on the Linux box). No SIMD intrinsics; only
+  logical cores on the Mac, 24 on the RTX 3080 machine). No SIMD intrinsics; only
   whatever LLVM auto-vectorizes from the scalar/bitwise loops.
 - Timing: `warmup` untimed generations, then `generations` timed generations
   with ping-pong buffers, one readback at the very end (verified against
@@ -47,8 +47,8 @@ and a non-Conway rule (HighLife, B36/S23) — see `correctness` in
   minimum-traffic model (one grid read + one grid write per generation); it
   does not credit the ~9x redundant neighbour reads a naive kernel performs
   out of cache, so it is a lower bound on cache/DRAM traffic actually moved.
-- Machines: an RTX 3080 (10 GB, Vulkan backend, 24-core Linux host — CPU
-  numbers on that box are not reported, per instructions, since its CPU runs
+- Machines: an RTX 3080 (10 GB, Vulkan backend, 24-core host — CPU
+  numbers on that machine are not reported, since its CPU runs
   an unrelated background job) and a Mac laptop (Metal backend, 8-core CPU,
   unified memory) for both GPU and CPU baselines.
 
@@ -107,8 +107,8 @@ bytes (2 GiB - 1), well below the card's 10 GiB of VRAM — see Observations.
 | 16384x16384 | 8.25e9 | 2.06 | 3.91e10 | 9.76 | 6.30e10 | 15.76 |
 | 65536x65536 (max) | 8.01e9 | 2.00 | 3.90e10 | 9.75 | 6.35e10 | 15.87 |
 
-Raw JSON for both runs: `/tmp/box-bench.json` (3080), `/tmp/mac-bench.json`
-(Mac) — not committed (scratch output of this session).
+Raw JSON for both runs: a scratch file (3080), another (Mac)
+— not committed (scratch output of this session).
 
 ## Max grid per encoding, and the limiting formula
 
@@ -147,7 +147,7 @@ Raw JSON for both runs: `/tmp/box-bench.json` (3080), `/tmp/mac-bench.json`
   (7.63e10 vs 3.43e8 cells/s) and 20.7x CPU-rayon (7.63e10 vs 3.68e9).
 - **The bit-packed CPU baseline is a much stronger competitor than the
   byte-LUT one**, because it processes 64 cells per scalar instruction on
-  the CPU. On the 3080 box, CPU-1thread bit-packed beats GPU bit-packed only
+  the CPU. On the 3080 machine, CPU-1thread bit-packed beats GPU bit-packed only
   at 64x64 and 256x256 (3.94e9 and 4.59e9 cells/s vs GPU's 2.11e8 and
   3.42e9); GPU is already ahead by 1024x1024 (5.24e10 vs CPU-1thread's
   4.94e9). CPU-rayon bit-packed is overtaken by GPU at the same point
@@ -163,7 +163,7 @@ Raw JSON for both runs: `/tmp/box-bench.json` (3080), `/tmp/mac-bench.json`
   costing roughly 4x more here (consistent with the higher per-encoder-pass
   cost `lean::Engine::flush_encoder`'s doc comment already documents for
   Metal). CPU-rayon shows a comparable fixed cost at tiny sizes: on the
-  3080 box, rayon's 16x16 LUT step averages ~16 us/generation (0.3195s /
+  3080 machine, rayon's 16x16 LUT step averages ~16 us/generation (0.3195s /
   20,000), i.e. its thread-pool dispatch overhead is in the same range as
   a GPU launch — which is why rayon does not help, and sometimes loses to
   single-thread, at 16x16/64x64.

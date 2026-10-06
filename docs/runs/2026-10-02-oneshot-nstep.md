@@ -89,9 +89,8 @@ that stop in this run, so every condition ran the full 20 epochs.
 
 ## Compute
 
-GPU box (RTX 3080), confirmed idle before launch (`nvidia-smi` 0% util),
-one `systemd-run --user` unit at a time under a `flock`
-on the GPU box. The sweep unit (24 conditions) was
+An RTX 3080 machine, confirmed idle before launch (`nvidia-smi` 0% util),
+one `systemd-run --user` unit at a time. The sweep unit (24 conditions) was
 paused and resumed twice (SIGSTOP/SIGCONT) by other workers needing the GPU
 for browser timing work; the per-condition `wall_seconds` reported below
 include those pauses and are not a clean throughput measurement -- the
@@ -134,7 +133,7 @@ count:
 Raw per-condition JSON: `docs/runs/2026-10-02-oneshot-nstep-n2-results.json`.
 Trained model checkpoints for the four models probed below (small enough to
 keep in the repo, 5.3 MB total): `pytorch/oneshot_models/`. The full set of
-24 checkpoints (168 MB) was left on the GPU box and is not in this
+24 checkpoints (168 MB) was left on the RTX 3080 machine and is not in this
 repo.
 
 ## Observations
@@ -246,7 +245,7 @@ with scattered near-boundary errors rather than one systematic blind spot.
   coverage per epoch) and 3 seeds per condition is what the time budget
   allowed, not a claim that the architecture cannot reach exact.
 - `wall_seconds` in the raw results JSON include two SIGSTOP/SIGCONT pauses
-  from other GPU-box workers during the sweep (noted above); they are not
+  from other workers sharing the RTX 3080 machine during the sweep (noted above); they are not
   used for any conclusion in this document.
 - The probe's label (centre cell at t+1) is only one of the two
   intermediate quantities the brief asked about; the 3x3-cells-at-t+1 and
@@ -272,4 +271,4 @@ Probes: `pytorch/oneshot_probe.py`. Failure-case dump:
 `docs/runs/2026-10-02-oneshot-nstep-probe_depth2_width128_seed0.json`,
 `docs/runs/2026-10-02-oneshot-nstep-failures_depth8_width128_seed1.json`.
 Checkpoints for the four probed models: `pytorch/oneshot_models/`. The
-remaining 20 checkpoints (168 MB total for all 24) were left on the GPU box, not committed.
+remaining 20 checkpoints (168 MB total for all 24) were left on the RTX 3080 machine, not committed.

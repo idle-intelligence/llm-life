@@ -21,10 +21,9 @@ family below is defined here, not copied from the paper.
   `pytorch/score.py`), the same code the PyTorch retrain of the published
   stencil-life models uses (`docs/pytorch-training.md`). New code for this
   run: `pytorch/minimal_life.py`.
-- Compute: a Linux desktop with an RTX 3080 (used its CPU — these models
+- Compute: an RTX 3080 desktop (used its CPU — these models
   and batches are small enough that per-step Python overhead, not matmul
-  throughput, dominates; a single `systemd-run --user` unit under
-  `flock box.lock`, GPU confirmed idle throughout).
+  throughput, dominates; a single `systemd-run --user` unit, GPU confirmed idle throughout).
 - Model families:
   - **CNN**: `Conv3x3(1->c, circular padding, bias) -> ReLU -> Conv1x1(c->1, bias)`,
     logit -> sigmoid. Params = 11c + 1. c=2 is "minimal" (m=1x): the
@@ -114,7 +113,7 @@ Raw per-condition JSON (including per-seed step counts and best accuracy):
   prediction. Given the ≤60-minute compute budget, this was not pushed
   further; it would be the natural next iteration were this promoted from
   a "just see what happens" experiment to a tracked one.
-- All training ran on CPU (a Linux desktop's Ryzen, not its GPU): with
+- All training ran on CPU (the RTX 3080 machine's Ryzen, not its GPU): with
   batch size 8 and boards this small, per-step Python-level grid
   generation and scoring, not matmul throughput, dominated wall time, so
   GPU launch overhead would have made it slower, not faster, for this
@@ -124,7 +123,7 @@ Raw per-condition JSON (including per-seed step counts and best accuracy):
 
 Follow-up question: what about predicting 3 or 10 rule-applications ahead
 in a single forward pass, instead of 1 or 2? Two model families, this
-time trained on the Linux desktop's GPU (RTX 3080) with a vectorized numpy
+time trained on the RTX 3080 machine's GPU with a vectorized numpy
 rule-stepper for target generation (`minimal_life_nstep.vec_step`, checked
 bit-for-bit against `life.py`'s `Grid.step` before trusting it, since the
 per-cell Python loop that exactness check depends on is far too slow to
@@ -354,5 +353,5 @@ pass), `docs/runs/2026-09-30-minimal-life-patterns-quick-results.json`
 (single-seed representative check across n=1/2/3/10), and
 `docs/runs/2026-09-30-minimal-life-full-results.json` (second,
 budget-lifted pass — the source for every table above from "Results, n = 2"
-onward). Compute for every run in this document: a Linux desktop's RTX
-3080 GPU, one `systemd-run --user` unit at a time under `flock`.
+onward). Compute for every run in this document: the RTX
+3080 machine's GPU, one `systemd-run --user` unit at a time.

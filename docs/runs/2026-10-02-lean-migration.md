@@ -223,5 +223,5 @@ running (load average 2-5). Not browser numbers.
    dominated every multi-row forward; demos that prefill long or pack many
    prompts hit this first.
 7. SwiftShader makes the per-cell rows (256 forwards) an hour each, so the
-   browser gate has to sample. A GPU-backed headless browser on the Linux
-   test machine (RTX 3080) would let the full rows run.
+   browser gate has to sample. A GPU-backed headless browser on the
+   RTX 3080 test machine would let the full rows run.
