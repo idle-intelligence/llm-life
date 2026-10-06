@@ -30,8 +30,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 # Keep the runner's paths out of the compiled wasm (dependency source paths
-# end up in panic messages otherwise).
-export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME/.cargo=/cargo --remap-path-prefix=$REPO_ROOT=/src"
+# end up in panic messages otherwise). CARGO_HOME may not be under $HOME
+# (an isolated build uses its own), so remap the actual CARGO_HOME, not an
+# assumed $HOME/.cargo.
+CARGO_HOME_PATH="${CARGO_HOME:-$HOME/.cargo}"
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$CARGO_HOME_PATH=/cargo --remap-path-prefix=$REPO_ROOT=/src"
 
 echo "==> Building life (classical engine)"
 wasm-pack build crates/life --target web --out-dir ../../web/pkg --features web
@@ -51,7 +54,7 @@ if [ -n "$BUILD_THREADS" ]; then
 -C link-arg=--import-memory \
 -C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size \
 -C link-arg=--export=__tls_align -C link-arg=--export=__tls_base \
---remap-path-prefix=$HOME/.cargo=/cargo --remap-path-prefix=$REPO_ROOT=/src" \
+--remap-path-prefix=$CARGO_HOME_PATH=/cargo --remap-path-prefix=$REPO_ROOT=/src" \
     cargo +"$LEAN_NIGHTLY" build -p llm-life-lean --lib \
       --target wasm32-unknown-unknown --release \
       --no-default-features --features web-mt \
