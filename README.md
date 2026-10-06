@@ -97,7 +97,7 @@ crates/llm-life/    variant A packing (per-cell prompts, block-diagonal mask),
                     src/bin/llm-life.rs   native driver ("picture")
                     src/web.rs            wasm-bindgen LifeEngine for the tab
 web/                the demo page (STATUS / INPUT / OUTPUT / PERFORMANCE) and the compare page
-scripts/headless/   Playwright (bundled Chromium only) verification
+scripts/            build.sh (CI's own build, also runnable locally) and serve.py
 docs/pictures/      first-picture output + accuracy tables
 ```
 
@@ -153,8 +153,15 @@ cargo run --release -p llm-life -- picture \
   --size 64 --generations 10
 ```
 
-Building the demo page's wasm (slow, several minutes, run one build at a
-time):
+Building the demo page's wasm the same way CI does, assembled into `_site`:
+
+```bash
+scripts/build.sh
+python3 scripts/serve.py        # http://127.0.0.1:8030/
+```
+
+For iterating on a single engine's wasm against the `web/` sources directly
+(slow, several minutes, run one build at a time):
 
 ```bash
 wasm-pack build crates/life --target web --out-dir ../../web/pkg --features web
@@ -173,20 +180,6 @@ On the live page, everything loads from Hugging Face. Adding `?local=1` to
 the page's URL switches it to local files instead: a `web/models` symlink to
 a local models directory for the base GGUF and tokenizer, and the LoRA,
 BERT, MLP and stencil `.bin` files sitting next to `web/index.html` itself.
-
-## Headless checks
-
-Set `PLAYWRIGHT_MODULE` to a local `playwright/index.mjs` and
-`CHROMIUM_PATH` to a Chromium executable; both are required, there are no
-defaults. Start the local server first with `python3 web/serve.py`.
-Screenshots land in `scripts/headless/out/` unless `--screenshot` overrides
-it.
-
-```bash
-PLAYWRIGHT_MODULE=/path/to/node_modules/playwright/index.mjs \
-CHROMIUM_PATH=/path/to/chrome \
-node scripts/headless/llm.mjs --url http://127.0.0.1:8010/
-```
 
 ## Engine
 
