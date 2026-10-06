@@ -1,6 +1,6 @@
 # Variant A LoRA fine-tune — a-norules
 
-machine: Linux x86_64
+machine: x86_64
 model: qwen2.5-0.5b-instruct-q4_0.gguf
 adapter: a-norules (no rule text in the prefix)
 LoRA: rank 8, alpha 16, q/k/v/o

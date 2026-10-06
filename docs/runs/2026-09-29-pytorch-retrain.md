@@ -156,7 +156,7 @@ existing test's 2e-2 tolerance. See `tests/lean-parity/README.md` for the
 artifacts and how to rerun this against an `llm-web` checkout.
 
 Burn's published run (`docs/runs/2026-09-20-ft-b-16-s3-300.md`) reports
-`machine: Linux x86_64` — the exact same `uname` as this
+`machine: x86_64` — the exact same `uname` as this
 machine, so it is the same physical 3080 — at 92.4s/300 steps, roughly 3x
 faster than this section's uncontended 276.4s. Its doc also carries a
 templated "the Metal GPU is shared with another repo's training job" line
