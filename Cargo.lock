@@ -2772,11 +2772,13 @@ dependencies = [
  "clap",
  "life",
  "llm-wasm",
+ "pollster",
  "safetensors 0.4.5",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "wgpu",
 ]
 
 [[package]]

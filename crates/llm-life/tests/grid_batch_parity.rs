@@ -18,6 +18,21 @@ fn device() -> <B as burn::tensor::backend::Backend>::Device {
     Default::default()
 }
 
+// Burn/cubecl panics inside the wgpu runtime when there is no adapter
+// (CI runners have no GPU), so probe for one with wgpu directly before
+// touching anything Burn-related. cubecl's AutoGraphicsApi only ever
+// tries the platform's primary backend (Vulkan/Metal/Dx12/WebGPU, never
+// the GL software fallback), so the probe is restricted to PRIMARY too —
+// otherwise a GL-only software adapter would make this probe see a GPU
+// that cubecl itself cannot reach, and the panic below would still fire.
+fn has_wgpu_adapter() -> bool {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::PRIMARY,
+        ..Default::default()
+    });
+    pollster::block_on(instance.request_adapter(&Default::default())).is_ok()
+}
+
 fn argmax2(v: &[f32], row: usize) -> usize {
     if v[2 * row] >= v[2 * row + 1] {
         0
@@ -28,6 +43,10 @@ fn argmax2(v: &[f32], row: usize) -> usize {
 
 #[test]
 fn bert_batched_matches_per_cell_labels() {
+    if !has_wgpu_adapter() {
+        eprintln!("skipped: no GPU adapter");
+        return;
+    }
     let device = device();
     let cfg = BertConfig::small(8, 1, 1);
     let model = cfg.init::<B>(&device);
@@ -60,6 +79,10 @@ fn bert_batched_matches_per_cell_labels() {
 
 #[test]
 fn vec_mlp_batched_matches_per_cell_labels() {
+    if !has_wgpu_adapter() {
+        eprintln!("skipped: no GPU adapter");
+        return;
+    }
     let device = device();
     let cfg = Mlp2Config::new(8);
     let model = cfg.init::<B>(&device);

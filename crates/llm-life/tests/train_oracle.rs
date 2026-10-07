@@ -299,6 +299,17 @@ fn mask_out<B: burn::prelude::Backend>(
     Tensor::from_data(TensorData::new(out, [t, t]), device)
 }
 
+// Same probe as grid_batch_parity.rs: cubecl's AutoGraphicsApi only ever
+// tries the platform's primary backend, so the probe is restricted to
+// PRIMARY to match what the Wgpu backend will actually attempt.
+fn has_wgpu_adapter() -> bool {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::PRIMARY,
+        ..Default::default()
+    });
+    pollster::block_on(instance.request_adapter(&Default::default())).is_ok()
+}
+
 fn max_abs_diff(a: &[f32], b: &[f32]) -> f32 {
     assert_eq!(a.len(), b.len());
     a.iter().zip(b).fold(0f32, |m, (x, y)| m.max((x - y).abs()))
@@ -323,6 +334,10 @@ fn engine_logits(w: &Weights, answer: &[u32], device: &WgpuDevice) -> Vec<f32> {
 
 #[test]
 fn train_model_matches_the_engine_with_zero_lora() {
+    if !has_wgpu_adapter() {
+        eprintln!("skipped: no GPU adapter");
+        return;
+    }
     let device = WgpuDevice::default();
     let w = weights(0xC0FFEE);
     let answer = [7u32, 11u32];
@@ -351,6 +366,10 @@ fn train_model_matches_the_engine_with_zero_lora() {
 /// loss must produce a gradient for the LoRA `a`/`b` matrices.
 #[test]
 fn autodiff_backend_agrees_and_produces_gradients() {
+    if !has_wgpu_adapter() {
+        eprintln!("skipped: no GPU adapter");
+        return;
+    }
     type AB = Autodiff<Wgpu>;
     let device = WgpuDevice::default();
     let w = weights(0xC0FFEE);
