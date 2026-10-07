@@ -392,7 +392,7 @@ few-shot is the only configuration with a non-zero IoU at the model's own
 threshold: 0.32–0.33 on the random seeds, 0.33 on the glider. The glider's
 IoU (0.33) is a much harsher number than its accuracy (0.9985) or the earlier
 Otsu accuracy (0.9961) suggested — it says the model's alive set overlaps
-true Life's by exactly a third, which is the number TC asked for.
+true Life's by exactly a third.
 
 ### Per-case recall (glider and seed 1), B3/S23
 
@@ -426,7 +426,7 @@ prefix's worked examples explicitly teach `dead + 3 -> 1`. Its weakest class
 is instead `survive-2` (0.15–0.20) — a live cell with exactly 2 neighbours,
 which the six examples cover only once and which is easily confused with
 `survive-3`/`death-crowded` since all three involve an already-alive cell.
-So TC's hypothesis holds for variant B's rule-only regime, but
-few-shot moves the failure mode from "can't birth" to "can't tell 2 neighbors
+So the birth-fails-first hypothesis holds for variant B's rule-only regime,
+but few-shot moves the failure mode from "can't birth" to "can't tell 2 neighbors
 from 3 on an already-alive cell" — a harder, more specific confusion than a
 blanket bias toward `0`.
