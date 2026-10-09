@@ -24,8 +24,8 @@ pub struct GenScore {
     /// Fraction of true-*dead* cells the model also calls dead (specificity):
     /// |pred dead ∩ true dead| / |true_dead|. This is the number a dead-cell
     /// majority can inflate `accuracy` around while alive_recall looks fine —
-    /// it catches the model over-predicting alive (TC's "13 instead of
-    /// 5" case) even when every true-alive cell is still covered.
+    /// it catches the model over-predicting alive even when every
+    /// true-alive cell is still covered.
     pub dead_recall: f64,
     /// Alias of `precision`: |pred alive ∩ true alive| / |model_live|.
     pub alive_precision: f64,
@@ -38,8 +38,8 @@ pub struct GenScore {
     /// mean assigned to cells it says are dead. 0 = the model is not
     /// separating them at all.
     pub confidence_gap: f64,
-    /// Hamming distance: number of cells where pred != true. The "mutation
-    /// count per generation" TC asked accuracy alone to not hide.
+    /// Hamming distance: number of cells where pred != true. The mutation
+    /// count per generation, which accuracy alone hides.
     pub wrong_cells: usize,
     pub true_live: usize,
     pub model_live: usize,
@@ -348,8 +348,8 @@ mod tests {
         assert_eq!(grid.live_count(), 0);
     }
 
-    // TC's complaint: "99.80% accuracy" with 13 alive predicted vs 5
-    // true feels wrong. IoU, Hamming and F1 are the numbers that catch it.
+    // A 99.80% accuracy figure with 13 alive predicted vs 5 true looks
+    // fine but is wrong. IoU, Hamming and F1 are the numbers that catch it.
     #[test]
     fn iou_and_f1_punish_overshooting_a_small_true_set() {
         // 4x4 grid, true alive = {0, 1, 2, 3, 4} (5 cells), model alive =
@@ -372,8 +372,8 @@ mod tests {
         assert!(s.iou < 0.4, "13-vs-5 overshoot should read far below 'looks right'");
     }
 
-    // TC's exact case, restated for the new per-class fields: 5 true
-    // alive, model predicts 13 alive (8 false positives, 0 false negatives).
+    // The 13-vs-5 overshoot case, restated for the new per-class fields: 5
+    // true alive, model predicts 13 alive (8 false positives, 0 false negatives).
     // alive_recall reads perfect while dead_recall and IoU expose the
     // overshoot that plain accuracy hides.
     #[test]
@@ -444,7 +444,8 @@ mod tests {
 
         // A model that answers dead everywhere gets birth cases wrong (it
         // fails to birth) and stay-dead cases right (it already answers 0),
-        // matching TC's "birth first" hypothesis.
+        // matching the hypothesis that birth is the failure mode that
+        // shows up first.
         let all_dead = Grid::new(4, 4);
         let cases = per_case_recall(&input, &all_dead, &rule);
         for (case, c) in cases {
