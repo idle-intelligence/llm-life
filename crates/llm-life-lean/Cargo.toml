@@ -10,9 +10,9 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["native"]
-# Backend selection lives here, in the consumer crate: lean's `native-bin`
-# brings pollster (Engine::new) on native, `wasm` switches wgpu to WebGPU.
-native = ["lean/native-bin", "dep:pollster"]
+# Backend selection lives here, in the consumer crate: pollster blocks on
+# the async load natively, lean's `wasm` switches wgpu to WebGPU.
+native = ["dep:pollster"]
 web = [
     "lean/wasm",
     "dep:wasm-bindgen",
@@ -29,9 +29,9 @@ web-mt = ["web", "lean/threads", "dep:wasm-bindgen-rayon"]
 
 [dependencies]
 life = { path = "../life" }
-# The engine: crates/lean in idle-intelligence/llm-web, pinned to a rev on
-# that repo's lean-release branch.
-lean = { git = "https://github.com/idle-intelligence/llm-web", rev = "878b1a1009455c176281c7ab7e4864c169338d62", default-features = false }
+# The engine's forward pass: crates/lean-core in idle-intelligence/llm-web
+# (positions, masks, sliced head, KV cache, LoRA), pinned to a rev.
+lean = { package = "lean-core", git = "https://github.com/idle-intelligence/llm-web", rev = "1fce23d866c23fb6f3635abb51db52c50ff87808", default-features = false }
 anyhow = { workspace = true }
 wgpu = "26"
 pollster = { version = "0.3", optional = true }
