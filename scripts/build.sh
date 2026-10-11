@@ -162,4 +162,10 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
+# --- Target features: every wasm keeps SIMD, the threads build keeps atomics ---
+echo "==> Checking wasm target features"
+FEATURE_ARGS=(_site/web/pkg/life_bg.wasm +simd128 -- _site/web/pkg-llm/llm_life_bg.wasm +simd128 -- _site/web/pkg-lean/llm_life_lean_bg.wasm +simd128)
+[ -n "$BUILD_THREADS" ] && FEATURE_ARGS+=(-- _site/web/pkg-lean-mt/llm_life_lean_bg.wasm +simd128 +atomics)
+python3 scripts/check_wasm_features.py "${FEATURE_ARGS[@]}"
+
 echo "==> Wrote _site (tag $TAG)"
