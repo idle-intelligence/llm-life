@@ -55,8 +55,12 @@ wasm-pack build crates/llm-life-lean --target web --out-dir ../../web/pkg-lean -
 if [ -n "$BUILD_THREADS" ]; then
   echo "==> Building llm-life-lean (CPU threads, nightly build-std, BUILD_THREADS=1)"
   OUT_MT="web/pkg-lean-mt"
+  # build-std compiles std from the toolchain's own source tree, so its
+  # paths need a remap too.
+  NIGHTLY_SRC="$(rustc +"$LEAN_NIGHTLY" --print sysroot)/lib/rustlib/src/rust"
+  REMAP_STD="target.'cfg(all())'.rustflags=[\"--remap-path-prefix=$NIGHTLY_SRC=/rust\"]"
   cargo +"$LEAN_NIGHTLY" build -p llm-life-lean --lib \
-    --config .cargo/threads.toml --config "$REMAP" \
+    --config .cargo/threads.toml --config "$REMAP" --config "$REMAP_STD" \
     --target wasm32-unknown-unknown --release \
     --no-default-features --features web-mt \
     -Z build-std=panic_abort,std
@@ -149,7 +153,9 @@ fi
 # coincidences inside wasm opcode/table bytes, not actual leaked paths.
 echo "==> Checking for local build paths"
 FAILED=0
-for f in _site/web/pkg/life_bg.wasm _site/web/pkg-llm/llm_life_bg.wasm _site/web/pkg-lean/llm_life_lean_bg.wasm; do
+LEAK_FILES="_site/web/pkg/life_bg.wasm _site/web/pkg-llm/llm_life_bg.wasm _site/web/pkg-lean/llm_life_lean_bg.wasm"
+[ -n "$BUILD_THREADS" ] && LEAK_FILES="$LEAK_FILES _site/web/pkg-lean-mt/llm_life_lean_bg.wasm"
+for f in $LEAK_FILES; do
   LEAKS="$(strings "$f" | grep -F -e "$HOME" -e "Code/" -e ".claude/" -e "/Users/" -e "/home/runner/" || true)"
   USER_HITS="$(strings "$f" | grep -Fw -e "$(id -un)" || true)"
   if [ -n "$LEAKS$USER_HITS" ]; then
