@@ -1,0 +1,13 @@
+# Extra flags for the CPU-threads wasm build (shared memory, wasm threads).
+# Merged on top of .cargo/config.toml with `cargo --config .cargo/threads.toml`.
+[target.wasm32-unknown-unknown]
+rustflags = [
+  "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
+  "-C", "link-arg=--shared-memory",
+  "-C", "link-arg=--max-memory=2684354560",
+  "-C", "link-arg=--import-memory",
+  "-C", "link-arg=--export=__wasm_init_tls",
+  "-C", "link-arg=--export=__tls_size",
+  "-C", "link-arg=--export=__tls_align",
+  "-C", "link-arg=--export=__tls_base",
+]
