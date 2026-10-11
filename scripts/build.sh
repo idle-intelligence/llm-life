@@ -24,7 +24,6 @@ set -euo pipefail
 
 BUILD_THREADS="${BUILD_THREADS:-}"
 LEAN_NIGHTLY="${LEAN_NIGHTLY:-nightly-2026-09-20}"
-MAX_MEMORY="${MAX_MEMORY:-2684354560}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -33,32 +32,38 @@ cd "$REPO_ROOT"
 # end up in panic messages otherwise). CARGO_HOME may not be under $HOME
 # (an isolated build uses its own), so remap the actual CARGO_HOME, not an
 # assumed $HOME/.cargo.
+# Per-target flags (+simd128) live in .cargo/config.toml and the threads
+# build's flags in .cargo/threads.toml; only these machine-dependent paths
+# are passed inline, with --config, which merges with the config files.
+# The cfg(all()) key puts them after any user-level cfg(all()) remap, so
+# they win (rustc applies the last matching remap); with --target they
+# still apply only to the wasm, not to host build scripts.
+# This moves to `trim-paths = "all"` in the release profile once cargo
+# stabilizes it.
 CARGO_HOME_PATH="${CARGO_HOME:-$HOME/.cargo}"
-export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$CARGO_HOME_PATH=/cargo --remap-path-prefix=$REPO_ROOT=/src"
+REMAP="target.'cfg(all())'.rustflags=[\"--remap-path-prefix=$CARGO_HOME_PATH=/cargo\", \"--remap-path-prefix=$REPO_ROOT=/src\"]"
 
 echo "==> Building life (classical engine)"
-wasm-pack build crates/life --target web --out-dir ../../web/pkg --features web
+wasm-pack build crates/life --target web --out-dir ../../web/pkg --features web --config "$REMAP"
 
 echo "==> Building llm-life (LLM/BERT/vector-space engine)"
-wasm-pack build crates/llm-life --target web --out-dir ../../web/pkg-llm --no-default-features --features web
+wasm-pack build crates/llm-life --target web --out-dir ../../web/pkg-llm --no-default-features --features web --config "$REMAP"
 
 echo "==> Building llm-life-lean (WebGPU + single-thread CPU)"
-RUSTFLAGS="$RUSTFLAGS -C target-feature=+simd128" \
-  wasm-pack build crates/llm-life-lean --target web --out-dir ../../web/pkg-lean --no-default-features --features web
+wasm-pack build crates/llm-life-lean --target web --out-dir ../../web/pkg-lean --no-default-features --features web --config "$REMAP"
 
 if [ -n "$BUILD_THREADS" ]; then
   echo "==> Building llm-life-lean (CPU threads, nightly build-std, BUILD_THREADS=1)"
   OUT_MT="web/pkg-lean-mt"
-  RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals,+simd128 \
--C link-arg=--shared-memory -C link-arg=--max-memory=$MAX_MEMORY \
--C link-arg=--import-memory \
--C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size \
--C link-arg=--export=__tls_align -C link-arg=--export=__tls_base \
---remap-path-prefix=$CARGO_HOME_PATH=/cargo --remap-path-prefix=$REPO_ROOT=/src" \
-    cargo +"$LEAN_NIGHTLY" build -p llm-life-lean --lib \
-      --target wasm32-unknown-unknown --release \
-      --no-default-features --features web-mt \
-      -Z build-std=panic_abort,std
+  # build-std compiles std from the toolchain's own source tree, so its
+  # paths need a remap too.
+  NIGHTLY_SRC="$(rustc +"$LEAN_NIGHTLY" --print sysroot)/lib/rustlib/src/rust"
+  REMAP_STD="target.'cfg(all())'.rustflags=[\"--remap-path-prefix=$NIGHTLY_SRC=/rust\"]"
+  cargo +"$LEAN_NIGHTLY" build -p llm-life-lean --lib \
+    --config .cargo/threads.toml --config "$REMAP" --config "$REMAP_STD" \
+    --target wasm32-unknown-unknown --release \
+    --no-default-features --features web-mt \
+    -Z build-std=panic_abort,std
   WASM_IN="target/wasm32-unknown-unknown/release/llm_life_lean.wasm"
   if [ ! -f "$WASM_IN" ]; then
     echo "error: expected build output not found at $WASM_IN" >&2
@@ -148,7 +153,9 @@ fi
 # coincidences inside wasm opcode/table bytes, not actual leaked paths.
 echo "==> Checking for local build paths"
 FAILED=0
-for f in _site/web/pkg/life_bg.wasm _site/web/pkg-llm/llm_life_bg.wasm _site/web/pkg-lean/llm_life_lean_bg.wasm; do
+LEAK_FILES="_site/web/pkg/life_bg.wasm _site/web/pkg-llm/llm_life_bg.wasm _site/web/pkg-lean/llm_life_lean_bg.wasm"
+[ -n "$BUILD_THREADS" ] && LEAK_FILES="$LEAK_FILES _site/web/pkg-lean-mt/llm_life_lean_bg.wasm"
+for f in $LEAK_FILES; do
   LEAKS="$(strings "$f" | grep -F -e "$HOME" -e "Code/" -e ".claude/" -e "/Users/" -e "/home/runner/" || true)"
   USER_HITS="$(strings "$f" | grep -Fw -e "$(id -un)" || true)"
   if [ -n "$LEAKS$USER_HITS" ]; then
@@ -160,5 +167,11 @@ done
 if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
+
+# --- Target features: every wasm keeps SIMD, the threads build keeps atomics ---
+echo "==> Checking wasm target features"
+FEATURE_ARGS=(_site/web/pkg/life_bg.wasm +simd128 -- _site/web/pkg-llm/llm_life_bg.wasm +simd128 -- _site/web/pkg-lean/llm_life_lean_bg.wasm +simd128)
+[ -n "$BUILD_THREADS" ] && FEATURE_ARGS+=(-- _site/web/pkg-lean-mt/llm_life_lean_bg.wasm +simd128 +atomics)
+python3 scripts/check_wasm_features.py "${FEATURE_ARGS[@]}"
 
 echo "==> Wrote _site (tag $TAG)"
