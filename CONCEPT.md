@@ -79,7 +79,7 @@ Escalations, each earned by a rule that needs it:
 Four cells: **{A, B} × {base, fine-tuned}**.
 
 - **Data**: generated from true Life (and other B/S rules). Millions of (neighborhood, next state) pairs, free.
-- **Method**: LoRA on a 0.5B (or full FT on 135M), PyTorch (see docs/pytorch-training.md), on M2 for small / 3080 or cloud for bigger. Same crate, native build. In-browser fine-tuning is a stretch flex.
+- **Method**: LoRA on a 0.5B (or full FT on 135M), PyTorch (see docs/pytorch-training.md), on M2 for small / 3080 or cloud for bigger. In-browser fine-tuning is a stretch flex.
 - **For A** the model learns a 512-entry truth table → 100% → it's a lookup table. Exhibit = before/after + accuracy-per-generation training curve.
 - **For B** the fine-tune teaches something real: that offset −W in a 1D sequence means "up." Training uses the same stencil mask (dense mask fine at 4096 tokens; kernel only needed for 65536 inference).
 - **The chess-from-transcripts test**: rulestring in the prefix, train on a random family of B/S rules, hold some out, test on unseen rules. Held-out rule accuracy proves "read the rule, apply it locally" vs memorization. This is the result to aim at.
