@@ -2095,6 +2095,39 @@ for (const btn of document.querySelectorAll('.gridsize-btn')) {
   btn.addEventListener('click', () => setBoardSize(Number(btn.dataset.w), Number(btn.dataset.h)));
 }
 
+// Headless measurement hook: runs one method at the current board size and
+// returns its timing and a correctness count against the rule.
+function cpuChain(fn, cells, generations) {
+  let cur = cells;
+  const t0 = performance.now();
+  for (let g = 0; g < generations; g++) cur = fn(cur, boardW, boardH);
+  return { totalSeconds: (performance.now() - t0) / 1000, binarized: cur };
+}
+window.__bench = {
+  setSize(n) { setBoardSize(n, n); lookupTable = lookupTable || buildLookupTable(); },
+  async run(method, gens) {
+    const board = Uint8Array.from(app.cells());
+    let r;
+    switch (method) {
+      case 'cpu-rule': r = cpuChain(jsLifeStepLoop, board, gens); break;
+      case 'cpu-lookup': r = cpuChain((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, gens); break;
+      case 'gpu-lookup-readback': r = await measureGpuLookupChain(board, gens); break;
+      case 'gpu-lookup-resident': r = await gpuLookupResidentRun(board, boardW, boardH, gens); r.totalSeconds = r.seconds; break;
+      case 'bitwise-resident': r = await bitwiseResidentRun(board, boardW, boardH, gens); r.totalSeconds = r.seconds; break;
+      case 'compiled-gates': r = await compiledResidentRun(board, boardW, boardH, gens); r.totalSeconds = r.seconds; break;
+      case 'ternary45-bitpacked': {
+        const m = await loadQuantModel('./life-ternary-45.json');
+        const { birthMask, surviveMask } = deriveMasksFromModel(m);
+        r = await bitwiseResidentRun(board, boardW, boardH, gens, undefined, birthMask, surviveMask); r.totalSeconds = r.seconds; break;
+      }
+      case 'stencil': r = await measureStencilLarge(board, boardW, boardH, gens); break;
+      default: throw new Error('unknown method ' + method);
+    }
+    return { totalSeconds: r.totalSeconds, board: Uint8Array.from(r.binarized) };
+  },
+  async runAll() { await runEveryRung(); return JSON.parse(JSON.stringify(lastResults, (k, v) => (k === 'binarized' ? undefined : v))); },
+};
+
 await init();
 setBoardSize(32, 32);
 setStatus('ready', 'ready');
