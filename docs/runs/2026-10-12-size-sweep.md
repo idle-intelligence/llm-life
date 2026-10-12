@@ -79,3 +79,87 @@ Every measured row matched the rule except the two base (untrained) LLM rows, wh
 - Below 128x128 the resident GPU methods are flat in time, not in rate: about 30 microseconds per generation at 16, 32 and 64 for the lookup, bitwise and compiled kernels alike, so cells per second grows in proportion to the number of cells. This is the cost of one submit per generation, not the kernel. The bitwise and compiled kernels leave that floor at about 512x512 (1.8e9 at 256, 6.8e9 at 512).
 - The stencil model peaks at 1.7e6 cells per second (1024x1024) and never reaches the CPU rule. Its 2048x2048 point is noisy (2.8, 4.8 and 10.2 s for three runs of one generation); 4096x4096 was not run.
 - The base LLM rows are wrong on both sizes (as an untrained model); the trained LLM rows are exact and run at 5 to 30 cells per second per-cell, 5e2 to 7e2 whole-grid.
+
+
+## Larger grids (8192, 16384), 2026-10-12
+
+Question: do the rates of the earlier table hold at 8192x8192 and 16384x16384, and where does a method stop working.
+
+### Parameters
+
+- Same machine, browser build, page, board (torus, random, seed 1, density 0.28) and `window.__bench` hook as above. Playwright's bundled Chromium 1243 (`channel: 'chromium'`, new headless), `--use-angle=metal`; the adapter reported vendor apple, architecture metal-3, isFallbackAdapter false, maxBufferSize and maxStorageBufferBindingSize 4294967292; `crossOriginIsolated` true; page served by `web/serve.py` (COOP/COEP). The built `web/pkg` was used as it was.
+- Sizes 4096 (re-run with these settings), 8192, 16384. Methods: the six listed in the tables. Not run: GPU lookup with read-back, stencil, LLM, BERT and 9-numbers rows.
+- Harness: a Node script with Playwright (not in the repo) that opens the page, calls `__bench.setSize(n)`, then per method: one 1-generation warm-up call, one 1-generation call to estimate the time per generation, N = ceil(0.75 s / estimate) capped at 20000, then the run is repeated with a smaller or larger N until one run of N generations lasts at least 0.7 s (N is capped at 20000). Then 5 timed calls of `__bench.run(method, N)`, each reporting `totalSeconds` (the same timed region as above). The tables give the median of the 5 and the minimum and maximum in brackets. One browser, one page per size, one method at a time.
+- Before each method the 1-minute load average was read with `uptime` and had to be at or below 2.5 (otherwise the script waits and retries); other processes were checked and memory free percentage read with `memory_pressure` (60 to 76 percent free throughout, no point stopped for pressure). A Chrome for Testing 1248 process tree, language servers and a local dev server that this run did not start were present (their load was not measured).
+- Correctness: after the timed runs, a run of C generations compared cell by cell, in the page, against the CPU rule run for C generations from the same board. C = min(N, 20) at 4096 and 8192, which gives C = N for the CPU methods and C = 1 or 2 where N is 1 or 2. At 16384 C = min(N, 2) for every method, to keep the CPU reference short.
+- N is below the 20 generation correctness minimum for the CPU methods at 8192 and 16384 (N = 1 or 2, each timed run lasting 1.1 to 5.6 s), and for GPU lookup kept on the GPU at 8192 (N = 1).
+- At 16384 the page's `drawBoard` throws `RangeError: Invalid array length` (it converts the 268 million cell board to a JavaScript array), so for that size only, the harness served the page with `drawBoard` returning at once when the width is above 8192. The drawing is outside every timed region. No file in the repo was changed for this.
+- The GPU lookup kept on the GPU run includes a final read-back that converts the board with `Array.from(new Uint32Array(...), ...)` inside its timed region.
+
+### Results, cells per second, median (minimum to maximum of 5)
+
+| method | 4096 | 8192 | 16384 |
+|---|---|---|---|
+| CPU rule | 5.02e+07 (4.99e+07 to 5.04e+07) | 4.9e+07 (4.88e+07 to 4.92e+07) | 4.86e+07 (2.97e+07 to 4.9e+07) |
+| CPU lookup table | 1.25e+08 (1.24e+08 to 1.26e+08) | 1.26e+08 (1.25e+08 to 1.26e+08) | 1.23e+08 (9e+07 to 1.23e+08) |
+| GPU lookup, kept on GPU | 1.44e+09 (1.42e+09 to 1.46e+09) | 4.38e+07 (4.36e+07 to 4.45e+07) | error |
+| bitwise GPU (hand-written) | 8.37e+10 (8.3e+10 to 8.42e+10) | 9.49e+10 (9.46e+10 to 9.52e+10) | 9.67e+10 (9.66e+10 to 9.78e+10) |
+| compiled gates GPU (89-parameter ternary network) | 7.83e+10 (7.8e+10 to 7.87e+10) | 8.81e+10 (8.8e+10 to 8.83e+10) | 9e+10 (8.97e+10 to 9.09e+10) |
+| 45-parameter ternary network, bit-packed GPU | 8.34e+10 (8.31e+10 to 8.41e+10) | 9.49e+10 (9.48e+10 to 9.53e+10) | 9.7e+10 (9.66e+10 to 9.75e+10) |
+
+### Results, seconds per generation (median)
+
+| method | 4096 | 8192 | 16384 |
+|---|---|---|---|
+| CPU rule | 0.334 | 1.37 | 5.52 |
+| CPU lookup table | 0.134 | 0.533 | 2.18 |
+| GPU lookup, kept on GPU | 0.0116 | 1.53 | error |
+| bitwise GPU (hand-written) | 0.0002 | 0.000707 | 0.00277 |
+| compiled gates GPU (89-parameter ternary network) | 0.000214 | 0.000761 | 0.00298 |
+| 45-parameter ternary network, bit-packed GPU | 0.000201 | 0.000707 | 0.00277 |
+
+### Results, generations timed per run (N)
+
+| method | 4096 | 8192 | 16384 |
+|---|---|---|---|
+| CPU rule | 3 | 1 | 1 |
+| CPU lookup table | 6 | 2 | 1 |
+| GPU lookup, kept on GPU | 47 | 1 | error |
+| bitwise GPU (hand-written) | 3731 | 1000 | 269 |
+| compiled gates GPU (89-parameter ternary network) | 3488 | 987 | 254 |
+| 45-parameter ternary network, bit-packed GPU | 3719 | 1061 | 269 |
+
+### Results, correctness (C generations compared, result)
+
+| method | 4096 | 8192 | 16384 |
+|---|---|---|---|
+| CPU rule | 3, True | 1, True | 1, True |
+| CPU lookup table | 6, True | 2, True | 1, True |
+| GPU lookup, kept on GPU | 20, True | 1, True | error |
+| bitwise GPU (hand-written) | 20, True | 20, True | 2, True |
+| compiled gates GPU (89-parameter ternary network) | 20, True | 20, True | 2, True |
+| 45-parameter ternary network, bit-packed GPU | 20, True | 20, True | 2, True |
+
+### Load average before / after each point (1 minute)
+
+| method | 4096 | 8192 | 16384 |
+|---|---|---|---|
+| CPU rule | 2.33 / 2.27 | 2.11 / 2.23 | 2 / 1.81 |
+| CPU lookup table | 2.27 / 2.25 | 2.23 / 2.11 | 1.81 / 1.71 |
+| GPU lookup, kept on GPU | 2.25 / 2.13 | 2.11 / 2.16 | 1.71 / n/a |
+| bitwise GPU (hand-written) | 2.13 / 2.12 | 2.16 / 2.17 | 1.74 / 1.76 |
+| compiled gates GPU (89-parameter ternary network) | 2.12 / 1.95 | 2.17 / 2.07 | 1.76 / 1.66 |
+| 45-parameter ternary network, bit-packed GPU | 1.95 / 2.11 | 2.07 / 2.14 | 1.66 / 1.51 |
+
+### Failures
+
+- GPU lookup, kept on GPU, 16384x16384: `page.evaluate: RangeError: Invalid array length at Array.from (<anonymous>) at gpuLookupResidentRun (compare/index.html:729:27)`. This is the final read-back conversion of 268 million cells to an array. No rate was obtained.
+- No device loss, out of memory or buffer limit error occurred at any other point.
+
+### Observations
+
+- The bitwise kernel, the compiled gates and the 45-parameter bit-packed network keep rising: bitwise 8.4e10 (4096), 9.5e10 (8192), 9.7e10 (16384) cells per second; compiled gates 7.8e10, 8.8e10, 9.0e10; 45-parameter network 8.3e10, 9.5e10, 9.7e10.
+- Compiled gates against bitwise: 0.94 (4096), 0.93 (8192), 0.93 (16384). The 45-parameter network against bitwise: 1.00 at all three sizes.
+- The CPU rule (4.9e7 to 5.0e7) and the CPU lookup table (1.23e8 to 1.26e8) stay flat from 4096 to 16384. At 16384 one run of each CPU method had a longer time than the other four (CPU rule 9.05 s against 5.5 s, CPU lookup 2.98 s against 2.18 s), which sets the minimum rates.
+- At 8192 the bitwise kernel (9.49e10) is 753 times the CPU lookup table (1.26e8) and 1940 times the CPU rule (4.9e7).
+- GPU lookup kept on the GPU is 1.4e9 at 4096 (N = 47, earlier table 1.97e9 with N = 85) and 4.4e7 at 8192 (N = 1, 1.53 s for one generation including the read-back conversion), below the CPU lookup table at 8192, and it does not run at 16384.
