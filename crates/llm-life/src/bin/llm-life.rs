@@ -14,11 +14,6 @@ use llm_life::variant_a;
 use llm_life::variant_b::{
     argmax_grid, fewshot_rules_prefix, p_alive, pack_sparse, rules_prefix, MAX_STENCIL_KEYS,
 };
-use llm_life::train::load::{load_train_model, LoraSpec};
-use llm_life::train::lora_io;
-use llm_life::train::model::TrainModel;
-use llm_life::train::run::{TrainArgs};
-use llm_life::train::run_a::{self, RunAArgs};
 use llm_wasm::gguf::Q4ModelLoader;
 use llm_wasm::kv::KvCache;
 use llm_wasm::model::{ForwardSpec, LlmModel, SparseMask};
@@ -74,15 +69,6 @@ enum Command {
         /// Filename prefix for this run's pictures and summary.
         #[arg(long, default_value = "b")]
         tag: String,
-        /// Run the forward through the f32 training model instead of the
-        /// Q4 engine, applying this LoRA file. Slower and heavier; it is
-        /// how a fine-tune is scored with the same pipeline as the base.
-        #[arg(long)]
-        lora: Option<PathBuf>,
-        /// The same f32 forward with no adapter — the control that says how
-        /// much of a fine-tuned row is the LoRA and how much is f32 weights.
-        #[arg(long)]
-        f32_forward: bool,
     },
     /// Run variant A (packed per-cell prompts) for N generations and write
     /// pictures + a text summary.
@@ -114,18 +100,6 @@ enum Command {
         /// Filename prefix for this attempt's pictures and summary.
         #[arg(long, default_value = "a")]
         tag: String,
-        /// Run the f32 training model with this LoRA adapter applied,
-        /// instead of the Q4 engine with no adapter. This is how
-        /// `artifacts/lora-a-{rules,norules}-300.bin` get scored on real
-        /// grids: the same forward the fine-tune was evaluated with
-        /// (`train::run_a::evaluate_a`), not the base model.
-        #[arg(long)]
-        adapter: Option<PathBuf>,
-        /// The adapter's prefix had no rule text (`lora-a-norules-*.bin`).
-        /// Must match how the adapter file was trained or its LoRA weights
-        /// are being applied under the wrong prompt.
-        #[arg(long)]
-        norules: bool,
     },
     /// Time one full forward pass at several sizes, to see how it scales.
     ///
@@ -156,104 +130,6 @@ enum Command {
         /// wall clock above them — they say where the work is.
         #[arg(long)]
         profile: bool,
-    },
-    /// Fine-tune variant B with LoRA on true Life (CONCEPT.md §5).
-    Train {
-        #[arg(long)]
-        gguf: PathBuf,
-        #[arg(long)]
-        tokenizer: PathBuf,
-        #[arg(long, default_value = "32")]
-        size: usize,
-        #[arg(long, default_value = "200")]
-        steps: usize,
-        #[arg(long, default_value = "1e-4")]
-        lr: f64,
-        #[arg(long, default_value = "8")]
-        rank: usize,
-        #[arg(long, default_value = "16")]
-        alpha: f32,
-        /// Adapt gate/up as well as q/k/v/o.
-        #[arg(long)]
-        lora_mlp: bool,
-        #[arg(long, default_value = "1")]
-        seed: u64,
-        #[arg(long, default_value = "25")]
-        eval_every: usize,
-        #[arg(long, default_value = "5")]
-        eval_grids: usize,
-        #[arg(long, default_value = "artifacts/lora-b.bin")]
-        out: PathBuf,
-        /// Research log for this run (machine, commit, command, tables).
-        #[arg(long)]
-        run_doc: Option<PathBuf>,
-        /// Wall-clock budget in seconds — the GPU is shared.
-        #[arg(long, default_value = "1500")]
-        max_secs: f64,
-        /// Load this pretrained LoRA file's own rank/alpha/params instead of
-        /// starting from a fresh zero-initialized adapter — combined with
-        /// `--steps 0`, scores an existing checkpoint (from this or another
-        /// variant) through variant B's whole-grid forward with no training.
-        #[arg(long)]
-        adapter: Option<PathBuf>,
-    },
-    /// Fine-tune variant A with LoRA on the exhaustive 512-case lookup
-    /// (CONCEPT.md §11).
-    TrainA {
-        #[arg(long)]
-        gguf: PathBuf,
-        #[arg(long)]
-        tokenizer: PathBuf,
-        /// `a-norules`: the prefix states only the answer format, no rule text.
-        #[arg(long)]
-        norules: bool,
-        #[arg(long, default_value = "400")]
-        steps: usize,
-        #[arg(long, default_value = "64")]
-        batch: usize,
-        #[arg(long, default_value = "3e-5")]
-        lr: f64,
-        #[arg(long, default_value = "8")]
-        rank: usize,
-        #[arg(long, default_value = "16")]
-        alpha: f32,
-        #[arg(long)]
-        lora_mlp: bool,
-        #[arg(long, default_value = "1")]
-        seed: u64,
-        #[arg(long, default_value = "20")]
-        eval_every: usize,
-        /// Number of the 512 cases used for the before-training and
-        /// periodic evals (the final eval always uses all 512).
-        #[arg(long, default_value = "128")]
-        eval_cases: usize,
-        /// Number of real grids (of 3) used for the before-training and
-        /// periodic evals (the final eval always uses all 3).
-        #[arg(long, default_value = "1")]
-        eval_grids: usize,
-        #[arg(long, default_value = "artifacts/lora-a.bin")]
-        out: PathBuf,
-        #[arg(long)]
-        run_doc: Option<PathBuf>,
-        #[arg(long, default_value = "900")]
-        max_secs: f64,
-    },
-    /// Train BERT of Life: a small transformer encoder from scratch on the
-    /// 512 exhaustive neighbourhood cases (CONCEPT.md §11 backlog item).
-    /// Sweeps several sizes plus the MLP baseline and the lookup floor in
-    /// one run; writes a checkpoint per size under `artifacts/bert/` and one
-    /// run doc with the whole table.
-    TrainBert {
-        #[arg(long, default_value = "artifacts/bert")]
-        out: PathBuf,
-        #[arg(long, default_value = "docs/runs/2026-09-20-bert.md")]
-        run_doc: PathBuf,
-        #[arg(long, default_value = "400")]
-        steps: usize,
-        #[arg(long, default_value = "1e-2")]
-        lr: f64,
-        #[arg(long, default_value = "1")]
-        seed: u64,
     },
     /// s/generation for a BERT-of-Life checkpoint through the native wgpu
     /// backend (the 3080's own GPU forward, not the CPU-ndarray path).
@@ -289,43 +165,6 @@ enum Command {
         #[arg(long, default_value = "5")]
         reps: usize,
     },
-    /// Train the vector-space variants (CONCEPT.md §12): (i) attention over
-    /// the 9 neighbourhood numbers (plus the MLP baseline, reused from
-    /// `bert::model::MlpOfLife`) and (ii) the whole-grid stencil-masked
-    /// transformer. Writes checkpoints under `--out` and one run doc with
-    /// both tables.
-    TrainVec {
-        #[arg(long, default_value = "artifacts/vector")]
-        out: PathBuf,
-        #[arg(long, default_value = "docs/runs/2026-09-20-vector.md")]
-        run_doc: PathBuf,
-        #[arg(long, default_value = "600")]
-        steps: usize,
-        #[arg(long, default_value = "1e-2")]
-        lr: f64,
-        #[arg(long, default_value = "1200")]
-        stencil_steps: usize,
-        #[arg(long, default_value = "3e-3")]
-        stencil_lr: f64,
-        #[arg(long, default_value = "1")]
-        seed: u64,
-    },
-    /// Rerun (i) only, with a corrected learning-rate schedule (cosine decay
-    /// instead of the fixed lr=1e-2/600-steps that collapsed the first
-    /// sweep — the same failure mode the BERT d=32/64 runs hit, fixed there
-    /// by lr 2e-3/800 steps). MLP h ∈ {8,16,32}, a 2-layer MLP body
-    /// (9->32->32->2), and Attn d ∈ {8,16,32}. Appends a corrected section
-    /// to `--run-doc` rather than overwriting the first sweep.
-    TrainVecILrFix {
-        #[arg(long, default_value = "artifacts/vector")]
-        out: PathBuf,
-        #[arg(long, default_value = "docs/runs/2026-09-20-vector.md")]
-        run_doc: PathBuf,
-        #[arg(long, default_value = "2000")]
-        steps: usize,
-        #[arg(long, default_value = "2e-3")]
-        lr: f64,
-    },
     /// s/generation for a vector-space checkpoint through the native wgpu
     /// backend, at 16x16/32x32/64x64 (stencil) — the same convention as
     /// `BenchBert`.
@@ -347,31 +186,16 @@ enum Command {
         #[arg(long, default_value = "5")]
         reps: usize,
     },
-    /// s/generation for every rung of `docs/LADDER.md`'s compute ladder, on
-    /// this machine, at the same board (density/seed) for every rung. "CPU
-    /// loop" and "512-entry lookup" are the plain-Rust equivalents of the
-    /// tab's live JS measurement; "LLM per pixel"/"LLM batched (adapter)"
-    /// are the same forward (`TrainRunnerA`, `a-norules`) narrated twice per
-    /// LADDER.md's own convention, measured only at `--llm-sizes` (each
-    /// cell is a real forward — never projected here); BERT of Life, "9
-    /// numbers -> centre" and stencil are cheap whole-batch/whole-grid
-    /// native forwards, measured at every `--sizes` entry. Prints one JSON
-    /// object and a human table; `--out-json`/`--out-md` also write them to
-    /// files.
+    /// s/generation for each way of computing a Life step, on this machine,
+    /// at the same board (density/seed) for every row. "CPU loop" and
+    /// "512-entry lookup" are the plain-Rust equivalents of the tab's live JS
+    /// measurement; BERT of Life, "9 numbers -> centre" and stencil are cheap
+    /// whole-batch/whole-grid native forwards, measured at every `--sizes`
+    /// entry. Prints one JSON object and a human table; `--out-json` and
+    /// `--out-md` also write them to files.
     BenchLadder {
         #[arg(long, value_delimiter = ',', default_value = "16,32,64")]
         sizes: Vec<usize>,
-        /// Sizes to actually run the two LLM rungs at (one real forward per
-        /// size, no projection). Sizes requested via `--sizes` but not here
-        /// are reported as `null` for those two rows.
-        #[arg(long, value_delimiter = ',', default_value = "16")]
-        llm_sizes: Vec<usize>,
-        #[arg(long, default_value = "models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf")]
-        gguf: PathBuf,
-        #[arg(long, default_value = "models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json")]
-        tokenizer: PathBuf,
-        #[arg(long, default_value = "artifacts/lora-a-norules-300.bin")]
-        adapter: PathBuf,
         #[arg(long, default_value = "artifacts/bert-d16-L1.bin")]
         bert_checkpoint: PathBuf,
         #[arg(long, default_value = "artifacts/mlp2-32-lrfix.bin")]
@@ -498,201 +322,6 @@ impl Runner {
 
         let n = grid.width() * grid.height();
         Ok((p_alive(&logits, packed.grid_start, n), secs))
-    }
-}
-
-/// Variant B through the f32 training forward (`TrainModel`) instead of the
-/// Q4 engine, optionally with a LoRA applied.
-///
-/// This is how a fine-tune is scored with the same pipeline as the base
-/// model: merging a LoRA back into Q4_0 weights would have to re-quantize
-/// them, and a rank-8 delta after a short run is comfortably smaller than
-/// Q4_0's step size — the merge would erase most of what was learned. So the
-/// eval runs the adapter where it was trained, in f32, and `--f32-forward`
-/// with no `--lora` is the control that separates "the LoRA did something"
-/// from "f32 weights did something".
-struct TrainRunner {
-    model: TrainModel<burn::backend::Wgpu>,
-    prefix: Vec<u32>,
-    dead: u32,
-    alive: u32,
-    lora: Option<PathBuf>,
-}
-
-impl TrainRunner {
-    fn new(
-        gguf: &Path,
-        tokenizer: &Path,
-        rule: &Rule,
-        lora: Option<&Path>,
-        device: &WgpuDevice,
-    ) -> Result<Self> {
-        let p = llm_life::train::run::prompt(tokenizer, rule)?;
-        // The file carries the `LoraSpec` it was trained with, so the
-        // adapter set is rebuilt exactly, not guessed.
-        let loaded = lora
-            .map(|path| lora_io::load::<burn::backend::Wgpu>(path, device))
-            .transpose()?;
-        let spec: Option<LoraSpec> = loaded.as_ref().map(|(s, _)| *s);
-        let mut model: TrainModel<burn::backend::Wgpu> =
-            load_train_model(gguf, &[p.dead, p.alive], spec, device)?;
-        if let Some((_, params)) = loaded {
-            anyhow::ensure!(
-                params.len() == model.lora_params().len(),
-                "LoRA file has {} matrices, this model wants {}",
-                params.len(),
-                model.lora_params().len()
-            );
-            model.set_lora_params(params);
-        }
-        println!(
-            "f32 forward: {} layers, hidden {}, lora {}",
-            model.config.num_layers,
-            model.config.hidden_size,
-            lora.map(|p| p.display().to_string()).unwrap_or_else(|| "none".into())
-        );
-        Ok(TrainRunner {
-            model,
-            prefix: p.prefix,
-            dead: p.dead,
-            alive: p.alive,
-            lora: lora.map(|p| p.to_path_buf()),
-        })
-    }
-}
-
-impl Stepper for TrainRunner {
-    fn step(&self, grid: &Grid) -> Result<(Vec<f32>, f64)> {
-        use burn::tensor::{Bool, TensorData};
-        let packed = llm_life::variant_b::pack(grid, &self.prefix, self.dead, self.alive);
-        let t = packed.tokens.len();
-        let masked_out: Vec<bool> = packed.allowed.iter().map(|&a| !a).collect();
-        let mask: burn::tensor::Tensor<burn::backend::Wgpu, 2, Bool> =
-            burn::tensor::Tensor::from_data(TensorData::new(masked_out, [t, t]), self.model.device());
-        let start = Instant::now();
-        let logits = self.model.forward(&packed.tokens, &packed.positions, &mask)?;
-        let v = logits.into_data().into_vec::<f32>().unwrap();
-        let secs = start.elapsed().as_secs_f64();
-        let n = grid.width() * grid.height();
-        Ok((p_alive(&v, packed.grid_start, n), secs))
-    }
-
-    fn header(&self) -> String {
-        format!(
-            "positions: bag (all grid tokens share one position id)\n\
-             mask: prefix (causal) + self + 8 neighbors (dense)\n\
-             head: sliced to the two answer tokens\n\
-             forward: f32 training model (pure Burn ops), lora {}\n\
-             prefix: {} tokens (rules only)\n",
-            self.lora.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "none".into()),
-            self.prefix.len(),
-        )
-    }
-}
-
-/// Variant A's f32-forward twin of `TrainRunner`: packed per-cell prompts
-/// (`variant_a::pack_chunk`), forwarded from scratch each chunk against
-/// `TrainModel<Wgpu>` with an optional LoRA adapter applied — the exact
-/// forward `train::run_a::evaluate_a` uses to score a fine-tune, run here on
-/// real 16x16/32x32 grids instead of the training eval's own grid set.
-struct TrainRunnerA {
-    model: TrainModel<burn::backend::Wgpu>,
-    prefix: Vec<u32>,
-    tok: Tokenizer,
-    chunk_cells: usize,
-    lora: Option<PathBuf>,
-    norules: bool,
-}
-
-impl TrainRunnerA {
-    fn new(
-        gguf: &Path,
-        tokenizer: &Path,
-        rule: &Rule,
-        lora: Option<&Path>,
-        norules: bool,
-        chunk_cells: usize,
-        device: &WgpuDevice,
-    ) -> Result<Self> {
-        let tok = Tokenizer::from_json(&std::fs::read(tokenizer).context("read tokenizer.json")?)?;
-        let p = run_a::prompt_a(tokenizer, rule, norules)?;
-        let loaded = lora
-            .map(|path| lora_io::load::<burn::backend::Wgpu>(path, device))
-            .transpose()?;
-        let spec: Option<LoraSpec> = loaded.as_ref().map(|(s, _)| *s);
-        let mut model: TrainModel<burn::backend::Wgpu> =
-            load_train_model(gguf, &[p.dead, p.alive], spec, device)?;
-        if let Some((_, params)) = loaded {
-            anyhow::ensure!(
-                params.len() == model.lora_params().len(),
-                "LoRA file has {} matrices, this model wants {}",
-                params.len(),
-                model.lora_params().len()
-            );
-            model.set_lora_params(params);
-        }
-        println!(
-            "f32 forward (variant A): {} layers, hidden {}, adapter {}, prefix {}",
-            model.config.num_layers,
-            model.config.hidden_size,
-            lora.map(|p| p.display().to_string()).unwrap_or_else(|| "none".into()),
-            if norules { "norules" } else { "rules" },
-        );
-        Ok(TrainRunnerA {
-            model,
-            prefix: p.prefix,
-            tok,
-            chunk_cells,
-            lora: lora.map(|p| p.to_path_buf()),
-            norules,
-        })
-    }
-}
-
-impl Stepper for TrainRunnerA {
-    fn step(&self, grid: &Grid) -> Result<(Vec<f32>, f64)> {
-        let n = grid.cells().len();
-        let mut p = vec![0.0f32; n];
-        let mut secs = 0.0;
-        for first in (0..n).step_by(self.chunk_cells) {
-            let cells: Vec<usize> = (first..(first + self.chunk_cells).min(n)).collect();
-            let chunk = variant_a::pack_chunk(
-                &cells,
-                |c| {
-                    let nb: Vec<u8> = grid
-                        .neighbor_indices(c)
-                        .iter()
-                        .map(|&j| grid.cells()[j])
-                        .collect();
-                    let arr: [u8; 8] = nb.try_into().unwrap();
-                    run_a::tokenize_case(&self.tok, &arr, grid.cells()[c]).unwrap()
-                },
-                self.prefix.len(),
-            );
-            let (tokens, positions, mask) =
-                run_a::full_sequence::<burn::backend::Wgpu>(&self.prefix, &chunk, self.model.device());
-            let start = Instant::now();
-            let logits = self.model.forward(&tokens, &positions, &mask)?;
-            let data = logits.into_data().into_vec::<f32>().unwrap();
-            secs += start.elapsed().as_secs_f64();
-            for (cell, v) in variant_a::p_alive_chunk(&data[self.prefix.len() * 2..], &chunk) {
-                p[cell] = v;
-            }
-        }
-        Ok((p, secs))
-    }
-
-    fn header(&self) -> String {
-        format!(
-            "positions: restart at the prefix for every cell\n\
-             mask: block-diagonal — prefix (causal) + the cell's own prompt\n\
-             head: sliced to the two answer tokens\n\
-             forward: f32 training model (pure Burn ops), no persistent KV cache — full prefix+chunk forward every chunk\n\
-             adapter: {}, prefix: {} tokens ({})\n",
-            self.lora.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "none".into()),
-            self.prefix.len(),
-            if self.norules { "norules" } else { "rules" },
-        )
     }
 }
 
@@ -1147,24 +776,13 @@ fn main() -> Result<()> {
             freerun,
             fewshot,
             tag,
-            lora,
-            f32_forward,
         } => {
             let title = "Variant B — stencil mask, native";
-            if lora.is_some() || f32_forward {
-                anyhow::ensure!(!fewshot, "--fewshot is not wired into the f32 forward");
-                let runner = TrainRunner::new(&gguf, &tokenizer, &rule, lora.as_deref(), &device)?;
-                run_pictures(
-                    &runner, title, &tag, &gguf, &rule, size, generations, &seeds, density, &out,
-                    freerun,
-                )
-            } else {
-                let runner = Runner::new(&gguf, &tokenizer, &rule, fewshot, &device)?;
-                run_pictures(
-                    &runner, title, &tag, &gguf, &rule, size, generations, &seeds, density, &out,
-                    freerun,
-                )
-            }
+            let runner = Runner::new(&gguf, &tokenizer, &rule, fewshot, &device)?;
+            run_pictures(
+                &runner, title, &tag, &gguf, &rule, size, generations, &seeds, density, &out,
+                freerun,
+            )
         }
         Command::PictureA {
             gguf,
@@ -1178,26 +796,14 @@ fn main() -> Result<()> {
             chunk_cells,
             fewshot,
             tag,
-            adapter,
-            norules,
         } => {
             let title = "Variant A — packed per-cell prompts, native";
-            if adapter.is_some() {
-                anyhow::ensure!(!fewshot, "--fewshot is not wired into the f32 forward");
-                let runner =
-                    TrainRunnerA::new(&gguf, &tokenizer, &rule, adapter.as_deref(), norules, chunk_cells, &device)?;
-                run_pictures(
-                    &runner, title, &tag, &gguf, &rule, size, generations, &seeds, density, &out,
-                    freerun,
-                )
-            } else {
-                let runner = RunnerA::new(&gguf, &tokenizer, &rule, chunk_cells, fewshot, &device)?;
-                println!("{} chunks per generation", runner.chunks(size * size));
-                run_pictures(
-                    &runner, title, &tag, &gguf, &rule, size, generations, &seeds, density, &out,
-                    freerun,
-                )
-            }
+            let runner = RunnerA::new(&gguf, &tokenizer, &rule, chunk_cells, fewshot, &device)?;
+            println!("{} chunks per generation", runner.chunks(size * size));
+            run_pictures(
+                &runner, title, &tag, &gguf, &rule, size, generations, &seeds, density, &out,
+                freerun,
+            )
         }
         Command::BenchForward {
             gguf,
@@ -1211,86 +817,6 @@ fn main() -> Result<()> {
         } => bench_forward(
             &gguf, &tokenizer, &rule, &sizes, &chunks, reps, density, fewshot, profile, &device,
         ),
-        Command::Train {
-            gguf,
-            tokenizer,
-            size,
-            steps,
-            lr,
-            rank,
-            alpha,
-            lora_mlp,
-            seed,
-            eval_every,
-            eval_grids,
-            out,
-            run_doc,
-            max_secs,
-            adapter,
-        } => llm_life::train::run::run(TrainArgs {
-            gguf,
-            tokenizer,
-            size,
-            steps,
-            lr,
-            lora: LoraSpec {
-                rank,
-                alpha,
-                mlp: lora_mlp,
-            },
-            seed,
-            eval_every,
-            eval_grids,
-            out,
-            run_doc,
-            adapter,
-            max_secs,
-        }),
-        Command::TrainA {
-            gguf,
-            tokenizer,
-            norules,
-            steps,
-            batch,
-            lr,
-            rank,
-            alpha,
-            lora_mlp,
-            seed,
-            eval_every,
-            eval_cases,
-            eval_grids,
-            out,
-            run_doc,
-            max_secs,
-        } => llm_life::train::run_a::run(RunAArgs {
-            gguf,
-            tokenizer,
-            rule,
-            norules,
-            steps,
-            batch,
-            lr,
-            lora: LoraSpec {
-                rank,
-                alpha,
-                mlp: lora_mlp,
-            },
-            seed,
-            eval_every,
-            eval_cases,
-            eval_grids,
-            out,
-            run_doc,
-            max_secs,
-        }),
-        Command::TrainBert {
-            out,
-            run_doc,
-            steps,
-            lr,
-            seed,
-        } => train_bert_sweep(&out, &run_doc, steps, lr, seed),
         Command::BenchBert {
             checkpoint,
             d_model,
@@ -1308,16 +834,6 @@ fn main() -> Result<()> {
             sizes,
             reps,
         } => bench_bert_cpu(&checkpoint, d_model, n_layers, n_heads, &sizes, reps),
-        Command::TrainVec {
-            out,
-            run_doc,
-            steps,
-            lr,
-            stencil_steps,
-            stencil_lr,
-            seed,
-        } => train_vec_sweep(&out, &run_doc, steps, lr, stencil_steps, stencil_lr, seed),
-        Command::TrainVecILrFix { out, run_doc, steps, lr } => train_vec_i_lr_fix(&out, &run_doc, steps, lr),
         Command::BenchVec {
             checkpoint,
             kind,
@@ -1329,10 +845,6 @@ fn main() -> Result<()> {
         } => bench_vec_native(&checkpoint, &kind, d_model, n_layers, n_heads, &sizes, reps, &device),
         Command::BenchLadder {
             sizes,
-            llm_sizes,
-            gguf,
-            tokenizer,
-            adapter,
             bert_checkpoint,
             mlp2_checkpoint,
             stencil_checkpoint,
@@ -1344,10 +856,6 @@ fn main() -> Result<()> {
             out_md,
         } => bench_ladder(
             &sizes,
-            &llm_sizes,
-            &gguf,
-            &tokenizer,
-            &adapter,
             &bert_checkpoint,
             &mlp2_checkpoint,
             &stencil_checkpoint,
@@ -1467,83 +975,6 @@ fn bench_bert_cpu(
     Ok(())
 }
 
-/// Sweep BERT of Life sizes + baselines, writing checkpoints and one run doc
-/// with the whole table (CONCEPT.md §11 backlog item, task step 3).
-fn train_bert_sweep(out: &Path, run_doc: &Path, steps: usize, lr: f64, seed: u64) -> Result<()> {
-    use llm_life::bert::train::{eval_lookup, train_bert, train_mlp};
-
-    let start = Instant::now();
-    let mut table = String::from(
-        "| model | params | steps to 512/512 | held-out acc (64 cases) | IoU 16\u{b2} gen 1..5 (seed 1) | IoU 16\u{b2} gen 1..5 (seed 2) | IoU 16\u{b2} gen 1..5 (seed 3) | alive recall gen 1..5 (seed 1/2/3) | dead recall gen 1..5 (seed 1/2/3) |\n\
-         |---|---|---|---|---|---|---|---|---|\n",
-    );
-
-    let fmt_iou = |v: &[f64]| -> String {
-        v.iter().map(|x| format!("{x:.3}")).collect::<Vec<_>>().join(",")
-    };
-    let fmt_field = |s: &[llm_life::score::GenScore], f: fn(&llm_life::score::GenScore) -> f64| -> String {
-        [&s[0..5], &s[5..10], &s[10..15]]
-            .iter()
-            .map(|seed_scores| seed_scores.iter().map(|g| format!("{:.3}", f(g))).collect::<Vec<_>>().join(","))
-            .collect::<Vec<_>>()
-            .join(" | ")
-    };
-
-    println!("=== lookup (zero-parameter floor) ===");
-    let (lp, lacc, lscores) = eval_lookup();
-    let liou: Vec<f64> = lscores.iter().map(|s| s.iou).collect();
-    table.push_str(&format!(
-        "| lookup (512-entry table) | {lp} | 0 (exact by construction) | {lacc:.4} | {} | {} | {} | {} | {} |\n",
-        fmt_iou(&liou[0..5]), fmt_iou(&liou[5..10]), fmt_iou(&liou[10..15]),
-        fmt_field(&lscores, |g| g.alive_recall), fmt_field(&lscores, |g| g.dead_recall)
-    ));
-
-    println!("=== mlp baseline ===");
-    let (mp, msteps, macc, mscores) = train_mlp(16, steps, lr, &out.join("mlp-16.bin"))?;
-    let miou: Vec<f64> = mscores.iter().map(|s| s.iou).collect();
-    table.push_str(&format!(
-        "| MLP (9->16->2) | {mp} | {} | {macc:.4} | {} | {} | {} | {} | {} |\n",
-        msteps.map(|s| s.to_string()).unwrap_or_else(|| format!(">{steps}")),
-        fmt_iou(&miou[0..5]), fmt_iou(&miou[5..10]), fmt_iou(&miou[10..15]),
-        fmt_field(&mscores, |g| g.alive_recall), fmt_field(&mscores, |g| g.dead_recall)
-    ));
-
-    for (d, l, h) in [(16usize, 1usize, 1usize), (32, 2, 2), (64, 2, 2)] {
-        println!("=== bert d={d} L={l} H={h} ===");
-        let r = train_bert(d, l, h, steps, lr, seed, &out.join(format!("bert-d{d}-L{l}.bin")))?;
-        let riou: Vec<f64> = r.scores.iter().map(|s| s.iou).collect();
-        table.push_str(&format!(
-            "| BERT d={d} L={l} H={h} | {} | {} | {:.4} | {} | {} | {} | {} | {} |\n",
-            r.params,
-            r.steps_to_512.map(|s| s.to_string()).unwrap_or_else(|| format!(">{steps}")),
-            r.held_out_acc,
-            fmt_iou(&riou[0..5]), fmt_iou(&riou[5..10]), fmt_iou(&riou[10..15]),
-            fmt_field(&r.scores, |g| g.alive_recall), fmt_field(&r.scores, |g| g.dead_recall)
-        ));
-    }
-
-    let doc = format!(
-        "# BERT of Life sweep\n\n\
-         machine: {}\n\
-         data: exhaustive 512 neighbourhood cases (train on all 512 minus a\n\
-         64-case held-out split; a finite function, CONCEPT.md §12), IoU rollout\n\
-         on real 16x16 grids, 5 generations, seeds 1-3, teacher-forced\n\
-         (each generation starts from true Life, same convention as\n\
-         `docs/runs/2026-09-20-a-rollout.md`).\n\
-         steps budget: {steps}, lr {lr}, seed {seed}\n\
-         wall clock: {:.1}s\n\n\
-         ## Table\n\n{table}\n",
-        machine(),
-        start.elapsed().as_secs_f64(),
-    );
-    if let Some(dir) = run_doc.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(run_doc, doc)?;
-    println!("\nwrote {}", run_doc.display());
-    Ok(())
-}
-
 /// s/generation for a vector-space checkpoint through native wgpu.
 /// `attn` always runs at 16x16 (one forward per cell, batched as one
 /// tensor); `stencil` runs at every size in `sizes` (one forward for the
@@ -1628,236 +1059,6 @@ fn bench_vec_native(
         }
         other => anyhow::bail!("unknown --kind {other} (expected attn or stencil)"),
     }
-    Ok(())
-}
-
-/// Sweep the vector-space variants (CONCEPT.md §12) and write one run doc
-/// with both tables: (i) MLP + attention on the 9-number neighbourhood
-/// (reusing `bert::train::train_mlp` and `bert::data::split_512`'s 512-case
-/// convention) and (ii) the whole-grid stencil transformer, generalising
-/// from a 16x16 training grid to a 32x32 rollout with the same weights.
-fn train_vec_sweep(
-    out: &Path,
-    run_doc: &Path,
-    steps: usize,
-    lr: f64,
-    stencil_steps: usize,
-    stencil_lr: f64,
-    _seed: u64,
-) -> Result<()> {
-    use llm_life::bert::train::train_mlp;
-    use llm_life::vector::train::{train_attn, train_stencil};
-
-    let start = Instant::now();
-
-    let fmt_iou = |v: &[f64]| -> String {
-        v.iter().map(|x| format!("{x:.3}")).collect::<Vec<_>>().join(",")
-    };
-    let fmt_field = |s: &[llm_life::score::GenScore], f: fn(&llm_life::score::GenScore) -> f64| -> String {
-        [&s[0..5], &s[5..10], &s[10..15]]
-            .iter()
-            .map(|seed_scores| seed_scores.iter().map(|g| format!("{:.3}", f(g))).collect::<Vec<_>>().join(","))
-            .collect::<Vec<_>>()
-            .join(" | ")
-    };
-
-    let mut table_i = String::from(
-        "| model | params | steps to 512/512 | held-out acc (64 cases) | IoU 16\u{b2} gen 1..5 (seed 1) | IoU 16\u{b2} gen 1..5 (seed 2) | IoU 16\u{b2} gen 1..5 (seed 3) | alive recall gen 1..5 (seed 1/2/3) | dead recall gen 1..5 (seed 1/2/3) |\n\
-         |---|---|---|---|---|---|---|---|---|\n",
-    );
-    for h in [8usize, 16, 32] {
-        println!("=== (i) MLP h={h} ===");
-        let (p, s, acc, scores) = train_mlp(h, steps, lr, &out.join(format!("mlp-{h}.bin")))?;
-        let iou: Vec<f64> = scores.iter().map(|s| s.iou).collect();
-        table_i.push_str(&format!(
-            "| MLP (9->{h}->2) | {p} | {} | {acc:.4} | {} | {} | {} | {} | {} |\n",
-            s.map(|s| s.to_string()).unwrap_or_else(|| format!(">{steps}")),
-            fmt_iou(&iou[0..5]), fmt_iou(&iou[5..10]), fmt_iou(&iou[10..15]),
-            fmt_field(&scores, |g| g.alive_recall), fmt_field(&scores, |g| g.dead_recall)
-        ));
-    }
-    for d in [8usize, 16, 32] {
-        println!("=== (i) attention d={d} ===");
-        let r = train_attn(d, steps, lr, &out.join(format!("attn-{d}.bin")))?;
-        let iou: Vec<f64> = r.scores.iter().map(|s| s.iou).collect();
-        table_i.push_str(&format!(
-            "| Attn (9 numbers, d={d}) | {} | {} | {:.4} | {} | {} | {} | {} | {} |\n",
-            r.params,
-            r.steps_to_512.map(|s| s.to_string()).unwrap_or_else(|| format!(">{steps}")),
-            r.held_out_acc,
-            fmt_iou(&iou[0..5]), fmt_iou(&iou[5..10]), fmt_iou(&iou[10..15]),
-            fmt_field(&r.scores, |g| g.alive_recall), fmt_field(&r.scores, |g| g.dead_recall)
-        ));
-    }
-
-    let mut table_ii = String::from(
-        "| model | params | steps to train IoU>=0.999 | train IoU | IoU 16\u{b2} gen 1..5 (seed 1/2/3) | IoU 32\u{b2} gen 1..5 (seed 1/2/3) | alive recall 32\u{b2} (seed 1/2/3) | dead recall 32\u{b2} (seed 1/2/3) |\n\
-         |---|---|---|---|---|---|---|---|\n",
-    );
-    for (d, l, h) in [(16usize, 1usize, 1usize), (32, 2, 2)] {
-        println!("=== (ii) stencil d={d} L={l} H={h} ===");
-        let r = train_stencil(d, l, h, stencil_steps, stencil_lr, &out.join(format!("stencil-d{d}-L{l}.bin")))?;
-        let iou16: Vec<f64> = r.scores_16.iter().map(|s| s.iou).collect();
-        let iou32: Vec<f64> = r.scores_32.iter().map(|s| s.iou).collect();
-        let iou16_s = format!("{} | {} | {}", fmt_iou(&iou16[0..5]), fmt_iou(&iou16[5..10]), fmt_iou(&iou16[10..15]));
-        let iou32_s = format!("{} | {} | {}", fmt_iou(&iou32[0..5]), fmt_iou(&iou32[5..10]), fmt_iou(&iou32[10..15]));
-        table_ii.push_str(&format!(
-            "| Stencil d={d} L={l} H={h} | {} | {} | {:.4} | {iou16_s} | {iou32_s} | {} | {} |\n",
-            r.params,
-            r.steps_to_converge.map(|s| s.to_string()).unwrap_or_else(|| format!(">{stencil_steps}")),
-            r.train_iou,
-            fmt_field(&r.scores_32, |g| g.alive_recall), fmt_field(&r.scores_32, |g| g.dead_recall)
-        ));
-    }
-
-    let named_cases = [
-        ("lonely cell dies (0 neighbours)", [0u8, 0, 0, 0, 0, 0, 0, 0], 1u8, 0u8),
-        ("underpopulation (1 neighbour)", [1, 0, 0, 0, 0, 0, 0, 0], 1, 0),
-        ("survival on 2", [1, 1, 0, 0, 0, 0, 0, 0], 1, 1),
-        ("survival on 3", [1, 1, 1, 0, 0, 0, 0, 0], 1, 1),
-        ("birth on 3", [1, 1, 1, 0, 0, 0, 0, 0], 0, 1),
-        ("overcrowding (4 neighbours)", [1, 1, 1, 1, 0, 0, 0, 0], 1, 0),
-    ];
-    let mut cases_table = String::from("| case (000/0X0/000 style, B3/S23) | neighbours (NW,N,NE,W,E,SW,S,SE) | self | -> next |\n|---|---|---|---|\n");
-    for (label, nb, self_state, next) in named_cases {
-        cases_table.push_str(&format!(
-            "| {label} | {} | {self_state} | {next} |\n",
-            nb.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(" ")
-        ));
-    }
-
-    let doc = format!(
-        "# Vector-space variants (CONCEPT.md \u{a7}12/\u{a7}13/\u{a7}14)\n\n\
-         machine: {}\n\
-         wall clock: {:.1}s\n\n\
-         (i) \"3x3 -> centre, as numbers\": no tokens, the 9 neighbourhood values\n\
-         (8 neighbours + self, `bert::data`'s order) enter as floats. MLP is\n\
-         `bert::model::MlpOfLife` (9->h->2), reused as-is (see\n\
-         `vector::model` doc comment for why this is already \"an MLP\n\
-         (9->h->1)\" up to the 2-class head every other model here shares).\n\
-         Attention is `vector::model::AttnOfLife`: 9 scalar tokens through a\n\
-         `Linear(1,d)`, learned absolute positions (fixed length, safe here),\n\
-         one self-attention block, centre-token readout. Trained on the same\n\
-         512-case split as BERT of Life (`bert::data::split_512`, 64 held out),\n\
-         same IoU rollout convention (16x16, 5 generations, seeds 1-3,\n\
-         teacher-forced).\n\
-         steps budget: {steps}, lr {lr}\n\n\
-         ## (i) table\n\n{table_i}\n\
-         ### named cases (B3/S23)\n\n{cases_table}\n\
-         (ii) \"grid -> grid, one channel\": jacobi2000's stencil-masked\n\
-         attention (`jacobi2000::model::Block`, `jacobi2000::mask::Mask::Stencil`,\n\
-         read-only reference, idea copied not the crate) with one scalar\n\
-         channel instead of jacobi2000's multi-channel PDE state — this is\n\
-         jacobi2000 with one channel, said explicitly. `vector::model::StencilOfLife`:\n\
-         cells enter as floats through a `Linear(1,d)`, **no** positional\n\
-         embedding (a learned absolute position would break generalisation\n\
-         the moment the grid size changes), 1-2 stencil-masked attention\n\
-         blocks (`vector::model::stencil_neighbors` — a flat [n*9] gather\n\
-         table, self+8 `life::Grid::neighbor_indices` neighbours, O(9n) not\n\
-         O(n^2), same toroidal boundary `life::Grid::step` uses),\n\
-         BCE-with-logits per cell.\n\
-         Trained on a density sweep (0.10-0.50, 9 densities x 8 seeds) of\n\
-         random 16x16 grids against the true next state; evaluated as an IoU\n\
-         rollout at 16x16 (in-distribution) **and 32x32** with the identical\n\
-         trained weights (only the mask tensor rebuilt for the new size) —\n\
-         the CONCEPT.md \u{a7}12 generalisation claim.\n\
-         steps budget: {stencil_steps}, lr {stencil_lr}\n\n\
-         ## (ii) table\n\n{table_ii}\n\
-         ## (iii) 3D Life (note, no code)\n\n\
-         Extending this to 3D Life changes exactly one thing structurally:\n\
-         the neighbourhood grows from the 8 Moore neighbours of a 3x3 patch to\n\
-         the 26 neighbours of a 3x3x3 cube (27 cells including self). Every\n\
-         piece of this rung's machinery carries over unchanged in kind: (i)'s\n\
-         attention model becomes a 27-token sequence through the same\n\
-         `Linear(1,d)` + learned positions + one attention block; (ii)'s\n\
-         stencil mask becomes a 3D-Moore mask (`life::Grid::neighbor_indices`\n\
-         generalised to a `width*height*depth` index space, still exactly 26\n\
-         allowed keys per query, still toroidal, still no positional\n\
-         embedding so it still generalises across box size). What does *not*\n\
-         carry over is the zero-parameter floor: a 9-bit index (2^9=512\n\
-         entries) into a lookup table is free in 2D, but 3D Life's neighbourhood\n\
-         is 27 bits, and 2^27 = 134,217,728 entries — the table itself becomes\n\
-         a ~134M-row array (order gigabytes at even one byte per entry,\n\
-         before any real B/S ruleset like B5766 needs more than 1 bit of\n\
-         state per cell). The \"brute force lookup\" rung of the compute ladder\n\
-         (docs/LADDER.md) simply disappears in 3D: it is no longer a\n\
-         reasonable thing to build, memory-bound or not. This is exactly the\n\
-         point CONCEPT.md \u{a7}12 makes about this project's rungs: the learned\n\
-         models ((i)/(ii)) generalise to this case with no architectural\n\
-         change and a parameter count in the hundreds to low thousands, while\n\
-         \"the classical answer\" (an explicit table) stops being available at\n\
-         all. 3D Life becomes jacobi2000's first discrete dataset precisely\n\
-         because jacobi2000's stencil machinery (a local mask over an\n\
-         N-dimensional grid) does not care whether N is 2 or 3.\n",
-        machine(),
-        start.elapsed().as_secs_f64(),
-    );
-    if let Some(dir) = run_doc.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(run_doc, doc)?;
-    println!("\nwrote {}", run_doc.display());
-    Ok(())
-}
-
-/// Rerun (i) only with a corrected lr schedule (see `Command::TrainVecILrFix`
-/// doc comment for why). Appends a "corrected" section to `run_doc`,
-/// keeping whatever the file already has (the first, lr=1e-2 sweep) as a
-/// documented lr-sensitivity result rather than overwriting it.
-fn train_vec_i_lr_fix(out: &Path, run_doc: &Path, steps: usize, lr: f64) -> Result<()> {
-    use llm_life::vector::train::{train_attn_decay, train_mlp2_decay, train_mlp_decay};
-
-    let start = Instant::now();
-    let fmt_iou = |v: &[f64]| -> String {
-        v.iter().map(|x| format!("{x:.3}")).collect::<Vec<_>>().join(",")
-    };
-
-    let mut table = String::from(
-        "| model | params | steps to 512/512 | held-out acc (64 cases) | IoU 16\u{b2} gen 1..5 (seed 1) | IoU 16\u{b2} gen 1..5 (seed 2) | IoU 16\u{b2} gen 1..5 (seed 3) |\n\
-         |---|---|---|---|---|---|---|\n",
-    );
-    let mut row = |name: &str, params: usize, steps_to_512: Option<usize>, held_out_acc: f64, scores: &[llm_life::score::GenScore]| {
-        let iou: Vec<f64> = scores.iter().map(|s| s.iou).collect();
-        table.push_str(&format!(
-            "| {name} | {params} | {} | {held_out_acc:.4} | {} | {} | {} |\n",
-            steps_to_512.map(|s| s.to_string()).unwrap_or_else(|| format!(">{steps}")),
-            fmt_iou(&iou[0..5]), fmt_iou(&iou[5..10]), fmt_iou(&iou[10..15]),
-        ));
-    };
-
-    for h in [8usize, 16, 32] {
-        println!("=== (i) lr-fix MLP h={h} ===");
-        let r = train_mlp_decay(h, steps, lr, &out.join(format!("mlp-{h}-lrfix.bin")))?;
-        row(&format!("MLP (9->{h}->2), lr-fix"), r.params, r.steps_to_512, r.held_out_acc, &r.scores);
-    }
-    {
-        println!("=== (i) lr-fix MLP2 h=32 (9->32->32->2) ===");
-        let r = train_mlp2_decay(32, steps, lr, &out.join("mlp2-32-lrfix.bin"))?;
-        row("MLP2 (9->32->32->2), lr-fix", r.params, r.steps_to_512, r.held_out_acc, &r.scores);
-    }
-    for d in [8usize, 16, 32] {
-        println!("=== (i) lr-fix Attn d={d} ===");
-        let r = train_attn_decay(d, steps, lr, &out.join(format!("attn-{d}-lrfix.bin")))?;
-        row(&format!("Attn (9 numbers, d={d}), lr-fix"), r.params, r.steps_to_512, r.held_out_acc, &r.scores);
-    }
-
-    let existing = std::fs::read_to_string(run_doc).unwrap_or_default();
-    let section = format!(
-        "\n## (i) corrected: cosine lr decay {lr}->{:.1e} over {steps} steps\n\n\
-         The first (i) sweep above used a fixed lr=1e-2 for 600 steps — the\n\
-         same setting that collapsed the BERT d=32/64 runs, fixed there by\n\
-         lr 2e-3/800 steps (docs/runs/2026-09-20-bert.md). This section\n\
-         reruns MLP h\u{2208}{{8,16,32}}, a 2-layer MLP body (9->32->32->2), and\n\
-         Attn d\u{2208}{{8,16,32}} with cosine decay from {lr} down to {:.1e} instead,\n\
-         same 512-case split, same 16\u{b2} rollout convention. Kept alongside the\n\
-         first sweep as a documented lr-sensitivity result, not a\n\
-         replacement of it.\n\
-         wall clock: {:.1}s\n\n\
-         {table}\n",
-        lr / 10.0, lr / 10.0, start.elapsed().as_secs_f64(),
-    );
-    std::fs::write(run_doc, existing + &section)?;
-    println!("\nappended corrected section to {}", run_doc.display());
     Ok(())
 }
 
@@ -1992,10 +1193,6 @@ fn ladder_table(rows: &[LadderRow], columns: &[usize]) -> String {
 #[allow(clippy::too_many_arguments)]
 fn bench_ladder(
     sizes: &[usize],
-    llm_sizes: &[usize],
-    gguf: &Path,
-    tokenizer: &Path,
-    adapter: &Path,
     bert_checkpoint: &Path,
     mlp2_checkpoint: &Path,
     stencil_checkpoint: &Path,
@@ -2071,45 +1268,6 @@ fn bench_ladder(
             cells.push((size, Some(median(times))));
         }
         rows.push(LadderRow { rung: "512-entry lookup".into(), sizes: cells, note: None });
-    }
-
-    // "LLM per pixel (adapter)" / "LLM batched (adapter)": the same forward
-    // (`TrainRunnerA`, `a-norules`), per LADDER.md's own note that the two
-    // narrations share one set of numbers. Measured only at `llm_sizes` —
-    // each cell is a real forward, never projected.
-    {
-        let have_model = gguf.exists() && tokenizer.exists() && adapter.exists();
-        if have_model {
-            let chunk_cells = 64;
-            let runner = TrainRunnerA::new(gguf, tokenizer, rule, Some(adapter), true, chunk_cells, device)?;
-            let mut measured = Vec::with_capacity(llm_sizes.len());
-            for &size in llm_sizes {
-                let grid = Grid::random(size, size, seed, density);
-                let _ = Stepper::step(&runner, &grid)?;
-                let (_, secs) = Stepper::step(&runner, &grid)?;
-                measured.push((size, secs));
-            }
-            let cells: Vec<(usize, Option<f64>)> = sizes
-                .iter()
-                .map(|&size| (size, measured.iter().find(|(s, _)| *s == size).map(|(_, v)| *v)))
-                .collect();
-            rows.push(LadderRow { rung: "LLM per pixel (adapter)".into(), sizes: cells.clone(), note: None });
-            rows.push(LadderRow {
-                rung: "LLM batched (adapter)".into(),
-                sizes: cells,
-                note: Some("identical forward to per-pixel (LADDER.md)".into()),
-            });
-        } else {
-            let note = format!(
-                "skipped: model files not local ({}, {}, {})",
-                gguf.display(),
-                tokenizer.display(),
-                adapter.display()
-            );
-            let cells: Vec<(usize, Option<f64>)> = sizes.iter().map(|&s| (s, None)).collect();
-            rows.push(LadderRow { rung: "LLM per pixel (adapter)".into(), sizes: cells.clone(), note: Some(note.clone()) });
-            rows.push(LadderRow { rung: "LLM batched (adapter)".into(), sizes: cells, note: Some(note) });
-        }
     }
 
     // "BERT of Life": whole-batch native forward (not one LLM call per
@@ -2242,11 +1400,6 @@ fn bench_ladder(
     }
 
     let mut columns: Vec<usize> = sizes.to_vec();
-    for &s in llm_sizes {
-        if !columns.contains(&s) {
-            columns.push(s);
-        }
-    }
     columns.sort_unstable();
 
     let device_str = machine();
@@ -2272,8 +1425,8 @@ fn bench_ladder(
              machine: {device_str}\n\
              backend: wgpu\n\
              board: density {density}, seed {seed}\n\
-             reps: {reps} (median), LLM rungs: 1\n\
-             sizes: {sizes:?}, llm-sizes: {llm_sizes:?}\n\n\
+             reps: {reps} (median)\n\
+             sizes: {sizes:?}\n\n\
              ## Table\n\n{table}\n",
         );
         std::fs::write(path, doc)?;
