@@ -141,7 +141,7 @@ impl LifeEngine {
     /// adapter loaded earlier, does not stack.
     ///
     /// `norules` must match how the adapter itself was trained/evaluated
-    /// (`train::run_a::prompt_a`'s `norules` flag — `lora-a-norules-*.bin`
+    /// (`lora-a-norules-*.bin`
     /// vs `lora-a-rules-*.bin`): `norules_prefix()` states no rule text,
     /// `rules_prefix()` states the actual rule, and *neither* carries the
     /// few-shot examples `load()`'s base-model fallback prefix does. Variant
@@ -367,8 +367,8 @@ impl LifeEngine {
         // `prefix_norules` stays `None`: the rules+few-shot prefix built
         // above is only a fallback for running the base model with no
         // adapter. `loadAdapter` rebuilds it to match whichever adapter's
-        // own training-time prefix (no few-shot either way — see
-        // `train::run_a::prompt_a`) it is about to apply.
+        // own training-time prefix (no few-shot either way) it is about to
+        // apply.
 
         log(&format!(
             "[llm-life] loaded: {} layers, hidden {}, prefix {} tokens, grid {}x{}",
@@ -468,8 +468,7 @@ impl LifeEngine {
 }
 
 /// BERT of Life (CONCEPT.md §11 backlog item), in the tab: the same 9-token
-/// neighbourhood-as-tokens encoder trained natively
-/// (`bert::train::train_bert`), run here one cell at a time so the
+/// neighbourhood-as-tokens encoder, run here one cell at a time so the
 /// narration strip reads the same way variant A's per-pixel mode does —
 /// "cell (r,c) · 9 tokens · encoder N layers · answer · t ms" — even though
 /// the model itself is tiny enough that a whole-grid batch would be
@@ -506,10 +505,8 @@ impl BertEngine {
         self.height = height;
     }
 
-    /// Load a checkpoint written by `bert::train::train_bert`
-    /// (`BinBytesRecorder<FullPrecisionSettings>`, cross-backend — trained
-    /// on `Autodiff<Wgpu>`, loaded here straight onto `Wgpu`, no conversion
-    /// step).
+    /// Load a Burn checkpoint (`BinBytesRecorder<FullPrecisionSettings>`,
+    /// cross-backend, loaded straight onto `Wgpu` with no conversion step).
     #[wasm_bindgen(js_name = loadCheckpoint)]
     pub fn load_checkpoint(
         &mut self,

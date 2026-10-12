@@ -1,7 +1,7 @@
 //! Training data for BERT of Life: the exhaustive 512 neighbourhood cases
 //! (CONCEPT.md §11/§12: "the smallest model that fits the 512 cases") plus
 //! real 16x16 grids for the IoU rollout, reusing variant A/B's generators
-//! (`life::Grid`, `train::data::sample_grid`).
+//! (`life::Grid`).
 //!
 //! Token order matches `Grid::neighbor_indices` (NW,N,NE,W,E,SW,S,SE) with
 //! the cell's own state appended last — the same bit layout the native
