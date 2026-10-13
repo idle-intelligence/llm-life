@@ -721,14 +721,17 @@ async function gpuLookupResidentRun(cells, w, h, generations, onProgress) {
       if (onProgress) onProgress(g + 1, generations);
     }
   }
+  await device.queue.onSubmittedWorkDone();
+  const seconds = (performance.now() - t0) / 1000;
   const finalBuf = generations % 2 === 0 ? a : b;
   const readEncoder = device.createCommandEncoder();
   readEncoder.copyBufferToBuffer(finalBuf, 0, stagingBuf, 0, n * 4);
   device.queue.submit([readEncoder.finish()]);
   await stagingBuf.mapAsync(GPUMapMode.READ);
-  const binarized = Array.from(new Uint32Array(stagingBuf.getMappedRange().slice(0)), (v) => (v ? 1 : 0));
+  const words = new Uint32Array(stagingBuf.getMappedRange().slice(0));
+  const binarized = new Uint8Array(n);
+  for (let i = 0; i < n; i++) binarized[i] = words[i] ? 1 : 0;
   stagingBuf.unmap();
-  const seconds = (performance.now() - t0) / 1000;
 
   paramsBuf.destroy(); lutBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
   return { seconds, binarized, generations };
@@ -832,6 +835,8 @@ async function bitwiseResidentRun(cells, w, h, generations, onProgress, birthMas
       if (onProgress) onProgress(g + 1, generations);
     }
   }
+  await device.queue.onSubmittedWorkDone();
+  const seconds = (performance.now() - t0) / 1000;
   const finalBuf = generations % 2 === 0 ? a : b;
   const readEncoder = device.createCommandEncoder();
   readEncoder.copyBufferToBuffer(finalBuf, 0, stagingBuf, 0, n * 4);
@@ -839,7 +844,6 @@ async function bitwiseResidentRun(cells, w, h, generations, onProgress, birthMas
   await stagingBuf.mapAsync(GPUMapMode.READ);
   const wordsOut = new Uint32Array(stagingBuf.getMappedRange().slice(0));
   stagingBuf.unmap();
-  const seconds = (performance.now() - t0) / 1000;
   const binarized = unpackBitsU32(wordsOut, w, h);
 
   paramsBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
@@ -910,6 +914,8 @@ async function compiledResidentRun(cells, w, h, generations, onProgress) {
       if (onProgress) onProgress(g + 1, generations);
     }
   }
+  await device.queue.onSubmittedWorkDone();
+  const seconds = (performance.now() - t0) / 1000;
   const finalBuf = generations % 2 === 0 ? a : b;
   const readEncoder = device.createCommandEncoder();
   readEncoder.copyBufferToBuffer(finalBuf, 0, stagingBuf, 0, n * 4);
@@ -917,7 +923,6 @@ async function compiledResidentRun(cells, w, h, generations, onProgress) {
   await stagingBuf.mapAsync(GPUMapMode.READ);
   const wordsOut = new Uint32Array(stagingBuf.getMappedRange().slice(0));
   stagingBuf.unmap();
-  const seconds = (performance.now() - t0) / 1000;
   const binarized = unpackBitsU32(wordsOut, w, h);
 
   paramsBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
@@ -1525,6 +1530,7 @@ function setBoardSize(w, h) {
   }
 }
 function drawBoard() {
+  if (boardW > 8192) return;
   const info = paint(boardCtx, boardW, boardH, Array.from(app.cells()), BOARD_CSS_SIZE, BOARD_MIN_PX);
   els.boardCaption.textContent = info.cropped
     ? `board (top-left ${info.cropW}×${info.cropH} of ${boardW}×${boardH})`
