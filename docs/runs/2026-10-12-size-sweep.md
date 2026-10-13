@@ -163,3 +163,98 @@ Question: do the rates of the earlier table hold at 8192x8192 and 16384x16384, a
 - The CPU rule (4.9e7 to 5.0e7) and the CPU lookup table (1.23e8 to 1.26e8) stay flat from 4096 to 16384. At 16384 one run of each CPU method had a longer time than the other four (CPU rule 9.05 s against 5.5 s, CPU lookup 2.98 s against 2.18 s), which sets the minimum rates.
 - At 8192 the bitwise kernel (9.49e10) is 753 times the CPU lookup table (1.26e8) and 1940 times the CPU rule (4.9e7).
 - GPU lookup kept on the GPU is 1.4e9 at 4096 (N = 47, earlier table 1.97e9 with N = 85) and 4.4e7 at 8192 (N = 1, 1.53 s for one generation including the read-back conversion), below the CPU lookup table at 8192, and it does not run at 16384.
+
+
+## GPU timing without the final read-back (2026-10-13)
+
+Question: how much of the earlier resident GPU figures was the final read-back of the board, and what are the rates when the timer stops when the GPU has finished the last generation.
+
+### What changed in the timed region
+
+- In `gpuLookupResidentRun`, `bitwiseResidentRun` (used for the hand-written bitwise kernel and for the 45-parameter bit-packed network) and `compiledResidentRun`, the timer now stops after the N chained dispatches have completed on the GPU: `await device.queue.onSubmittedWorkDone()` after the last submit, then the elapsed time is taken. The copy to the staging buffer, `mapAsync` and the conversion of the board happen after the timer, still in the same function, and the board is still returned for the correctness check. Upload stays outside the timed region as before.
+- Two changes that do not touch the timing: the lookup run keeps the read-back board in a `Uint8Array` instead of converting 268 million cells with `Array.from` (which threw `RangeError: Invalid array length` at 16384), and `drawBoard` returns at once above 8192 columns (it threw the same error). Nothing else in the page changed; the page's per-method figures in its own table for these methods now also exclude the final read-back.
+- Other methods (CPU, GPU lookup with read-back each generation, stencil, the 2-step and quantized rows) are unchanged and were not re-run. Their rows in the earlier tables stand.
+
+### Parameters
+
+- Same machine, browser and settings as the 8192 and 16384 section: Apple M2 (16 GB), Playwright's bundled Chromium (`channel: 'chromium'`, new headless), `--use-angle=metal`, adapter vendor apple, architecture metal-3, isFallbackAdapter not set (checked at every size, `crossOriginIsolated` true), page served by `web/serve.py` (COOP/COEP), board torus, random, seed 1, density 0.28. The page is served from source (`web/compare/index.html`); the built `web/pkg` was used as it was and no rebuild was needed.
+- Harness as in the 8192 and 16384 section, with the method list reduced to the four resident GPU methods and no patched `drawBoard`: one warm-up call, one 1-generation call, N = ceil(0.75 s / estimate) capped at 20000, recalibrated until a run of N lasts at least 0.7 s or N reaches the cap, then 5 timed calls. Median with minimum and maximum of the 5. One browser, one page per size, one method at a time. The 1-minute load average had to be at or below 2.5 before each point (recorded below); `memory_pressure` free percentage was 61 to 77 percent throughout.
+- Capped points (N = 20000) last less than 0.7 s because the timer no longer includes the read-back: 0.59 to 0.63 s at 16 to 1024 (shortest run of the 5 below). The calibration only stops early when N reaches the cap.
+- Correctness: after the timed runs, a run of C generations compared cell by cell in the page against the CPU rule run for C generations from the same board. C = min(N, 20), and C = min(N, 2) at 16384.
+- 16x16: the bitwise, compiled and 45-parameter kernels need a width that is a multiple of 32, so they have no point (a run at 16 reports a mismatch with the rule and is not a valid result).
+- Raw per-run timings: `cells_per_s.csv` (column `timing` marks the convention) in the job directory, not in the repo.
+
+### Results, cells per second, median (minimum to maximum of 5)
+
+| method | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| GPU lookup, kept on GPU | 8.56e+06 (8.43e+06 to 8.62e+06) | 3.4e+07 (3.38e+07 to 3.42e+07) | 1.36e+08 (1.36e+08 to 1.36e+08) | 5.35e+08 (5.34e+08 to 5.38e+08) | 1.96e+09 (1.96e+09 to 2e+09) | 2.7e+09 (2.7e+09 to 2.7e+09) | 3.38e+09 (3.37e+09 to 3.38e+09) | 3.7e+09 (3.68e+09 to 3.71e+09) | 3.63e+09 (3.6e+09 to 3.64e+09) | 3.55e+09 (3.54e+09 to 3.55e+09) | 2.29e+09 (2.23e+09 to 2.44e+09) |
+| bitwise GPU (hand-written) | n/a | 3.36e+07 (3.07e+07 to 3.43e+07) | 1.36e+08 (1.2e+08 to 1.37e+08) | 5.44e+08 (4.74e+08 to 5.49e+08) | 2.15e+09 (1.97e+09 to 2.2e+09) | 8.74e+09 (8.06e+09 to 8.78e+09) | 3.32e+10 (3.12e+10 to 3.35e+10) | 6.89e+10 (6.78e+10 to 6.9e+10) | 8.4e+10 (8.37e+10 to 8.41e+10) | 9.49e+10 (9.48e+10 to 9.52e+10) | 9.76e+10 (9.73e+10 to 9.8e+10) |
+| compiled gates GPU (89-parameter ternary network) | n/a | 3.35e+07 (3.31e+07 to 3.44e+07) | 1.33e+08 (1.33e+08 to 1.36e+08) | 5.36e+08 (5.35e+08 to 5.47e+08) | 2.15e+09 (2.13e+09 to 2.19e+09) | 8.57e+09 (8.54e+09 to 8.66e+09) | 3.27e+10 (3.24e+10 to 3.36e+10) | 6.52e+10 (6.42e+10 to 6.53e+10) | 7.85e+10 (7.83e+10 to 7.89e+10) | 8.82e+10 (8.8e+10 to 8.85e+10) | 9.05e+10 (9.01e+10 to 9.12e+10) |
+| 45-parameter ternary network, bit-packed GPU | n/a | 3.36e+07 (3.33e+07 to 3.42e+07) | 1.34e+08 (1.34e+08 to 1.36e+08) | 5.35e+08 (5.32e+08 to 5.4e+08) | 2.14e+09 (2.14e+09 to 2.19e+09) | 8.57e+09 (8.53e+09 to 8.74e+09) | 3.29e+10 (3.23e+10 to 3.32e+10) | 6.87e+10 (6.81e+10 to 6.89e+10) | 8.39e+10 (8.38e+10 to 8.41e+10) | 9.44e+10 (9.42e+10 to 9.45e+10) | 9.81e+10 (9.79e+10 to 9.86e+10) |
+
+### Results, seconds per generation (median)
+
+| method | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| GPU lookup, kept on GPU | 2.99e-05 | 3.01e-05 | 3.02e-05 | 3.06e-05 | 3.34e-05 | 9.71e-05 | 0.00031 | 0.00113 | 0.00462 | 0.0189 | 0.117 |
+| bitwise GPU (hand-written) | n/a | 3.05e-05 | 3.02e-05 | 3.01e-05 | 3.05e-05 | 3e-05 | 3.15e-05 | 6.08e-05 | 0.0002 | 0.000707 | 0.00275 |
+| compiled gates GPU (89-parameter ternary network) | n/a | 3.06e-05 | 3.07e-05 | 3.06e-05 | 3.05e-05 | 3.06e-05 | 3.21e-05 | 6.43e-05 | 0.000214 | 0.000761 | 0.00297 |
+| 45-parameter ternary network, bit-packed GPU | n/a | 3.05e-05 | 3.05e-05 | 3.06e-05 | 3.06e-05 | 3.06e-05 | 3.18e-05 | 6.1e-05 | 0.0002 | 0.000711 | 0.00274 |
+
+### Results, generations timed per run (N)
+
+| method | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| GPU lookup, kept on GPU | 20000 | 20000 | 20000 | 20000 | 20000 | 7732 | 2430 | 661 | 153 | 38 | 6 |
+| bitwise GPU (hand-written) | n/a | 20000 | 20000 | 20000 | 20000 | 20000 | 20000 | 12327 | 3584 | 1025 | 258 |
+| compiled gates GPU (89-parameter ternary network) | n/a | 20000 | 20000 | 20000 | 20000 | 20000 | 20000 | 11574 | 3442 | 929 | 241 |
+| 45-parameter ternary network, bit-packed GPU | n/a | 20000 | 20000 | 20000 | 20000 | 20000 | 20000 | 12315 | 3646 | 995 | 262 |
+
+### Results, shortest of the 5 timed runs (seconds)
+
+| method | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| GPU lookup, kept on GPU | 0.59 | 0.60 | 0.60 | 0.61 | 0.66 | 0.75 | 0.75 | 0.75 | 0.71 | 0.72 | 0.66 |
+| bitwise GPU (hand-written) | n/a | 0.60 | 0.60 | 0.60 | 0.60 | 0.60 | 0.63 | 0.75 | 0.71 | 0.72 | 0.71 |
+| compiled gates GPU (89-parameter ternary network) | n/a | 0.60 | 0.60 | 0.60 | 0.60 | 0.61 | 0.62 | 0.74 | 0.73 | 0.70 | 0.71 |
+| 45-parameter ternary network, bit-packed GPU | n/a | 0.60 | 0.60 | 0.61 | 0.60 | 0.60 | 0.63 | 0.75 | 0.73 | 0.71 | 0.71 |
+
+### Results, correctness (result, C generations compared)
+
+| method | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| GPU lookup, kept on GPU | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=2) |
+| bitwise GPU (hand-written) | n/a | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=2) |
+| compiled gates GPU (89-parameter ternary network) | n/a | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=2) |
+| 45-parameter ternary network, bit-packed GPU | n/a | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=20) | True (C=2) |
+
+### Load average before / after each point (1 minute)
+
+| method | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| GPU lookup, kept on GPU | 1.79 / 2.04 | 2.12 / 2.11 | 2.48 / 2.48 | 2.24 / 2.14 | 2.35 / 2.65 | 2.28 / 2.28 | 2.38 / 2.35 | 2.35 / 2.40 | 2.32 / 2.12 | 1.94 / 1.63 | 2.04 / 2.30 |
+| bitwise GPU (hand-written) | n/a | 2.11 / 2.11 | 2.48 / 2.44 | 2.14 / 2.14 | 2.32 / 2.32 | 2.28 / 2.41 | 2.35 / 2.48 | 2.40 / 2.29 | 2.12 / 2.11 | 1.63 / 1.77 | 2.30 / 2.41 |
+| compiled gates GPU (89-parameter ternary network) | n/a | 2.11 / 2.26 | 2.44 / 2.24 | 2.14 / 2.21 | 2.32 / 2.29 | 2.41 / 2.38 | 2.48 / 2.52 | 2.29 / 2.26 | 2.11 / 1.94 | 1.77 / 1.78 | 2.41 / 2.32 |
+| 45-parameter ternary network, bit-packed GPU | n/a | 2.26 / 2.48 | 2.24 / 2.24 | 2.21 / 2.35 | 2.29 / 2.51 | 2.38 / 2.38 | 2.29 / 2.29 | 2.26 / 2.56 | 1.94 / 1.94 | 1.78 / 2.04 | 2.32 / 2.19 |
+
+### Ratio of seconds per generation, earlier tables over this run
+
+The earlier figure includes the final read-back, from the first table of this document up to 2048 (3 runs, older session) and from the 8192 and 16384 section at 4096 and above. A ratio above 1 is the weight of the read-back in the earlier timed region (1.10 means the read-back was about 9 percent of it). The earlier and the new figures come from different sessions, so differences of a few percent at small sizes are within run to run variation.
+
+| method | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| GPU lookup, kept on GPU | 1.06 | 1.14 | 1.18 | 1.31 | 1.29 | 1.19 | 1.22 | 1.12 | 2.51 | 81.02 | n/a |
+| bitwise GPU (hand-written) | n/a | 1.10 | 1.05 | 1.12 | 1.15 | 1.28 | 1.36 | 1.02 | 1.00 | 1.00 | 1.01 |
+| compiled gates GPU (89-parameter ternary network) | n/a | 1.10 | 1.09 | 1.08 | 1.13 | 1.25 | 1.34 | 1.03 | 1.00 | 1.00 | 1.00 |
+| 45-parameter ternary network, bit-packed GPU | n/a | 1.03 | 1.10 | 1.13 | 1.16 | 1.27 | 1.34 | 1.02 | 1.01 | 0.99 | 1.01 |
+
+### Observations
+
+- Bitwise kernel, compiled gates and the 45-parameter network: the removal changes the figure by 1 to 15 percent up to 256x256, by a larger share at 512 and 1024 (the earlier time per generation was 1.25 to 1.36 times the new one), and by at most 3 percent from 2048 up (ratios 0.99 to 1.03). At 4096, 8192 and 16384 the read-back of a bit-packed board (a few MB to 32 MB) is negligible against N generations of 0.2 to 3 ms each.
+- Rates without the final read-back: bitwise 3.3e10 at 1024, 6.9e10 at 2048, 8.4e10 at 4096, 9.5e10 at 8192, 9.8e10 at 16384 cells per second. Compiled gates against bitwise: 0.93 to 1.00 at every size from 32 up (0.93 at 8192 and 16384). The 45-parameter network against bitwise: 0.99 to 1.01 from 128 up.
+- GPU lookup kept on the GPU: the read-back converted the board to an array, and the weight shows. Ratios of 1.1 to 1.3 up to 2048, 2.5 at 4096 (N = 47 earlier, 0.0116 s per generation earlier against 0.00462 s now) and 81 at 8192 (one generation of 1.53 s earlier, 0.0189 s per generation now). Its rate is 3.4e9 at 1024, 3.7e9 at 2048, 3.6e9 at 4096, 3.6e9 at 8192 and 2.3e9 at 16384 (N = 6, shortest run 0.66 s).
+- GPU lookup kept on the GPU now passes the CPU lookup table (1.17e8 at 64, 1.25e8 flat) at 64x64 (1.36e8) and is above it at every larger size; at 8192 it is 28 times the CPU lookup table (1.26e8). It no longer fails at 16384.
+- The bitwise kernel at 8192 is 753 times the CPU lookup table and at 16384 it is 794 times it (9.76e10 against 1.23e8 from the earlier section).
+- Below 256x256 every resident method is about 30 microseconds per generation, 3.0e-5 to 3.1e-5 s for the four methods at 32, 64 and 128. This floor is the same with and without the read-back.
+- The lookup kernel falls from 3.6e9 (8192) to 2.3e9 (16384). Its two buffers and the staging buffer are 1 GiB each at 16384 and the run was done with free memory down to 72 percent; no cause was investigated.
