@@ -63,9 +63,9 @@ fn per_cell_equals_whole_board() {
         let (w, h) = (16, 12);
         let b = board(w, h, 3);
         let all = pollster::block_on(m.p_alive(&b, w, h)).unwrap();
-        for i in 0..w * h {
+        for (i, expect) in all.iter().enumerate() {
             let one = pollster::block_on(m.p_alive_cell(&b, w, h, i)).unwrap();
-            assert!((one - all[i]).abs() < 1e-5, "{name} cell {i}: {one} vs {}", all[i]);
+            assert!((one - expect).abs() < 1e-5, "{name} cell {i}: {one} vs {expect}");
         }
     }
 }

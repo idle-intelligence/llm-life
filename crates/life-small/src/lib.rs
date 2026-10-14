@@ -96,7 +96,7 @@ impl Small {
 
 pub fn p_from_logits(kind: Kind, lg: &[f32]) -> Vec<f32> {
     match kind {
-        Kind::Bert | Kind::Mlp2 => lg.chunks_exact(2).map(|l| sigmoid(l[1] - l[0])).collect(),
+        Kind::Bert | Kind::Mlp2 => lg.as_chunks::<2>().0.iter().map(|l| sigmoid(l[1] - l[0])).collect(),
         Kind::Stencil => lg.iter().map(|&l| sigmoid(l)).collect(),
     }
 }
