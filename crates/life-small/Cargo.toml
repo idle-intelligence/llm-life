@@ -1,0 +1,32 @@
+[package]
+name = "life-small"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The three small Game of Life models (BERT of Life, the 9-number MLP, the stencil model) on the jacobi2000 life-models engine, with the WebGPU and single-thread CPU backends picked by capability"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+web = [
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:js-sys",
+    "dep:console_error_panic_hook",
+]
+
+[dependencies]
+# Weights are safetensors + config.json; the CPU path and the WGSL path read
+# the same bytes. Pinned by commit.
+life-models = { git = "https://github.com/ilnmtlbnm/jacobi2000", rev = "66c3a78a0a23220696271776dd5dc5690e694bf3", features = ["wgpu"] }
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+
+[dev-dependencies]
+life = { path = "../life" }
+pollster = "0.4"
+wgpu = "26"
