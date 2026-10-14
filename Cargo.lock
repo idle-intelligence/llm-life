@@ -2802,11 +2802,6 @@ dependencies = [
  "clap",
  "life",
  "llm-wasm",
- "pollster 0.3.0",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "wgpu",
 ]
 
 [[package]]
@@ -2839,21 +2834,14 @@ dependencies = [
  "burn",
  "byteorder",
  "clap",
- "console_error_panic_hook",
  "cubecl",
  "cubek-matmul",
- "getrandom 0.3.4",
- "js-sys",
  "minijinja",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tokenizers",
  "tracing",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "wgpu",
 ]
 
 [[package]]
