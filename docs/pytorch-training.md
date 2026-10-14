@@ -9,18 +9,17 @@ following the stack rule: Rust owns data generation and inference, Python
 trains, weights cross the boundary as safetensors + config.
 
 Training code lives under `pytorch/` (a `venv`, not committed). The Rust
-side keeps everything it had — `crates/life`, `crates/llm-life`'s packing,
-scoring, and the native/web engines are unchanged. Nothing was deleted:
-`crates/llm-life/src/train/*`, `bert/train.rs` and `vector/train.rs` still
-build and still produce the same checkpoints; this migration adds a second,
-parallel path rather than removing the first (that deletion is a separate,
-later decision once the published Hub weights point at the PyTorch output).
+side keeps `crates/life` and `crates/llm-life`'s packing, scoring and the
+native/web inference engines. The Rust training code (`train/*`,
+`bert/train.rs`, `vector/train.rs`) has been removed; it is in the git
+history at commit `6852d2f`.
 
-## The bridge: `tools export`
+## The bridge: the Burn checkpoint exporter (removed)
 
 `crates/llm-life/src/bin/export.rs` (features `native,cpu,export`, NdArray
-backend, no GPU) is a one-shot tool, not part of the ongoing build. It reads
-the published Burn checkpoints and writes:
+backend, no GPU) was a one-shot tool, since removed along with the Rust
+training code it depended on; it is in the git history at commit `6852d2f`.
+It read the published Burn checkpoints and wrote:
 
 - the three tiny models to safetensors, native tensor names (Burn's own
   `Linear`/`LayerNorm`/`Embedding` field names, e.g. `mha.query.weight`,
@@ -34,17 +33,8 @@ the published Burn checkpoints and writes:
   Burn module before any PyTorch code runs, so the PyTorch port has an exact
   target to match, not just an accuracy claim.
 
-Run once per checkpoint set:
-
-```bash
-cargo run --release -p llm-life --bin export --no-default-features \
-  --features native,cpu,export -- \
-  --stencil-life <dir with bert-d16-L1.bin, mlp2-32-lrfix.bin, stencil-d16-L1.bin> \
-  --lora <dir with lora-*.bin> \
-  --gguf <qwen2.5-0.5b-instruct-q4_0.gguf> \
-  --tokenizer <tokenizer.json> \
-  --out export-out
-```
+The parity tests below consume its output (`export-out/`), which was produced
+at that commit.
 
 ## Parity
 
@@ -92,7 +82,7 @@ score against a different head than the one every published number was
 measured with.
 
 `pytorch/test_lora_parity.py` loads the published `lora-b-16-s3-300`
-adapter (converted to PEFT layout by `tools export`) and runs the exact
+adapter (converted to PEFT layout by the exporter) and runs the exact
 16x16 grid (seed 1,000,000, density 0.28) the export tool ran through
 `TrainModel` on NdArray (CPU):
 
