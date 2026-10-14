@@ -15,9 +15,9 @@ export const MODEL_URLS = LOCAL ? {
   loraARules: './lora-a-rules-300.bin',
   loraB16: './lora-b-16-s3-300.bin',
   loraB32: './lora-b-32.bin',
-  bert: './bert-d16-L1.bin',
-  vecMlp: './mlp2-32-lrfix.bin',
-  vecStencil: './stencil-d16-L1.bin',
+  bert: './small/bert/model.safetensors',
+  vecMlp: './small/mlp2/model.safetensors',
+  vecStencil: './small/stencil/model.safetensors',
 } : {
   gguf: `${HF_QWEN_GGUF}/qwen2.5-0.5b-instruct-q4_0.gguf`,
   tokenizer: `${HF_QWEN_TOKENIZER}/tokenizer.json`,
@@ -25,7 +25,7 @@ export const MODEL_URLS = LOCAL ? {
   loraARules: `${HF_LORA}/lora-a-rules-300.bin`,
   loraB16: `${HF_LORA}/lora-b-16-s3-300.bin`,
   loraB32: `${HF_LORA}/lora-b-32.bin`,
-  bert: `${HF_STENCIL}/bert-d16-L1.bin`,
-  vecMlp: `${HF_STENCIL}/mlp2-32-lrfix.bin`,
-  vecStencil: `${HF_STENCIL}/stencil-d16-L1.bin`,
+  bert: `${HF_STENCIL}/bert/model.safetensors`,
+  vecMlp: `${HF_STENCIL}/mlp2/model.safetensors`,
+  vecStencil: `${HF_STENCIL}/stencil/model.safetensors`,
 };
