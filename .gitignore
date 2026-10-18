@@ -1,6 +1,7 @@
 /target
 /web/pkg
-/web/pkg-llm
+/web/pkg-small
+/web/small
 /web/models
 /web/*.bin
 /scripts/headless/out

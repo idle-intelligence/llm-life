@@ -150,7 +150,7 @@ the per-cell LLM is about twice as fast as one forward per cell in this build.
 In the earlier build of the same page (`docs/runs/2026-09-22-compare-tab.md`)
 batching was slightly slower, 31.97 s against 28.46 s. The stencil row measured
 0.0928 s in that earlier build; the later figure is reported as observed and
-was not investigated. The BERT of Life and 9-number rows run on the Burn engine
+was not investigated. The BERT of Life and 9-number rows were measured on the Burn engine
 and include a first-use pipeline-compile cost in some runs, which is why the two
 runs of that doc differ for them.
 
@@ -260,12 +260,6 @@ Native tests, no GPU and no model files needed (this is what CI runs, with
 cargo test --workspace
 ```
 
-Including the CPU (ndarray) vector-model equivalence test:
-
-```bash
-cargo test --workspace --features cpu
-```
-
 The classical Game of Life CLI:
 
 ```bash
@@ -275,8 +269,7 @@ cargo run -p life --bin life -- --size 32 --seed 42 --rule B3/S23 --generations 
 
 The native "picture" driver, the whole grid against Qwen2.5-0.5B-Instruct Q4_0
 (download the GGUF and `tokenizer.json` from the Qwen repositories linked above;
-`picture-a` is the per-cell variant, and `bench-ladder` times the small methods
-on this machine):
+`picture-a` is the per-cell variant):
 
 ```bash
 cargo run --release -p llm-life -- picture \
@@ -305,13 +298,15 @@ run one build at a time):
 
 ```bash
 wasm-pack build crates/life --target web --out-dir ../../web/pkg --features web
-wasm-pack build crates/llm-life --target web --out-dir ../../web/pkg-llm --no-default-features --features web
+wasm-pack build crates/life-small --target web --out-dir ../../web/pkg-small --features web
+wasm-pack build crates/llm-life-lean --target web --out-dir ../../web/pkg-lean --no-default-features --features web
 python3 web/serve.py            # http://127.0.0.1:8010/
 ```
 
 On the live pages, everything loads from Hugging Face. Adding `?local=1` to a
 page's URL switches it to local files: a `web/models` symlink to a local models
-directory for the base GGUF and tokenizer, and the adapter and small-model `.bin`
+directory for the base GGUF and tokenizer, the BERT, MLP and stencil safetensors in
+`web/small/<model>/model.safetensors` with their `config.json` beside them, and the adapter `.bin`
 files next to `web/index.html`. The checkpoints are not tracked in this repo:
 
 ```bash
@@ -346,8 +341,10 @@ file per run.
 
 ```
 crates/life/           classical B/S cellular automaton (the ground truth), + wasm wrapper
-crates/llm-life/       per-cell and whole-grid packing, scoring, PGM output, the small
-                       models (bert/, vector/), native driver src/bin/llm-life.rs
+crates/llm-life/       per-cell and whole-grid packing, scoring, PGM output,
+                       native driver src/bin/llm-life.rs
+crates/life-small/     BERT of Life, the 9-number MLP and the stencil model on the
+                       life-models engine (WebGPU or one CPU thread), + wasm wrapper
 crates/llm-life-lean/  the language-model methods on the lean engine (native and wasm)
 crates/life-lut-bench/ lookup-table and bit-packed Life, CPU and GPU, native benchmark
 web/                   demo page, compare/ (every method), fullscreen/, cellspeed/
@@ -363,7 +360,7 @@ CONCEPT.md             the design note the project started from
 The language-model methods run on `lean`, the project's wgpu and WGSL engine,
 from [llm-web](https://github.com/idle-intelligence/llm-web), pulled in as a git
 dependency pinned to a `rev`. BERT of Life, the 9-number MLP and the stencil
-model still run on Burn. A small patch this repo needs is vendored under
+model run on the life-models engine from the jacobi2000 repo. A small patch this repo needs is vendored under
 `patches/`. If a corporate proxy blocks Cargo's built-in git fetcher, set
 `CARGO_NET_GIT_FETCH_WITH_CLI=true`.
 

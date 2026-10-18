@@ -7,8 +7,8 @@
 // so this streams the single GET response and slices it into chunks itself.
 // Version tag on the engine URLs: browsers keep a wasm module at a fixed path
 // across rebuilds, even through a hard reload. Bump when either engine
-// (pkg-llm, pkg-lean) changes.
-const ENGINE_BUILD = '2026-10-04-release-02';
+// (pkg-small, pkg-lean) changes.
+const ENGINE_BUILD = '2026-10-15-small-01';
 // A message posted to this worker before its top-level `await import` below
 // finishes can be dropped rather than queued (observed in this browser: the
 // page's first 'load' message, sent right after `new Worker(...)`, arrived
@@ -17,14 +17,12 @@ const ENGINE_BUILD = '2026-10-04-release-02';
 const pending = [];
 self.onmessage = (e) => pending.push(e);
 
-// The small from-scratch models run on the Burn engine (pkg-llm); the
-// language model runs on lean (crates/llm-life-lean), imported only when the
+// The small from-scratch models run on life-models' engine (pkg-small, WebGPU
+// when an adapter is granted, else one CPU thread); the language model runs on lean (crates/llm-life-lean), imported only when the
 // LLM is first loaded, on the backend pickLeanBackend picks by capability
 // (lean-backend.js: WebGPU, else CPU threads, else single-thread CPU;
 // `backend` in the load payload forces one).
-const { default: init, BertEngine, VecMlpEngine, VecStencilEngine, initWgpuDevice } =
-  await import(`./pkg-llm/llm_life.js?v=${ENGINE_BUILD}`);
-const { pickLeanBackend, createLifeEngine } = await import(`./lean-backend.js?v=${ENGINE_BUILD}`);
+const { pickLeanBackend, createLifeEngine, capabilities } = await import(`./lean-backend.js?v=${ENGINE_BUILD}`);
 let lean = null;
 let leanPicked = null;
 async function ensureLean(requested) {
@@ -43,15 +41,12 @@ let engineGrid = null;
 // BERT of Life - a separate, much smaller wasm-bindgen engine (no GGUF, no
 // tokenizer, no KV cache), loaded independently of `engine` above.
 let bertEngine = null;
-let bertGrid = null;
 
 // Vector-space variants (CONCEPT.md §12), each its own tiny engine.
 // (i) MLP on the 9 neighbourhood numbers, one forward per cell.
 let vecMlpEngine = null;
-let vecMlpGrid = null;
 // (ii) whole grid in one forward pass, no per-cell loop.
 let vecStencilEngine = null;
-let vecStencilGrid = null;
 
 const CHUNK = 64 * 1024 * 1024;
 
@@ -179,16 +174,25 @@ self.onmessage = (e) => {
 for (const e of pending) self.onmessage(e);
 pending.length = 0;
 
-// `init()` (the Burn wasm module) and `initWgpuDevice()` (the WebGPU device
-// the three small engines share) are each idempotent to call once; guarded
-// here so the small models load on their own. The LLM has its own module
-// and device (`ensureLean` above).
-let wasmInited = false;
-async function ensureWasm() {
-  if (wasmInited) return;
-  await init({ module_or_path: new URL(`./pkg-llm/llm_life_bg.wasm?v=${ENGINE_BUILD}`, import.meta.url) });
-  await initWgpuDevice();
-  wasmInited = true;
+// The small models' wasm module, loaded once. Whether to try WebGPU is the
+// capability check (an adapter is granted); the module falls back to one CPU
+// thread if the device then fails to open.
+let small = null;
+async function ensureSmall() {
+  if (small) return small;
+  const mod = await import(`./pkg-small/life_small.js?v=${ENGINE_BUILD}`);
+  await mod.default({ module_or_path: new URL(`./pkg-small/life_small_bg.wasm?v=${ENGINE_BUILD}`, import.meta.url) });
+  small = { SmallModel: mod.SmallModel, useGpu: (await capabilities()).hasAdapter };
+  return small;
+}
+
+// A SmallModel from a safetensors checkpoint; config.json sits next to it.
+async function loadSmall(checkpointUrl) {
+  const { SmallModel, useGpu } = await ensureSmall();
+  countDownload(checkpointUrl);
+  const bytes = new Uint8Array(await (await fetch(checkpointUrl)).arrayBuffer());
+  const cfg = await (await fetch(checkpointUrl.replace(/[^/]*$/, 'config.json'))).text();
+  return SmallModel.create(bytes, cfg, useGpu);
 }
 
 async function handle(id, type, payload, reply) {
@@ -223,29 +227,17 @@ async function handle(id, type, payload, reply) {
       }
       reply(true, { packedTokens: engine.packedTokens(), cellTokens: engine.cellTokens(), adapter, backend: picked.backend, backendLabel: picked.label });
     } else if (type === 'loadBert') {
-      await ensureWasm();
-      bertEngine = new BertEngine(payload.width, payload.height);
-      bertGrid = { width: payload.width, height: payload.height };
-      countDownload(payload.checkpointUrl);
-      const bytes = new Uint8Array(await (await fetch(payload.checkpointUrl)).arrayBuffer());
-      bertEngine.loadCheckpoint(bytes, payload.dModel, payload.nLayers, payload.nHeads);
-      reply(true, { dModel: bertEngine.dModel(), numLayers: bertEngine.numLayers() });
+      if (bertEngine) bertEngine.free();
+      bertEngine = await loadSmall(payload.checkpointUrl);
+      reply(true, { dModel: payload.dModel, numLayers: payload.nLayers, backend: bertEngine.backend() });
     } else if (type === 'loadVecMlp') {
-      await ensureWasm();
-      vecMlpEngine = new VecMlpEngine(payload.width, payload.height);
-      vecMlpGrid = { width: payload.width, height: payload.height };
-      countDownload(payload.checkpointUrl);
-      const bytes = new Uint8Array(await (await fetch(payload.checkpointUrl)).arrayBuffer());
-      vecMlpEngine.loadCheckpoint(bytes, payload.hidden);
-      reply(true, { hidden: vecMlpEngine.hidden() });
+      if (vecMlpEngine) vecMlpEngine.free();
+      vecMlpEngine = await loadSmall(payload.checkpointUrl);
+      reply(true, { hidden: payload.hidden, backend: vecMlpEngine.backend() });
     } else if (type === 'loadVecStencil') {
-      await ensureWasm();
-      vecStencilEngine = new VecStencilEngine(payload.width, payload.height);
-      vecStencilGrid = { width: payload.width, height: payload.height };
-      countDownload(payload.checkpointUrl);
-      const bytes = new Uint8Array(await (await fetch(payload.checkpointUrl)).arrayBuffer());
-      vecStencilEngine.loadCheckpoint(bytes, payload.dModel, payload.nLayers, payload.nHeads);
-      reply(true, { dModel: vecStencilEngine.dModel(), numLayers: vecStencilEngine.numLayers() });
+      if (vecStencilEngine) vecStencilEngine.free();
+      vecStencilEngine = await loadSmall(payload.checkpointUrl);
+      reply(true, { dModel: payload.dModel, numLayers: payload.nLayers, backend: vecStencilEngine.backend() });
     } else if (type === 'loadAdapter') {
       // Swap the runtime LoRA adapter without a full model reload - replaces
       // whatever adapter is currently applied (LifeEngine::loadAdapter does
@@ -260,16 +252,12 @@ async function handle(id, type, payload, reply) {
       // cell, no chunking (the model is tiny enough that per-cell round
       // trips are still fast), one 'bertCell' narration message per cell.
       const t0 = performance.now();
-      if (!bertGrid || bertGrid.width !== payload.width || bertGrid.height !== payload.height) {
-        bertEngine.setGrid(payload.width, payload.height);
-        bertGrid = { width: payload.width, height: payload.height };
-      }
       const cells = new Uint8Array(payload.cells);
       const n = cells.length;
       const p = new Float32Array(n);
       for (let i = 0; i < n; i++) {
         const cellT0 = performance.now();
-        const v = await bertEngine.stepCell(cells, i);
+        const v = await bertEngine.stepCell(cells, payload.width, payload.height, i);
         const ms = performance.now() - cellT0;
         p[i] = v;
         self.postMessage({ type: 'bertCell', index: i, p: v, ms });
@@ -299,13 +287,9 @@ async function handle(id, type, payload, reply) {
       // the number CONCEPT.md's "one batch" framing actually means, not the
       // per-cell loop's wall-clock total.
       const t0 = performance.now();
-      if (!bertGrid || bertGrid.width !== payload.width || bertGrid.height !== payload.height) {
-        bertEngine.setGrid(payload.width, payload.height);
-        bertGrid = { width: payload.width, height: payload.height };
-      }
       const cells = new Uint8Array(payload.cells);
       self.postMessage({ type: 'progress', stage: 'forward' });
-      const p = await bertEngine.stepGrid(cells);
+      const p = await bertEngine.stepGrid(cells, payload.width, payload.height);
       const ms = performance.now() - t0;
       self.postMessage({ type: 'bertGrid', cells: cells.length, ms });
       self.postMessage({ type: 'progress', stage: 'threshold' });
@@ -320,16 +304,12 @@ async function handle(id, type, payload, reply) {
       // (i) 9 numbers -> centre, no tokens: one forward per cell through the
       // MLP baseline, narrated the same way BERT of Life's per-cell mode is.
       const t0 = performance.now();
-      if (!vecMlpGrid || vecMlpGrid.width !== payload.width || vecMlpGrid.height !== payload.height) {
-        vecMlpEngine.setGrid(payload.width, payload.height);
-        vecMlpGrid = { width: payload.width, height: payload.height };
-      }
       const cells = new Uint8Array(payload.cells);
       const n = cells.length;
       const p = new Float32Array(n);
       for (let i = 0; i < n; i++) {
         const cellT0 = performance.now();
-        const v = await vecMlpEngine.stepCell(cells, i);
+        const v = await vecMlpEngine.stepCell(cells, payload.width, payload.height, i);
         const ms = performance.now() - cellT0;
         p[i] = v;
         self.postMessage({ type: 'vecMlpCell', index: i, p: v, ms });
@@ -345,13 +325,9 @@ async function handle(id, type, payload, reply) {
     } else if (type === 'step' && payload.variant === 'vec-mlp-batched') {
       // Same weights as the per-cell row above, one [n, 9] batch instead.
       const t0 = performance.now();
-      if (!vecMlpGrid || vecMlpGrid.width !== payload.width || vecMlpGrid.height !== payload.height) {
-        vecMlpEngine.setGrid(payload.width, payload.height);
-        vecMlpGrid = { width: payload.width, height: payload.height };
-      }
       const cells = new Uint8Array(payload.cells);
       self.postMessage({ type: 'progress', stage: 'forward' });
-      const p = await vecMlpEngine.stepGrid(cells);
+      const p = await vecMlpEngine.stepGrid(cells, payload.width, payload.height);
       const ms = performance.now() - t0;
       self.postMessage({ type: 'vecMlpGrid', cells: cells.length, ms });
       self.postMessage({ type: 'progress', stage: 'threshold' });
@@ -366,13 +342,9 @@ async function handle(id, type, payload, reply) {
       // (ii) whole grid -> whole grid, one channel: one forward pass, no
       // per-cell loop - the narration strip gets exactly one line.
       const t0 = performance.now();
-      if (!vecStencilGrid || vecStencilGrid.width !== payload.width || vecStencilGrid.height !== payload.height) {
-        vecStencilEngine.setGrid(payload.width, payload.height);
-        vecStencilGrid = { width: payload.width, height: payload.height };
-      }
       const cells = new Uint8Array(payload.cells);
       self.postMessage({ type: 'progress', stage: 'forward' });
-      const p = await vecStencilEngine.stepGrid(cells);
+      const p = await vecStencilEngine.stepGrid(cells, payload.width, payload.height);
       const ms = performance.now() - t0;
       self.postMessage({ type: 'vecStencilGrid', cells: cells.length, ms });
       self.postMessage({ type: 'progress', stage: 'threshold' });

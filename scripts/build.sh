@@ -4,7 +4,8 @@
 # so CI and local builds share one script, llm-web lean-release shape).
 #
 #   web/pkg       classical Game of Life engine (crates/life)
-#   web/pkg-llm   LLM/BERT/vector-space engine, Burn (crates/llm-life)
+#   web/pkg-small BERT of Life, the 9-number MLP and the stencil model,
+#                 WebGPU + single-thread CPU (crates/life-small)
 #   web/pkg-lean  lean engine, WebGPU + single-thread CPU (crates/llm-life-lean)
 #   web/pkg-lean-mt  lean engine, CPU threads -- opt-in (BUILD_THREADS=1),
 #                    needs a nightly toolchain with rust-src; Pages serves
@@ -46,8 +47,8 @@ REMAP="target.'cfg(all())'.rustflags=[\"--remap-path-prefix=$CARGO_HOME_PATH=/ca
 echo "==> Building life (classical engine)"
 wasm-pack build crates/life --target web --out-dir ../../web/pkg --features web --config "$REMAP"
 
-echo "==> Building llm-life (LLM/BERT/vector-space engine)"
-wasm-pack build crates/llm-life --target web --out-dir ../../web/pkg-llm --no-default-features --features web --config "$REMAP"
+echo "==> Building life-small (BERT of Life, MLP, stencil)"
+wasm-pack build crates/life-small --target web --out-dir ../../web/pkg-small --features web --config "$REMAP"
 
 echo "==> Building llm-life-lean (WebGPU + single-thread CPU)"
 wasm-pack build crates/llm-life-lean --target web --out-dir ../../web/pkg-lean --no-default-features --features web --config "$REMAP"
@@ -93,15 +94,19 @@ if [ -d _site/web/models ]; then
   echo "error: unexpected web/models in export -- refusing to publish weights" >&2
   exit 1
 fi
+if [ -d _site/web/small ]; then
+  echo "error: unexpected web/small in export -- refusing to publish weights" >&2
+  exit 1
+fi
 if compgen -G "_site/web/*.bin" > /dev/null; then
   echo "error: unexpected *.bin in export -- refusing to publish weights" >&2
   exit 1
 fi
 
-# wasm-pack also writes .d.ts and .gitignore into web/pkg, web/pkg-llm,
+# wasm-pack also writes .d.ts and .gitignore into web/pkg, web/pkg-small,
 # web/pkg-lean and (BUILD_THREADS=1) web/pkg-lean-mt; only the .js/.wasm/
 # package.json files are published.
-PKG_DIRS="_site/web/pkg _site/web/pkg-llm _site/web/pkg-lean"
+PKG_DIRS="_site/web/pkg _site/web/pkg-small _site/web/pkg-lean"
 [ -n "$BUILD_THREADS" ] && PKG_DIRS="$PKG_DIRS _site/web/pkg-lean-mt"
 for d in $PKG_DIRS; do
   find "$d" -mindepth 1 -maxdepth 1 ! -name '*.js' ! -name '*.wasm' ! -name 'package.json' ! -name 'snippets' -exec rm -rf {} +
@@ -112,7 +117,7 @@ fi
 
 # --- Tag and rewrite the ?v= build tag ---
 echo "==> Tagging and rewriting ?v= build tag"
-WASM_FILES="web/pkg/life_bg.wasm web/pkg-llm/llm_life_bg.wasm web/pkg-lean/llm_life_lean_bg.wasm"
+WASM_FILES="web/pkg/life_bg.wasm web/pkg-small/life_small_bg.wasm web/pkg-lean/llm_life_lean_bg.wasm"
 TAG="$(cat $WASM_FILES | shasum -a 256 | cut -c1-7)"
 echo "build tag: $TAG"
 
@@ -120,8 +125,8 @@ echo "build tag: $TAG"
 # literal, can't take a JS variable) in both pages.
 sed -i.bak "s#pkg/life.js?v=[A-Za-z0-9_.-]*#pkg/life.js?v=$TAG#" \
   _site/web/index.html _site/web/compare/index.html
-# BUILD (worker.js's own URL, bumped alongside pkg/pkg-llm) and
-# ENGINE_BUILD (the pkg-llm wasm's URL) are JS constants read by a
+# BUILD (worker.js's own URL, bumped alongside pkg/pkg-small) and
+# ENGINE_BUILD (the pkg-small wasm's URL) are JS constants read by a
 # template literal, so the tag goes into the assignment.
 sed -i.bak "s/const BUILD = '[^']*'/const BUILD = '$TAG'/" \
   _site/web/index.html _site/web/compare/index.html
@@ -153,7 +158,7 @@ fi
 # coincidences inside wasm opcode/table bytes, not actual leaked paths.
 echo "==> Checking for local build paths"
 FAILED=0
-LEAK_FILES="_site/web/pkg/life_bg.wasm _site/web/pkg-llm/llm_life_bg.wasm _site/web/pkg-lean/llm_life_lean_bg.wasm"
+LEAK_FILES="_site/web/pkg/life_bg.wasm _site/web/pkg-small/life_small_bg.wasm _site/web/pkg-lean/llm_life_lean_bg.wasm"
 [ -n "$BUILD_THREADS" ] && LEAK_FILES="$LEAK_FILES _site/web/pkg-lean-mt/llm_life_lean_bg.wasm"
 for f in $LEAK_FILES; do
   LEAKS="$(strings "$f" | grep -F -e "$HOME" -e "Code/" -e ".claude/" -e "/Users/" -e "/home/runner/" || true)"
@@ -170,7 +175,7 @@ fi
 
 # --- Target features: every wasm keeps SIMD, the threads build keeps atomics ---
 echo "==> Checking wasm target features"
-FEATURE_ARGS=(_site/web/pkg/life_bg.wasm +simd128 -- _site/web/pkg-llm/llm_life_bg.wasm +simd128 -- _site/web/pkg-lean/llm_life_lean_bg.wasm +simd128)
+FEATURE_ARGS=(_site/web/pkg/life_bg.wasm +simd128 -- _site/web/pkg-small/life_small_bg.wasm +simd128 -- _site/web/pkg-lean/llm_life_lean_bg.wasm +simd128)
 [ -n "$BUILD_THREADS" ] && FEATURE_ARGS+=(-- _site/web/pkg-lean-mt/llm_life_lean_bg.wasm +simd128 +atomics)
 python3 scripts/check_wasm_features.py "${FEATURE_ARGS[@]}"
 

@@ -1,0 +1,4 @@
+{
+  "model": "mlp2",
+  "hidden": 32
+}
