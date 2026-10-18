@@ -31,7 +31,7 @@ web-mt = ["web", "lean/threads", "dep:wasm-bindgen-rayon"]
 life = { path = "../life" }
 # The engine's forward pass: crates/lean-core in idle-intelligence/llm-web
 # (positions, masks, sliced head, KV cache, LoRA), pinned to a rev.
-lean = { package = "lean-core", git = "https://github.com/idle-intelligence/llm-web", rev = "1fce23d866c23fb6f3635abb51db52c50ff87808", default-features = false }
+lean = { package = "lean-core", git = "https://github.com/idle-intelligence/llm-web", rev = "6a4bb25b4c8df457c0e7572b6e565060d9505ac8", default-features = false }
 anyhow = { workspace = true }
 wgpu = "26"
 pollster = { version = "0.3", optional = true }

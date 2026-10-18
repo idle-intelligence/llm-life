@@ -262,7 +262,7 @@ impl LifeLean {
         height: usize,
     ) -> Result<Self> {
         let model = GpuModel::load_from_reader(&engine, gguf, true).context("load gguf")?;
-        let (cos, sin) = build_rope_tables(model.config.head_dim, model.config.rope_theta, MAX_POS);
+        let (cos, sin) = build_rope_tables(&model.config, MAX_POS);
         let cos = engine.buf_f32(&cos, "rope_cos");
         let sin = engine.buf_f32(&sin, "rope_sin");
         let backend = Backend::Gpu(Box::new(Gpu { engine, model, cos, sin, caches: [None, None, None], next_id: 1, bound: None }));
