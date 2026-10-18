@@ -70,8 +70,26 @@ The other rows of the page ran too and matched the rule where they apply (ternar
 ## Observations
 
 - No row gets slower, in either browser, at either size. Every row is exact (256 / 256 and 4096 / 4096) on both builds.
-- The biggest gains are the batched and stencil rows (40x to 200x in Chromium), where the Burn build paid many small dispatches and read-backs.
+- The batched and stencil ratios above (40x to 200x in Chromium) compare main's warm-up with a warm branch: the compare page reports the median of the first 3 calls on a fresh page, and on main those calls fall inside the Burn engine's warm-up. Warmed up, the ratios are 2x to 8x; see the next section.
 - The per-cell rows gain less (BERT 3x to 4x at 16x16 and 4x at 64x64; 9 numbers 1.8x at 16x16, 1.6x at 64x64 in Chromium). They are one worker round trip per cell on both builds, so they scale with the number of cells (about 0.4 ms per cell for BERT, 0.36 ms for 9 numbers at 64x64 on the branch).
 - The 9-numbers per-cell row at 64x64 in WebKit is 2.37 s on the branch against 2.80 s on main, the closest pair of the table; one run each, so it is not distinguished from equal.
 - The built wasm for the three models drops from 17.7 MB to 225 KB.
 - Not run: the LLM rows at 64x64 and the full page in WebKit; the LLM code path is unchanged by the branch (`pkg-lean` is byte-identical).
+
+## Warm-up against steady state (16x16, Chromium)
+
+Same builds, one fresh page per build, 25 calls per row (6 for the per-cell rows), every call 256 / 256 correct. "First 3" is what the compare page reports; "steady" is the median of the last 10 calls.
+
+| row | main, first 3 | main, steady | branch, steady | steady ratio |
+|---|---|---|---|---|
+| stencil (grid to grid) | 35 ms | 2.0 ms | 0.55 ms | 3.7x |
+| BERT of Life, batched | 92 ms | 3.9 ms | 0.51 ms | 7.6x |
+| 9 numbers to centre, batched | 10.7 ms | 0.86 ms | 0.40 ms | 2.2x |
+| BERT of Life, per cell | 476 ms | 469 ms | 125 ms | 3.8x |
+| 9 numbers to centre, per cell | 205 ms | 199 ms | 90 ms | 2.2x |
+
+One steady-state stencil generation, counted by wrapping the WebGPU calls: main issues 73 dispatches, 73 bind groups, 4 submits, 159 buffer writes (including the 9,216-byte neighbour table, rebuilt each call) and one 16 KB read-back; the branch issues 1 dispatch, 1 submit, 2 writes (1 KB of cells, 16 bytes of dimensions) and one 1 KB read-back.
+
+- On main, the first call creates about 50 compute pipelines, and calls 2 to 5 issue up to 66 read-backs each (inferred to be kernel autotuning; not confirmed by switching it off). Steady state arrives after about 8 calls. The branch's first call takes about 6 ms, the later ones under 1 ms.
+- On the branch, a per-cell call (0.35 to 0.49 ms) costs about as much as a whole-board call (0.40 to 0.55 ms): what remains is one submit and one read-back (inferred to be the browser's round trip on this machine).
+- Not measured here: WebKit and 64x64 in steady state, per-dispatch GPU time.
