@@ -236,3 +236,25 @@ fn whole_grid_on(cpu: bool) {
     }
     assert!(failures.is_empty(), "gate (ii): answers differ from HF+PEFT in {failures:?}");
 }
+
+/// The native driver's default chunk (128 cells per forward, `set_chunk_cells`)
+/// gives the same answers as HF+PEFT on the 512 base-rules cases.
+#[test]
+#[ignore = "needs the GGUF, tokenizer and adapters on disk"]
+fn per_cell_base_rules_chunk_128() {
+    let fixture = fixture();
+    let cfg = fixture.per_cell.iter().find(|c| c.name == "base-rules").expect("configuration in fixture");
+    let mut life = load(false);
+    pollster::block_on(life.set_prefix_a(&variant_a::rules_prefix(&Rule::life()))).unwrap();
+    pollster::block_on(life.set_chunk_cells(128)).unwrap();
+    let cases: Vec<usize> = (0..512).collect();
+    let mut got = Vec::new();
+    for chunk in cases.chunks(128) {
+        got.extend(pollster::block_on(life.logits_cases_a(chunk)).unwrap());
+    }
+    let correct = got.iter().enumerate().filter(|(k, l)| (l[1] > l[0]) == truth(*k)).count();
+    let (diffs, max) = compare(&got, &cfg.logits);
+    println!("[gate] {} per-cell base-rules 128 cells per forward: {correct}/512 correct, {} differ from HF+PEFT, max |logit diff| {max:.3e}", life.backend_name(), diffs.len());
+    assert_eq!(correct, 215, "gate (i): base model, rules prefix");
+    assert!(diffs.is_empty(), "gate (ii): answers differ from HF+PEFT");
+}
