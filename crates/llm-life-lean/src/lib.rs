@@ -1,13 +1,11 @@
 //! The language-model methods of llm-life (per cell and whole grid, base
 //! model and LoRA adapters) on lean, the project's raw wgpu + WGSL engine
 //! (crates/lean in idle-intelligence/llm-web), native and wasm from one
-//! source. The Burn engine (`crates/llm-life`) keeps training, the native
-//! drivers and the small from-scratch models.
+//! source. The native driver is `src/bin/llm-life.rs`.
 //!
-//! The prompt text and the packing are not duplicated: `variant_a.rs`,
-//! `variant_b.rs` and `score.rs` are compiled here straight from
-//! `crates/llm-life/src` (they depend on nothing but the `life` crate), so
-//! the two engines can never drift apart on what they ask the model.
+//! The prompt text, the packing and the scoring live in the `llm-life`
+//! crate (they depend on nothing but the `life` crate) and are re-exported
+//! here, so the browser and the native driver ask the model the same thing.
 //!
 //! Two backends, picked by the caller: WebGPU (`LifeLean::load`) or the
 //! CPU (`LifeLean::load_cpu`: lean's `CpuModel`, WASM SIMD128 in the
@@ -18,12 +16,7 @@
 //! rows (`GpuModel::embed_head_sliced`), the head the adapters were trained
 //! against, not the GGUF's separately quantized `output.weight`.
 
-#[path = "../../llm-life/src/score.rs"]
-pub mod score;
-#[path = "../../llm-life/src/variant_a.rs"]
-pub mod variant_a;
-#[path = "../../llm-life/src/variant_b.rs"]
-pub mod variant_b;
+pub use llm_life::{score, variant_a, variant_b};
 
 #[cfg(feature = "web")]
 pub mod web;
@@ -44,8 +37,8 @@ pub use lean;
 #[cfg(all(feature = "web-mt", target_arch = "wasm32"))]
 pub use wasm_bindgen_rayon::init_thread_pool;
 
-/// Cells per per-cell ("variant A") chunk: the same 64 the Burn engine
-/// packs, so the batched row forwards the same blocks.
+/// Default cells per per-cell ("variant A") chunk, the one the page uses;
+/// `set_chunk_cells` changes it.
 pub const CHUNK_CELLS: usize = 64;
 
 /// RoPE table length. Per-cell positions stop at the resident prefix plus
@@ -246,6 +239,9 @@ pub struct LifeLean {
     /// The 512 per-cell prompts, tokenized once (`case_cells` order).
     prompts: Vec<Vec<u32>>,
     cell_tokens: usize,
+    /// Most cells per per-cell chunk; the per-cell cache holds the prefix
+    /// plus this many prompts.
+    chunk_cells: usize,
 }
 
 impl LifeLean {
@@ -297,7 +293,7 @@ impl LifeLean {
         }
         let cell_tokens = prompts.iter().map(|p| p.len()).max().unwrap();
 
-        let mut me = LifeLean { backend, tokenizer, rule, dead, alive, width, height, prefix_b, prefix_a, prompts, cell_tokens };
+        let mut me = LifeLean { backend, tokenizer, rule, dead, alive, width, height, prefix_b, prefix_a, prompts, cell_tokens, chunk_cells: CHUNK_CELLS };
         me.prefill_a().await;
         Ok(me)
     }
@@ -310,7 +306,9 @@ impl LifeLean {
         }
     }
 
-    fn head(&self) -> [u32; 2] {
+    /// Token ids of the two answers, `["0", "1"]`: the head the logits are
+    /// read through.
+    pub fn head(&self) -> [u32; 2] {
         [self.dead, self.alive]
     }
 
@@ -319,15 +317,14 @@ impl LifeLean {
     async fn prefill_a(&mut self) {
         let p = self.prefix_a.len();
         let head = self.head();
-        let _ = self.backend.forward(Slot::A, true, p + CHUNK_CELLS * self.cell_tokens, 0, &self.prefix_a, &ForwardSpec::default(), head).await;
+        let _ = self.backend.forward(Slot::A, true, p + self.chunk_cells * self.cell_tokens, 0, &self.prefix_a, &ForwardSpec::default(), head).await;
     }
 
     /// Apply a runtime LoRA adapter (LLMLIFE2, q/k/v/o), replacing any
     /// earlier one, and re-prefill the per-cell prefix the adapter was
     /// trained with (`norules`: no rule text; otherwise the rules, no worked
-    /// examples either way) with the adapter applied. The Burn tab prefilled
-    /// that prefix *before* applying the adapter; training (and the HF+PEFT
-    /// reference) run the prefix through the adapter too, as here.
+    /// examples either way) with the adapter applied, as training (and the
+    /// HF+PEFT reference) run it.
     pub async fn load_adapter(&mut self, bytes: &[u8], norules: bool) -> Result<()> {
         self.backend.apply_lora(bytes).context("apply adapter")?;
         let text = if norules { variant_a::norules_prefix() } else { variant_a::rules_prefix(&self.rule) };
@@ -347,6 +344,21 @@ impl LifeLean {
         Ok(())
     }
 
+    /// Replace the whole-grid prefix.
+    pub fn set_prefix_b(&mut self, text: &str) -> Result<()> {
+        self.prefix_b = encode(&self.tokenizer, text)?;
+        Ok(())
+    }
+
+    /// Most cells per per-cell chunk (default `CHUNK_CELLS`). Reallocates
+    /// the per-cell cache and prefills the current prefix into it.
+    pub async fn set_chunk_cells(&mut self, n: usize) -> Result<()> {
+        ensure!(n > 0, "a chunk holds at least one cell");
+        self.chunk_cells = n;
+        self.prefill_a().await;
+        Ok(())
+    }
+
     pub fn set_grid(&mut self, width: usize, height: usize) {
         self.width = width;
         self.height = height;
@@ -356,7 +368,7 @@ impl LifeLean {
     /// (indices into the 512 prompts), packed block-diagonally against the
     /// resident prefix in one forward.
     pub async fn logits_cases_a(&mut self, cases: &[usize]) -> Result<Vec<[f32; 2]>> {
-        ensure!(cases.len() <= CHUNK_CELLS, "at most {CHUNK_CELLS} cells per chunk");
+        ensure!(cases.len() <= self.chunk_cells, "at most {} cells per chunk", self.chunk_cells);
         let p = self.prefix_a.len();
         let prompts = &self.prompts;
         let chunk = variant_a::pack_chunk(cases, |k| prompts[k].clone(), p);
@@ -366,7 +378,7 @@ impl LifeLean {
             .with_positions(chunk.positions.clone())
             .with_allowed(&chunk.allowed, t, p + t);
         let head = self.head();
-        let logits = self.backend.forward(Slot::A, false, p + CHUNK_CELLS * self.cell_tokens, p, &chunk.tokens, &spec, head).await;
+        let logits = self.backend.forward(Slot::A, false, p + self.chunk_cells * self.cell_tokens, p, &chunk.tokens, &spec, head).await;
         Ok(chunk.answer_rows().into_iter().map(|r| [logits[r * 2], logits[r * 2 + 1]]).collect())
     }
 
@@ -396,13 +408,13 @@ impl LifeLean {
         Ok(Grid::from_cells(self.width, self.height, cells))
     }
 
-    /// One per-cell chunk: cells `chunk * CHUNK_CELLS ..` of the grid.
+    /// One per-cell chunk: cells `chunk * chunk_cells ..` of the grid.
     pub async fn step_chunk_a(&mut self, cells: Vec<u8>, chunk: usize) -> Result<Vec<f32>> {
         let grid = self.grid(cells)?;
         let n = grid.cells().len();
-        let first = chunk * CHUNK_CELLS;
+        let first = chunk * self.chunk_cells;
         ensure!(first < n, "chunk index past the end of the grid");
-        let cases: Vec<usize> = (first..(first + CHUNK_CELLS).min(n)).map(|c| case_index(&grid, c)).collect();
+        let cases: Vec<usize> = (first..(first + self.chunk_cells).min(n)).map(|c| case_index(&grid, c)).collect();
         self.step_cases_a(&cases).await
     }
 
@@ -450,7 +462,7 @@ impl LifeLean {
     }
 
     pub fn chunk_count(&self) -> usize {
-        (self.width * self.height).div_ceil(CHUNK_CELLS)
+        (self.width * self.height).div_ceil(self.chunk_cells)
     }
 
     pub fn tokens_per_generation_a(&self) -> usize {
@@ -471,5 +483,9 @@ impl LifeLean {
 
     pub fn num_layers(&self) -> usize {
         self.backend.config().num_layers
+    }
+
+    pub fn config(&self) -> &lean::config::Qwen2Config {
+        self.backend.config()
     }
 }

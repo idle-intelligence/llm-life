@@ -269,10 +269,12 @@ cargo run -p life --bin life -- --size 32 --seed 42 --rule B3/S23 --generations 
 
 The native "picture" driver, the whole grid against Qwen2.5-0.5B-Instruct Q4_0
 (download the GGUF and `tokenizer.json` from the Qwen repositories linked above;
-`picture-a` is the per-cell variant):
+`picture-a` is the per-cell variant, `bench-forward` times one forward per size,
+`rescore` re-scores pictures already on disk). It runs on WebGPU when the
+machine has an adapter and on the CPU otherwise:
 
 ```bash
-cargo run --release -p llm-life -- picture \
+cargo run --release -p llm-life-lean --bin llm-life -- picture \
   --gguf models/gguf/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf \
   --tokenizer models/hf/Qwen2.5-0.5B-Instruct/tokenizer.json \
   --size 64 --generations 10
@@ -341,11 +343,11 @@ file per run.
 
 ```
 crates/life/           classical B/S cellular automaton (the ground truth), + wasm wrapper
-crates/llm-life/       per-cell and whole-grid packing, scoring, PGM output,
-                       native driver src/bin/llm-life.rs
+crates/llm-life/       per-cell and whole-grid prompts and packing, scoring, PGM output
 crates/life-small/     BERT of Life, the 9-number MLP and the stencil model on the
                        life-models engine (WebGPU or one CPU thread), + wasm wrapper
-crates/llm-life-lean/  the language-model methods on the lean engine (native and wasm)
+crates/llm-life-lean/  the language-model methods on the lean engine (native and wasm),
+                       native driver src/bin/llm-life.rs
 crates/life-lut-bench/ lookup-table and bit-packed Life, CPU and GPU, native benchmark
 web/                   demo page, compare/ (every method), fullscreen/, cellspeed/
 pytorch/               training, data generator, the trained bit-slice networks
@@ -360,8 +362,7 @@ CONCEPT.md             the design note the project started from
 The language-model methods run on `lean`, the project's wgpu and WGSL engine,
 from [llm-web](https://github.com/idle-intelligence/llm-web), pulled in as a git
 dependency pinned to a `rev`. BERT of Life, the 9-number MLP and the stencil
-model run on the life-models engine from the jacobi2000 repo. A small patch this repo needs is vendored under
-`patches/`. If a corporate proxy blocks Cargo's built-in git fetcher, set
+model run on the life-models engine from the jacobi2000 repo. If a corporate proxy blocks Cargo's built-in git fetcher, set
 `CARGO_NET_GIT_FETCH_WITH_CLI=true`.
 
 ## Related

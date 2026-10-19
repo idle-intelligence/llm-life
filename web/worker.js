@@ -8,7 +8,7 @@
 // Version tag on the engine URLs: browsers keep a wasm module at a fixed path
 // across rebuilds, even through a hard reload. Bump when either engine
 // (pkg-small, pkg-lean) changes.
-const ENGINE_BUILD = '2026-10-18-lean-6a4bb25';
+const ENGINE_BUILD = '2026-10-19-no-burn';
 // A message posted to this worker before its top-level `await import` below
 // finishes can be dropped rather than queued (observed in this browser: the
 // page's first 'load' message, sent right after `new Worker(...)`, arrived

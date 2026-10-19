@@ -1,10 +1,9 @@
-//! wasm-bindgen surface: the same `LifeEngine` calls the tab made on the
-//! Burn engine (`crates/llm-life/src/web.rs`), so web/worker.js changes only
-//! where the engine comes from. Two differences: the engine is built with
-//! `await LifeEngine.create(w, h)` (lean requests its own WebGPU device,
-//! which is async) or `LifeEngine.createCpu(w, h)` (the CPU backend: same
-//! calls, same answers), and `loadAdapter` is async (it re-prefills the
-//! per-cell prefix with the adapter applied). All readback is async.
+//! wasm-bindgen surface: `LifeEngine`, the calls web/worker.js makes. The
+//! engine is built with `await LifeEngine.create(w, h)` (lean requests its
+//! own WebGPU device, which is async) or `LifeEngine.createCpu(w, h)` (the
+//! CPU backend: same calls, same answers); `loadAdapter` is async (it
+//! re-prefills the per-cell prefix with the adapter applied). All readback
+//! is async.
 
 use std::io::{Read, Seek, SeekFrom};
 
