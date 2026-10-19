@@ -1,5 +1,5 @@
-"""Q4_0 / Q8_0 dequantize + quantize, matching llama.cpp's block layout and
-llm-wasm's reader (crates/llm-wasm/src/gguf.rs) byte-for-byte.
+"""Q4_0 / Q8_0 dequantize + quantize, matching llama.cpp's block layout
+byte-for-byte.
 
 venv: tools/merge/.venv
 

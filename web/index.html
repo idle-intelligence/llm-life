@@ -961,7 +961,7 @@ async function logGridInfo(n) {
 const LLM_MODEL = {
   ggufUrl: MODEL_URLS.gguf,
   tokenizerUrl: MODEL_URLS.tokenizer,
-  // Runtime LoRA (llm_wasm::lora), applied onto the base Q4 model after
+  // Runtime LoRA (lean's apply_lora), applied onto the base Q4 model after
   // load -- not an offline GGUF merge.
   adapterUrl: MODEL_URLS.loraANorules,
 };
