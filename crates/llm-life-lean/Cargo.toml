@@ -8,11 +8,16 @@ description = "The language-model methods of llm-life on lean, the project's raw
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "llm-life"
+required-features = ["native"]
+
 [features]
 default = ["native"]
 # Backend selection lives here, in the consumer crate: pollster blocks on
-# the async load natively, lean's `wasm` switches wgpu to WebGPU.
-native = ["dep:pollster"]
+# the async load natively, lean's `wasm` switches wgpu to WebGPU, lean's
+# `threads` runs the native CPU backend on every core.
+native = ["dep:pollster", "dep:clap", "lean/threads"]
 web = [
     "lean/wasm",
     "dep:wasm-bindgen",
@@ -29,12 +34,14 @@ web-mt = ["web", "lean/threads", "dep:wasm-bindgen-rayon"]
 
 [dependencies]
 life = { path = "../life" }
+llm-life = { path = "../llm-life" }
 # The engine's forward pass: crates/lean-core in idle-intelligence/llm-web
 # (positions, masks, sliced head, KV cache, LoRA), pinned to a rev.
 lean = { package = "lean-core", git = "https://github.com/idle-intelligence/llm-web", rev = "6a4bb25b4c8df457c0e7572b6e565060d9505ac8", default-features = false }
 anyhow = { workspace = true }
 wgpu = "26"
 pollster = { version = "0.3", optional = true }
+clap = { version = "4.5", features = ["derive"], optional = true }
 wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }

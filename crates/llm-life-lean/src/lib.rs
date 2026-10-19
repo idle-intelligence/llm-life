@@ -1,13 +1,11 @@
 //! The language-model methods of llm-life (per cell and whole grid, base
 //! model and LoRA adapters) on lean, the project's raw wgpu + WGSL engine
 //! (crates/lean in idle-intelligence/llm-web), native and wasm from one
-//! source. The Burn engine (`crates/llm-life`) keeps training, the native
-//! drivers and the small from-scratch models.
+//! source. The native driver is `src/bin/llm-life.rs`.
 //!
-//! The prompt text and the packing are not duplicated: `variant_a.rs`,
-//! `variant_b.rs` and `score.rs` are compiled here straight from
-//! `crates/llm-life/src` (they depend on nothing but the `life` crate), so
-//! the two engines can never drift apart on what they ask the model.
+//! The prompt text, the packing and the scoring live in the `llm-life`
+//! crate (they depend on nothing but the `life` crate) and are re-exported
+//! here, so the browser and the native driver ask the model the same thing.
 //!
 //! Two backends, picked by the caller: WebGPU (`LifeLean::load`) or the
 //! CPU (`LifeLean::load_cpu`: lean's `CpuModel`, WASM SIMD128 in the
@@ -18,12 +16,7 @@
 //! rows (`GpuModel::embed_head_sliced`), the head the adapters were trained
 //! against, not the GGUF's separately quantized `output.weight`.
 
-#[path = "../../llm-life/src/score.rs"]
-pub mod score;
-#[path = "../../llm-life/src/variant_a.rs"]
-pub mod variant_a;
-#[path = "../../llm-life/src/variant_b.rs"]
-pub mod variant_b;
+pub use llm_life::{score, variant_a, variant_b};
 
 #[cfg(feature = "web")]
 pub mod web;
