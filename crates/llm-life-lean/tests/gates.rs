@@ -13,6 +13,12 @@
 //!      answer position, greedy, for the four per-cell configurations and
 //!      the whole-grid grids (base and adapter, 16x16 and 32x32).
 //!
+//! Every gate also holds each logit to within `LOGIT_TOL` of the reference,
+//! with lean's f16 kernels off (`LEAN_F16=0`, set before the engine is
+//! created). `f16_answers` runs with f16 left at its default and checks the
+//! answers only: the same answer per case and cell as HF+PEFT, logits not
+//! compared.
+//!
 //! The `cpu_*` tests run the same gates on lean's CPU backend
 //! (`LifeLean::load_cpu`; add `--features lean/threads` for the threaded
 //! build); they need no GPU.
@@ -61,7 +67,17 @@ fn env(k: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| panic!("set {k} to run this test"))
 }
 
-fn load(cpu: bool) -> LifeLean {
+/// Most a logit may differ from the HF+PEFT reference in the strict gates.
+const LOGIT_TOL: f32 = 1e-3;
+
+/// `f16`: leave lean's f16 kernels at their default; otherwise turn them
+/// off, for the strict logit gate.
+fn load(cpu: bool, f16: bool) -> LifeLean {
+    if f16 {
+        std::env::remove_var("LEAN_F16");
+    } else {
+        std::env::set_var("LEAN_F16", "0");
+    }
     let gguf = BufReader::new(std::fs::File::open(env("LLM_LIFE_GGUF")).expect("open gguf"));
     let tok = std::fs::read(env("LLM_LIFE_TOKENIZER")).expect("read tokenizer.json");
     let life = if cpu {
@@ -101,10 +117,10 @@ fn fixture() -> Fixture {
 }
 
 /// One per-cell configuration of the fixture, gates (i) and (ii).
-fn per_cell(name: &str, cpu: bool) {
+fn per_cell(name: &str, cpu: bool, f16: bool) {
     let fixture = fixture();
     let cfg = fixture.per_cell.iter().find(|c| c.name == name).expect("configuration in fixture");
-    let mut life = load(cpu);
+    let mut life = load(cpu, f16);
     match (cfg.name.as_str(), cfg.adapter.as_deref()) {
         ("base-fewshot", None) => {}
         ("base-rules", None) => pollster::block_on(life.set_prefix_a(&variant_a::rules_prefix(&Rule::life()))).unwrap(),
@@ -145,7 +161,7 @@ fn per_cell(name: &str, cpu: bool) {
         for (i, margin) in &diffs {
             println!("[gate]   case {}: HF margin {margin:.4}", ids[*i]);
         }
-        failed |= !diffs.is_empty();
+        failed |= !diffs.is_empty() || (!f16 && max > LOGIT_TOL);
     }
     println!("[gate] {} per-cell {:<14} {correct}/512 correct", life.backend_name(), cfg.name);
     match cfg.name.as_str() {
@@ -153,60 +169,68 @@ fn per_cell(name: &str, cpu: bool) {
         "a-norules-300" => assert_eq!(correct, 512, "gate (i): a-norules-300 adapter"),
         _ => {}
     }
-    assert!(!failed, "gate (ii): {} answers differ from HF+PEFT", cfg.name);
+    assert!(!failed, "gate (ii): {} answers or logits differ from HF+PEFT", cfg.name);
 }
 
 #[test]
 #[ignore = "needs the GGUF, tokenizer and adapters on disk"]
 fn per_cell_base_fewshot() {
-    per_cell("base-fewshot", false);
+    per_cell("base-fewshot", false, false);
 }
 
 #[test]
 #[ignore = "needs the GGUF, tokenizer and adapters on disk"]
 fn per_cell_base_rules() {
-    per_cell("base-rules", false);
+    per_cell("base-rules", false, false);
 }
 
 #[test]
 #[ignore = "needs the GGUF, tokenizer and adapters on disk"]
 fn per_cell_a_norules() {
-    per_cell("a-norules-300", false);
+    per_cell("a-norules-300", false, false);
 }
 
 #[test]
 #[ignore = "needs the GGUF, tokenizer and adapters on disk"]
 fn per_cell_a_rules() {
-    per_cell("a-rules-300", false);
+    per_cell("a-rules-300", false, false);
 }
 
 #[test]
 #[ignore = "needs the GGUF, tokenizer and adapters on disk"]
 fn cpu_per_cell_a_norules() {
-    per_cell("a-norules-300", true);
+    per_cell("a-norules-300", true, false);
 }
 
 #[test]
 #[ignore = "needs the GGUF, tokenizer and adapters on disk"]
 fn cpu_per_cell_base_rules() {
-    per_cell("base-rules", true);
+    per_cell("base-rules", true, false);
 }
 
 #[test]
 #[ignore = "needs the GGUF, tokenizer and adapters on disk"]
 fn whole_grid() {
-    whole_grid_on(false);
+    whole_grid_on(false, false);
 }
 
 #[test]
 #[ignore = "needs the GGUF, tokenizer and adapters on disk"]
 fn cpu_whole_grid() {
-    whole_grid_on(true);
+    whole_grid_on(true, false);
 }
 
-fn whole_grid_on(cpu: bool) {
+#[test]
+#[ignore = "needs the GGUF, tokenizer and adapters on disk"]
+fn f16_answers() {
+    per_cell("a-norules-300", false, true);
+    per_cell("base-rules", false, true);
+    whole_grid_on(false, true);
+}
+
+fn whole_grid_on(cpu: bool, f16: bool) {
     let fixture = fixture();
-    let mut life = load(cpu);
+    let mut life = load(cpu, f16);
     let mut failures = Vec::new();
     for g in &fixture.whole_grid {
         match g.adapter.as_deref() {
@@ -230,11 +254,11 @@ fn whole_grid_on(cpu: bool) {
         for (c, margin) in &diffs {
             println!("[gate]   cell {c}: HF margin {margin:.4}");
         }
-        if !diffs.is_empty() {
+        if !diffs.is_empty() || (!f16 && max > LOGIT_TOL) {
             failures.push(g.name.clone());
         }
     }
-    assert!(failures.is_empty(), "gate (ii): answers differ from HF+PEFT in {failures:?}");
+    assert!(failures.is_empty(), "gate (ii): answers or logits differ from HF+PEFT in {failures:?}");
 }
 
 /// The native driver's default chunk (128 cells per forward, `set_chunk_cells`)
@@ -244,7 +268,7 @@ fn whole_grid_on(cpu: bool) {
 fn per_cell_base_rules_chunk_128() {
     let fixture = fixture();
     let cfg = fixture.per_cell.iter().find(|c| c.name == "base-rules").expect("configuration in fixture");
-    let mut life = load(false);
+    let mut life = load(false, false);
     pollster::block_on(life.set_prefix_a(&variant_a::rules_prefix(&Rule::life()))).unwrap();
     pollster::block_on(life.set_chunk_cells(128)).unwrap();
     let cases: Vec<usize> = (0..512).collect();
@@ -257,4 +281,5 @@ fn per_cell_base_rules_chunk_128() {
     println!("[gate] {} per-cell base-rules 128 cells per forward: {correct}/512 correct, {} differ from HF+PEFT, max |logit diff| {max:.3e}", life.backend_name(), diffs.len());
     assert_eq!(correct, 215, "gate (i): base model, rules prefix");
     assert!(diffs.is_empty(), "gate (ii): answers differ from HF+PEFT");
+    assert!(max <= LOGIT_TOL, "gate (ii): max |logit diff| {max:.3e} above {LOGIT_TOL:e}");
 }
