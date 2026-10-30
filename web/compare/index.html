@@ -608,6 +608,41 @@ function dispatchShape(n) {
   return { x, y: Math.ceil(workgroups / x), dispatchX: x };
 }
 
+// ---------------------------------------------------------------------------
+// Board buffers kept for the current board size. Rows run one after another
+// on boards of the same size, so the n*4-byte ping-pong, staging (and, for the
+// 2-step networks, hidden) buffers are created once per size and reused
+// across generations, calls and rows; they are destroyed when the size
+// changes, between rows on very large boards, and when a run ends. A pool is
+// keyed by role ('cell': one u32 per cell, 'packed': 32 cells per word).
+// Every kernel writes all of its destination before anything reads it, so a
+// reused buffer needs no clearing.
+// ---------------------------------------------------------------------------
+const gpuPools = {};
+function destroyPool(role) {
+  const p = gpuPools[role];
+  if (!p) return;
+  delete gpuPools[role];
+  for (const b of [p.a, p.b, p.staging, p.hidden]) if (b) b.destroy();
+}
+function releaseGpuPools() {
+  for (const role of Object.keys(gpuPools)) destroyPool(role);
+}
+function acquireBoardBuffers(device, role, bytes, hidden = false) {
+  let p = gpuPools[role];
+  if (p && (p.bytes !== bytes || p.device !== device)) { destroyPool(role); p = null; }
+  if (!p) {
+    const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+    p = gpuPools[role] = {
+      device, bytes, hidden: null,
+      a: device.createBuffer({ size: bytes, usage: bufUsage }),
+      b: device.createBuffer({ size: bytes, usage: bufUsage }),
+      staging: device.createBuffer({ size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
+    };
+  }
+  if (hidden && !p.hidden) p.hidden = device.createBuffer({ size: bytes, usage: GPUBufferUsage.STORAGE });
+  return p;
+}
 // One u32 per cell goes up through a small reusable chunk instead of a
 // board-sized Uint32Array (268 MB at 8192x8192).
 const UPLOAD_CHUNK = 1 << 20;
@@ -641,9 +676,7 @@ async function gpuLookupStep(cells, w, h, out) {
   if (!gpuLut) gpuLut = buildGpuLut();
   const n = w * h;
   checkGpuBufferSize(device, n * 4);
-  const srcBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-  const dstBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const { a: srcBuf, b: dstBuf, staging: stagingBuf } = acquireBoardBuffers(device, 'cell', n * 4);
   uploadCells(device, srcBuf, cells, n);
 
   const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
@@ -671,7 +704,7 @@ async function gpuLookupStep(cells, w, h, out) {
   device.queue.submit([encoder.finish()]);
 
   const binarized = await readCellsBack(stagingBuf, n, out);
-  paramsBuf.destroy(); lutBuf.destroy(); srcBuf.destroy(); dstBuf.destroy(); stagingBuf.destroy();
+  paramsBuf.destroy(); lutBuf.destroy();
   return binarized;
 }
 async function measureGpuLookupOnce(cells, out) {
@@ -707,10 +740,7 @@ async function gpuLookupResidentRun(cells, w, h, generations, onProgress) {
   if (!gpuLut) gpuLut = buildGpuLut();
   const n = w * h;
   checkGpuBufferSize(device, n * 4);
-  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const { a, b, staging: stagingBuf } = acquireBoardBuffers(device, 'cell', n * 4);
   uploadCells(device, a, cells, n);
 
   const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
@@ -753,7 +783,7 @@ async function gpuLookupResidentRun(cells, w, h, generations, onProgress) {
   device.queue.submit([readEncoder.finish()]);
   const binarized = await readCellsBack(stagingBuf, n);
 
-  paramsBuf.destroy(); lutBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
+  paramsBuf.destroy(); lutBuf.destroy();
   return { seconds, binarized, generations };
 }
 
@@ -824,10 +854,7 @@ async function bitwiseResidentRun(cells, w, h, generations, onProgress, birthMas
   // life-lut-bench's native `gpu::BitpackParams` layout.
   const paramsBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([wpr, h, birthMask, surviveMask, dispatchX, 0, 0, 0]));
-  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const { a, b, staging: stagingBuf } = acquireBoardBuffers(device, 'packed', n * 4);
   device.queue.writeBuffer(a, 0, words);
 
   const makeBindGroup = (src, dst) => device.createBindGroup({
@@ -863,7 +890,7 @@ async function bitwiseResidentRun(cells, w, h, generations, onProgress, birthMas
   device.queue.submit([readEncoder.finish()]);
   const binarized = await readPackedBack(stagingBuf, w, h);
 
-  paramsBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
+  paramsBuf.destroy();
   return { seconds, binarized, generations };
 }
 
@@ -900,10 +927,7 @@ async function compiledResidentRun(cells, w, h, generations, onProgress) {
   const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
   const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([wpr, h, dispatchX, 0]));
-  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const { a, b, staging: stagingBuf } = acquireBoardBuffers(device, 'packed', n * 4);
   device.queue.writeBuffer(a, 0, words);
 
   const makeBindGroup = (src, dst) => device.createBindGroup({
@@ -939,7 +963,7 @@ async function compiledResidentRun(cells, w, h, generations, onProgress) {
   device.queue.submit([readEncoder.finish()]);
   const binarized = await readPackedBack(stagingBuf, w, h);
 
-  paramsBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
+  paramsBuf.destroy();
   return { seconds, binarized, generations };
 }
 
@@ -982,10 +1006,7 @@ async function compiled2StepResidentRun(cells, w, h, generations, onProgress) {
   const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
   const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([wpr, h, dispatchX, 0]));
-  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const { a, b, staging: stagingBuf } = acquireBoardBuffers(device, 'packed', n * 4);
   device.queue.writeBuffer(a, 0, words);
 
   const makeBindGroup = (src, dst) => device.createBindGroup({
@@ -1023,7 +1044,7 @@ async function compiled2StepResidentRun(cells, w, h, generations, onProgress) {
   const binarized = unpackBitsU32(new Uint32Array(stagingBuf.getMappedRange()), w, h);
   stagingBuf.unmap();
 
-  paramsBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
+  paramsBuf.destroy();
   return { seconds, binarized, generations };
 }
 
@@ -1059,11 +1080,7 @@ async function quant2StepResidentRun(model, variant, cells, w, h, generations, o
   const layer2 = variant === 'float' ? layer2Float : layer2Int;
   const n = w * h;
   checkGpuBufferSize(device, n * 4);
-  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const hiddenBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE });
-  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const { a, b, staging: stagingBuf, hidden: hiddenBuf } = acquireBoardBuffers(device, 'cell', n * 4, true);
   uploadCells(device, a, cells, n);
 
   const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
@@ -1146,7 +1163,7 @@ async function quant2StepResidentRun(model, variant, cells, w, h, generations, o
 
   paramsBuf.destroy(); scales1Buf.destroy(); scales2Buf.destroy();
   conv1WeightBuf.destroy(); conv1BiasBuf.destroy(); conv2WeightBuf.destroy(); conv2BiasBuf.destroy();
-  readoutWeightBuf.destroy(); a.destroy(); b.destroy(); hiddenBuf.destroy(); stagingBuf.destroy();
+  readoutWeightBuf.destroy();
   return { seconds, binarized, generations };
 }
 
@@ -1212,10 +1229,7 @@ async function lut2StepResidentRun(cells, w, h, generations, onProgress) {
   const table = await ensureLut2StepTable();
   const n = w * h;
   checkGpuBufferSize(device, n * 4);
-  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const { a, b, staging: stagingBuf } = acquireBoardBuffers(device, 'cell', n * 4);
   uploadCells(device, a, cells, n);
 
   const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
@@ -1258,7 +1272,7 @@ async function lut2StepResidentRun(cells, w, h, generations, onProgress) {
   const binarized = await readCellsBack(stagingBuf, n);
   const seconds = (performance.now() - t0) / 1000;
 
-  paramsBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
+  paramsBuf.destroy();
   return { seconds, binarized, generations };
 }
 
@@ -1299,10 +1313,7 @@ async function quantResidentRun(model, variant, cells, w, h, generations, onProg
   const pipeline = variant === 'float' ? pipelineFloat : pipelineInt;
   const n = w * h;
   checkGpuBufferSize(device, n * 4);
-  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const { a, b, staging: stagingBuf } = acquireBoardBuffers(device, 'cell', n * 4);
   uploadCells(device, a, cells, n);
 
   const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
@@ -1354,7 +1365,7 @@ async function quantResidentRun(model, variant, cells, w, h, generations, onProg
   const seconds = (performance.now() - t0) / 1000;
 
   paramsBuf.destroy(); scalesBuf.destroy(); conv1WeightBuf.destroy(); conv1BiasBuf.destroy();
-  conv2WeightBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
+  conv2WeightBuf.destroy();
   return { seconds, binarized, generations };
 }
 
@@ -1520,6 +1531,7 @@ function setBoardSize(w, h) {
   boardH = h;
   els.board.width = boardW;
   els.board.height = boardH;
+  releaseGpuPools();
   boardCells = null;
   app = new LifeApp(boardW, boardH);
   app.randomize(1n, 0.28);
@@ -1766,6 +1778,7 @@ async function runEveryRung() {
     // free the GPU buffers between rows on very large boards, show the result.
     const settle = () => {
       for (const k of Object.keys(results)) if (k !== 'cpu') keepThumbOnly(results[k]);
+      if (total >= 1 << 24) releaseGpuPools();
       lastResults = results;
       renderLadderTable();
     };
@@ -2100,6 +2113,7 @@ async function runEveryRung() {
   } catch (e) {
     setStatus('error', 'a method failed: ' + e.message);
   } finally {
+    releaseGpuPools();
     running = false;
     els.runAll.disabled = false;
   }
