@@ -275,6 +275,7 @@
         <button type="button" class="gridsize-btn" data-w="8192" data-h="8192">8192&times;8192</button>
         <button type="button" class="gridsize-btn" data-w="3840" data-h="2160">3840&times;2160 (4K)</button>
     </div>
+    <p class="info" id="run-count" style="margin-top:12px;"></p>
     <div class="controls" style="margin-top:12px;">
         <button id="run-all" class="primary">run every method</button>
     </div>
@@ -375,7 +376,7 @@
 // Bumped whenever worker.js or the pkg/pkg-small/pkg-lean wasm builds change. The pkg
 // import above is a static import specifier and can't take this variable,
 // so its own '?v=' literal is bumped by hand alongside this constant.
-const BUILD = '2026-10-30-skip-2step';
+const BUILD = '2026-10-30-run-count';
 
 import init, { LifeApp } from '../pkg/life.js?v=2026-09-23';
 import { MODEL_URLS } from '../models.js';
@@ -398,6 +399,7 @@ const els = {
   ladderBody: document.getElementById('ladder-body'),
   ladder2Body: document.getElementById('ladder2-body'),
   genNote: document.getElementById('genNote'),
+  runCount: document.getElementById('run-count'),
   thumbs: document.getElementById('thumbs'),
 };
 const boardCtx = els.board.getContext('2d');
@@ -1585,6 +1587,7 @@ function rowNote(e) {
   try { webGpuAvailable = !!(navigator.gpu && await navigator.gpu.requestAdapter()); }
   catch (e) { webGpuAvailable = false; }
   if (webGpuAvailable === false) {
+    if (els.runCount.textContent) renderRunCount();
     setStatus('ready', NO_WEBGPU + ', the two naive rows still run');
   }
 })();
@@ -1605,6 +1608,7 @@ function setBoardSize(w, h) {
   lastResults = null;
   drawBoard();
   renderLadderTable();
+  renderRunCount();
   els.thumbs.innerHTML = '';
   for (const btn of document.querySelectorAll('.gridsize-btn')) {
     btn.classList.toggle('primary', Number(btn.dataset.w) === boardW && Number(btn.dataset.h) === boardH);
@@ -1657,6 +1661,22 @@ const LADDER_ORDER = [
   'lookup', 'gpu-lookup', 'gpu-lookup-resident', 'bitwise-resident', 'quant-ternary-bitpack', 'quant-ternary-compiled',
 ];
 const LADDER2_ORDER = LADDER2_KEYS;
+
+// Why a row does not run at the current board size, or null when it does.
+// Used for the notes shown when a run starts and for the count shown before.
+function skipReason(key, maxDim, total) {
+  const perCell = key.startsWith('llm-') || key.startsWith('bert-') || key.startsWith('vec-mlp-');
+  if (maxDim > 64 && perCell) return 'not run above 64x64';
+  if (key === 'vec-stencil' && maxDim > 64 && total > 4096 * 4096) return 'not run above 4096';
+  if (key.startsWith('quant-ternary-2step-') && total > 4096 * 4096) return 'not run above 4096x4096';
+  return null;
+}
+function renderRunCount() {
+  const maxDim = Math.max(boardW, boardH);
+  const naiveOnly = webGpuAvailable === false;
+  const x = RUNGS.filter((r) => (naiveOnly ? (r.key === 'cpu' || r.key === 'lookup') : !skipReason(r.key, maxDim, boardW * boardH))).length;
+  els.runCount.textContent = `${boardW}\u00d7${boardH} selected, running ${x}/${RUNGS.length} methods`;
+}
 
 function ladderRowHtml(r, results) {
   const res = results[r.key];
@@ -1853,11 +1873,7 @@ async function runEveryRung() {
     // Every row that will not run at this size says so at once; the rest
     // show "waiting" until their turn.
     for (const r of RUNGS) {
-      const perCell = r.key.startsWith('llm-') || r.key.startsWith('bert-') || r.key.startsWith('vec-mlp-');
-      if (maxDim > 64 && perCell) results[r.key] = { note: 'not run above 64x64' };
-      else if (r.key === 'vec-stencil' && maxDim > 64 && total > 4096 * 4096) results[r.key] = { note: 'not run above 4096' };
-      else if (r.key.startsWith('quant-ternary-2step-') && total > 4096 * 4096) results[r.key] = { note: 'not run above 4096x4096' };
-      else results[r.key] = { note: 'waiting' };
+      results[r.key] = { note: skipReason(r.key, maxDim, total) || 'waiting' };
     }
     settle();
 
