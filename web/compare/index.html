@@ -382,6 +382,7 @@ import { MODEL_URLS } from '../models.js';
 
 let boardW = 32, boardH = 32;
 let app = null;
+let boardCells = null; // the current board, read-only, copied out of the wasm engine once per size
 let running = false;
 let llmReady = false, llmLoading = null;
 let bertReady = false, vecMlpReady = false, vecStencilReady = false;
@@ -469,8 +470,7 @@ function paint(ctx, w, h, values, canvasCssSize, minPx) {
 // no bit tricks beyond the packing the table needs to exist at all. Every
 // cell is looked up every generation; nothing is precomputed across calls.
 // ---------------------------------------------------------------------------
-function jsLifeStepLoop(cells, w, h) {
-  const out = new Uint8Array(w * h);
+function jsLifeStepLoop(cells, w, h, out = new Uint8Array(w * h)) {
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       let n = 0;
@@ -498,8 +498,7 @@ function buildLookupTable() {
   }
   return t;
 }
-function jsLifeStepLookup(cells, w, h, table) {
-  const out = new Uint8Array(w * h);
+function jsLifeStepLookup(cells, w, h, table, out = new Uint8Array(w * h)) {
   for (let i = 0; i < w * h; i++) {
     const x = i % w, y = Math.floor(i / w);
     const xm = (x + w - 1) % w, xp = (x + 1) % w, ym = (y + h - 1) % h, yp = (y + 1) % h;
@@ -608,23 +607,50 @@ function dispatchShape(n) {
   const x = 65535;
   return { x, y: Math.ceil(workgroups / x), dispatchX: x };
 }
-async function gpuLookupStep(cells, w, h) {
+
+// One u32 per cell goes up through a small reusable chunk instead of a
+// board-sized Uint32Array (268 MB at 8192x8192).
+const UPLOAD_CHUNK = 1 << 20;
+let uploadChunk = null;
+function uploadCells(device, buf, cells, n) {
+  if (!uploadChunk) uploadChunk = new Uint32Array(UPLOAD_CHUNK);
+  for (let off = 0; off < n; off += UPLOAD_CHUNK) {
+    const len = Math.min(UPLOAD_CHUNK, n - off);
+    for (let i = 0; i < len; i++) uploadChunk[i] = cells[off + i] ? 1 : 0;
+    device.queue.writeBuffer(buf, off * 4, uploadChunk, 0, len);
+  }
+}
+// Reads a u32-per-cell staging buffer straight from its mapped range into a
+// Uint8Array of 0/1 (no intermediate copy of the mapped bytes).
+async function readCellsBack(staging, n, out = new Uint8Array(n)) {
+  await staging.mapAsync(GPUMapMode.READ);
+  const words = new Uint32Array(staging.getMappedRange());
+  for (let i = 0; i < n; i++) out[i] = words[i] ? 1 : 0;
+  staging.unmap();
+  return out;
+}
+// Same for a packed staging buffer: unpacked into one 0/1 byte per cell.
+async function readPackedBack(staging, w, h) {
+  await staging.mapAsync(GPUMapMode.READ);
+  const out = unpackBitsU32(new Uint32Array(staging.getMappedRange()), w, h);
+  staging.unmap();
+  return out;
+}
+async function gpuLookupStep(cells, w, h, out) {
   const { device, pipeline } = await ensureGpuLookupEngine();
   if (!gpuLut) gpuLut = buildGpuLut();
   const n = w * h;
   checkGpuBufferSize(device, n * 4);
-  const cellsU32 = new Uint32Array(n);
-  for (let i = 0; i < n; i++) cellsU32[i] = cells[i] ? 1 : 0;
+  const srcBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  const dstBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  uploadCells(device, srcBuf, cells, n);
 
   const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
   const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([w, h, dispatchX, 0]));
   const lutBuf = device.createBuffer({ size: 512 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(lutBuf, 0, gpuLut);
-  const srcBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-  device.queue.writeBuffer(srcBuf, 0, cellsU32);
-  const dstBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
 
   const bindGroup = device.createBindGroup({
     layout: pipeline.getBindGroupLayout(0),
@@ -644,15 +670,13 @@ async function gpuLookupStep(cells, w, h) {
   encoder.copyBufferToBuffer(dstBuf, 0, stagingBuf, 0, n * 4);
   device.queue.submit([encoder.finish()]);
 
-  await stagingBuf.mapAsync(GPUMapMode.READ);
-  const out = Array.from(new Uint32Array(stagingBuf.getMappedRange().slice(0)), (v) => (v ? 1 : 0));
-  stagingBuf.unmap();
+  const binarized = await readCellsBack(stagingBuf, n, out);
   paramsBuf.destroy(); lutBuf.destroy(); srcBuf.destroy(); dstBuf.destroy(); stagingBuf.destroy();
-  return out;
+  return binarized;
 }
-async function measureGpuLookupOnce(cells) {
+async function measureGpuLookupOnce(cells, out) {
   const t0 = performance.now();
-  const binarized = await gpuLookupStep(cells, boardW, boardH);
+  const binarized = await gpuLookupStep(cells, boardW, boardH, out);
   const seconds = (performance.now() - t0) / 1000;
   return { seconds, binarized };
 }
@@ -660,11 +684,13 @@ async function measureGpuLookupOnce(cells) {
 // readback each time) so this row is directly comparable to the rule and
 // lookup-table rows: same starting board, same N, one wall-clock total.
 async function measureGpuLookupChain(cells, generations, onProgress) {
-  await measureGpuLookupOnce(cells); // warm up: pipeline compile, device init
+  // Two output boards alternate: a step reads the previous one and writes the other.
+  const bufs = [new Uint8Array(cells.length), new Uint8Array(cells.length)];
+  await measureGpuLookupOnce(cells, bufs[0]); // warm up: pipeline compile, device init
   let cur = cells;
   const t0 = performance.now();
   for (let g = 0; g < generations; g++) {
-    const step = await measureGpuLookupOnce(cur);
+    const step = await measureGpuLookupOnce(cur, bufs[g % 2]);
     cur = step.binarized;
     if (onProgress) onProgress(g + 1, generations);
   }
@@ -681,19 +707,17 @@ async function gpuLookupResidentRun(cells, w, h, generations, onProgress) {
   if (!gpuLut) gpuLut = buildGpuLut();
   const n = w * h;
   checkGpuBufferSize(device, n * 4);
-  const cellsU32 = new Uint32Array(n);
-  for (let i = 0; i < n; i++) cellsU32[i] = cells[i] ? 1 : 0;
+  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
+  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
+  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  uploadCells(device, a, cells, n);
 
   const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
   const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([w, h, dispatchX, 0]));
   const lutBuf = device.createBuffer({ size: 512 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(lutBuf, 0, gpuLut);
-  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
-  device.queue.writeBuffer(a, 0, cellsU32);
-  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
 
   const makeBindGroup = (src, dst) => device.createBindGroup({
     layout: pipeline.getBindGroupLayout(0),
@@ -727,11 +751,7 @@ async function gpuLookupResidentRun(cells, w, h, generations, onProgress) {
   const readEncoder = device.createCommandEncoder();
   readEncoder.copyBufferToBuffer(finalBuf, 0, stagingBuf, 0, n * 4);
   device.queue.submit([readEncoder.finish()]);
-  await stagingBuf.mapAsync(GPUMapMode.READ);
-  const words = new Uint32Array(stagingBuf.getMappedRange().slice(0));
-  const binarized = new Uint8Array(n);
-  for (let i = 0; i < n; i++) binarized[i] = words[i] ? 1 : 0;
-  stagingBuf.unmap();
+  const binarized = await readCellsBack(stagingBuf, n);
 
   paramsBuf.destroy(); lutBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
   return { seconds, binarized, generations };
@@ -806,9 +826,9 @@ async function bitwiseResidentRun(cells, w, h, generations, onProgress, birthMas
   device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([wpr, h, birthMask, surviveMask, dispatchX, 0, 0, 0]));
   const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
   const a = device.createBuffer({ size: n * 4, usage: bufUsage });
-  device.queue.writeBuffer(a, 0, words);
   const b = device.createBuffer({ size: n * 4, usage: bufUsage });
   const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(a, 0, words);
 
   const makeBindGroup = (src, dst) => device.createBindGroup({
     layout: pipeline.getBindGroupLayout(0),
@@ -841,10 +861,7 @@ async function bitwiseResidentRun(cells, w, h, generations, onProgress, birthMas
   const readEncoder = device.createCommandEncoder();
   readEncoder.copyBufferToBuffer(finalBuf, 0, stagingBuf, 0, n * 4);
   device.queue.submit([readEncoder.finish()]);
-  await stagingBuf.mapAsync(GPUMapMode.READ);
-  const wordsOut = new Uint32Array(stagingBuf.getMappedRange().slice(0));
-  stagingBuf.unmap();
-  const binarized = unpackBitsU32(wordsOut, w, h);
+  const binarized = await readPackedBack(stagingBuf, w, h);
 
   paramsBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
   return { seconds, binarized, generations };
@@ -885,9 +902,9 @@ async function compiledResidentRun(cells, w, h, generations, onProgress) {
   device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([wpr, h, dispatchX, 0]));
   const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
   const a = device.createBuffer({ size: n * 4, usage: bufUsage });
-  device.queue.writeBuffer(a, 0, words);
   const b = device.createBuffer({ size: n * 4, usage: bufUsage });
   const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(a, 0, words);
 
   const makeBindGroup = (src, dst) => device.createBindGroup({
     layout: pipeline.getBindGroupLayout(0),
@@ -920,10 +937,7 @@ async function compiledResidentRun(cells, w, h, generations, onProgress) {
   const readEncoder = device.createCommandEncoder();
   readEncoder.copyBufferToBuffer(finalBuf, 0, stagingBuf, 0, n * 4);
   device.queue.submit([readEncoder.finish()]);
-  await stagingBuf.mapAsync(GPUMapMode.READ);
-  const wordsOut = new Uint32Array(stagingBuf.getMappedRange().slice(0));
-  stagingBuf.unmap();
-  const binarized = unpackBitsU32(wordsOut, w, h);
+  const binarized = await readPackedBack(stagingBuf, w, h);
 
   paramsBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
   return { seconds, binarized, generations };
@@ -970,9 +984,9 @@ async function compiled2StepResidentRun(cells, w, h, generations, onProgress) {
   device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([wpr, h, dispatchX, 0]));
   const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
   const a = device.createBuffer({ size: n * 4, usage: bufUsage });
-  device.queue.writeBuffer(a, 0, words);
   const b = device.createBuffer({ size: n * 4, usage: bufUsage });
   const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(a, 0, words);
 
   const makeBindGroup = (src, dst) => device.createBindGroup({
     layout: pipeline.getBindGroupLayout(0),
@@ -1005,10 +1019,9 @@ async function compiled2StepResidentRun(cells, w, h, generations, onProgress) {
   readEncoder.copyBufferToBuffer(finalBuf, 0, stagingBuf, 0, n * 4);
   device.queue.submit([readEncoder.finish()]);
   await stagingBuf.mapAsync(GPUMapMode.READ);
-  const wordsOut = new Uint32Array(stagingBuf.getMappedRange().slice(0));
-  stagingBuf.unmap();
   const seconds = (performance.now() - t0) / 1000;
-  const binarized = unpackBitsU32(wordsOut, w, h);
+  const binarized = unpackBitsU32(new Uint32Array(stagingBuf.getMappedRange()), w, h);
+  stagingBuf.unmap();
 
   paramsBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
   return { seconds, binarized, generations };
@@ -1046,8 +1059,12 @@ async function quant2StepResidentRun(model, variant, cells, w, h, generations, o
   const layer2 = variant === 'float' ? layer2Float : layer2Int;
   const n = w * h;
   checkGpuBufferSize(device, n * 4);
-  const cellsU32 = new Uint32Array(n);
-  for (let i = 0; i < n; i++) cellsU32[i] = cells[i] ? 1 : 0;
+  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
+  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
+  const hiddenBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE });
+  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  uploadCells(device, a, cells, n);
 
   const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
   const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -1066,12 +1083,6 @@ async function quant2StepResidentRun(model, variant, cells, w, h, generations, o
   device.queue.writeBuffer(conv2BiasBuf, 0, new Float32Array(model.conv2_bias));
   const readoutWeightBuf = device.createBuffer({ size: 32 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(readoutWeightBuf, 0, new Int32Array(model.readout_weight));
-  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
-  device.queue.writeBuffer(a, 0, cellsU32);
-  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const hiddenBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE });
-  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
 
   const makeLayer1BindGroup = (src) => device.createBindGroup({
     layout: layer1.getBindGroupLayout(0),
@@ -1130,9 +1141,7 @@ async function quant2StepResidentRun(model, variant, cells, w, h, generations, o
   const readEncoder = device.createCommandEncoder();
   readEncoder.copyBufferToBuffer(finalBuf, 0, stagingBuf, 0, n * 4);
   device.queue.submit([readEncoder.finish()]);
-  await stagingBuf.mapAsync(GPUMapMode.READ);
-  const binarized = Array.from(new Uint32Array(stagingBuf.getMappedRange().slice(0)), (v) => (v ? 1 : 0));
-  stagingBuf.unmap();
+  const binarized = await readCellsBack(stagingBuf, n);
   const seconds = (performance.now() - t0) / 1000;
 
   paramsBuf.destroy(); scales1Buf.destroy(); scales2Buf.destroy();
@@ -1203,17 +1212,15 @@ async function lut2StepResidentRun(cells, w, h, generations, onProgress) {
   const table = await ensureLut2StepTable();
   const n = w * h;
   checkGpuBufferSize(device, n * 4);
-  const cellsU32 = new Uint32Array(n);
-  for (let i = 0; i < n; i++) cellsU32[i] = cells[i] ? 1 : 0;
+  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
+  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
+  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  uploadCells(device, a, cells, n);
 
   const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
   const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([w, h, dispatchX, 0]));
-  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
-  device.queue.writeBuffer(a, 0, cellsU32);
-  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
 
   const makeBindGroup = (src, dst) => device.createBindGroup({
     layout: lookupPipeline.getBindGroupLayout(0),
@@ -1248,9 +1255,7 @@ async function lut2StepResidentRun(cells, w, h, generations, onProgress) {
   const readEncoder = device.createCommandEncoder();
   readEncoder.copyBufferToBuffer(finalBuf, 0, stagingBuf, 0, n * 4);
   device.queue.submit([readEncoder.finish()]);
-  await stagingBuf.mapAsync(GPUMapMode.READ);
-  const binarized = Array.from(new Uint32Array(stagingBuf.getMappedRange().slice(0)), (v) => (v ? 1 : 0));
-  stagingBuf.unmap();
+  const binarized = await readCellsBack(stagingBuf, n);
   const seconds = (performance.now() - t0) / 1000;
 
   paramsBuf.destroy(); a.destroy(); b.destroy(); stagingBuf.destroy();
@@ -1294,8 +1299,11 @@ async function quantResidentRun(model, variant, cells, w, h, generations, onProg
   const pipeline = variant === 'float' ? pipelineFloat : pipelineInt;
   const n = w * h;
   checkGpuBufferSize(device, n * 4);
-  const cellsU32 = new Uint32Array(n);
-  for (let i = 0; i < n; i++) cellsU32[i] = cells[i] ? 1 : 0;
+  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
+  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
+  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  uploadCells(device, a, cells, n);
 
   const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
   const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -1308,11 +1316,6 @@ async function quantResidentRun(model, variant, cells, w, h, generations, onProg
   device.queue.writeBuffer(conv1BiasBuf, 0, new Float32Array(model.conv1_bias));
   const conv2WeightBuf = device.createBuffer({ size: model.channels * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(conv2WeightBuf, 0, new Int32Array(model.conv2_weight));
-  const bufUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-  const a = device.createBuffer({ size: n * 4, usage: bufUsage });
-  device.queue.writeBuffer(a, 0, cellsU32);
-  const b = device.createBuffer({ size: n * 4, usage: bufUsage });
-  const stagingBuf = device.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
 
   const makeBindGroup = (src, dst) => device.createBindGroup({
     layout: pipeline.getBindGroupLayout(0),
@@ -1347,9 +1350,7 @@ async function quantResidentRun(model, variant, cells, w, h, generations, onProg
   const readEncoder = device.createCommandEncoder();
   readEncoder.copyBufferToBuffer(finalBuf, 0, stagingBuf, 0, n * 4);
   device.queue.submit([readEncoder.finish()]);
-  await stagingBuf.mapAsync(GPUMapMode.READ);
-  const binarized = Array.from(new Uint32Array(stagingBuf.getMappedRange().slice(0)), (v) => (v ? 1 : 0));
-  stagingBuf.unmap();
+  const binarized = await readCellsBack(stagingBuf, n);
   const seconds = (performance.now() - t0) / 1000;
 
   paramsBuf.destroy(); scalesBuf.destroy(); conv1WeightBuf.destroy(); conv1BiasBuf.destroy();
@@ -1479,11 +1480,11 @@ async function ensureVecStencil() {
 // memory, so the caller wraps this in a try/catch.
 async function measureStencilLarge(board, w, h, generations) {
   await ensureVecStencil();
-  let cur = Uint8Array.from(board);
+  let cur = board;
   const t0 = performance.now();
   for (let g = 0; g < generations; g++) {
     const res = await ask('step', { cells: cur, variant: 'vec-stencil', width: w, height: h });
-    cur = res.binarized;
+    cur = Uint8Array.from(res.binarized);
   }
   const totalSeconds = (performance.now() - t0) / 1000;
   return { totalSeconds, seconds: totalSeconds / generations, binarized: cur };
@@ -1519,8 +1520,10 @@ function setBoardSize(w, h) {
   boardH = h;
   els.board.width = boardW;
   els.board.height = boardH;
+  boardCells = null;
   app = new LifeApp(boardW, boardH);
   app.randomize(1n, 0.28);
+  boardCells = app.cells();
   lastResults = null;
   drawBoard();
   renderLadderTable();
@@ -1531,7 +1534,7 @@ function setBoardSize(w, h) {
 }
 function drawBoard() {
   if (boardW > 8192) return;
-  const info = paint(boardCtx, boardW, boardH, Array.from(app.cells()), BOARD_CSS_SIZE, BOARD_MIN_PX);
+  const info = paint(boardCtx, boardW, boardH, boardCells, BOARD_CSS_SIZE, BOARD_MIN_PX);
   els.boardCaption.textContent = info.cropped
     ? `board (top-left ${info.cropW}×${info.cropH} of ${boardW}×${boardH})`
     : 'board';
@@ -1634,18 +1637,20 @@ async function measureWorkerStep(variant, cells, opts = {}) {
 // 1024x1024/2048x2048, not anything GPU-side.
 async function measureChainedCpu(fn, cells, w, h, generations, onProgress) {
   let cur = cells;
+  // Two boards alternate as step output (the starting board is never written).
+  const bufs = [new Uint8Array(w * h), new Uint8Array(w * h)];
   const chunk = w * h > 4096 ? 1 : generations;
   let done = 0;
   const t0 = performance.now();
   while (done < generations) {
     const step = Math.min(chunk, generations - done);
-    for (let s = 0; s < step; s++) cur = fn(cur, w, h);
+    for (let s = 0; s < step; s++) cur = fn(cur, w, h, bufs[(done + s) % 2]);
     done += step;
     if (onProgress) onProgress(done, generations);
     if (done < generations) await new Promise((r) => setTimeout(r, 0));
   }
   const totalSeconds = (performance.now() - t0) / 1000;
-  return { totalSeconds, seconds: totalSeconds / generations, binarized: Array.from(cur), generations };
+  return { totalSeconds, seconds: totalSeconds / generations, binarized: cur, generations };
 }
 
 function drawThumb(canvas, w, h, values, placeholder) {
@@ -1663,7 +1668,22 @@ function drawThumb(canvas, w, h, values, placeholder) {
   return paint(ctx, w, h, values, THUMB_CSS_SIZE, THUMB_MIN_PX);
 }
 
-function renderThumbs(trueNext) {
+// Past 64 cells a side the thumbnails only show the board's top-left crop, so
+// a finished row keeps just that crop and lets go of its full board (67 MB at
+// 8192x8192) instead of every row holding one until the run ends.
+function keepThumbOnly(res) {
+  if (!res || !res.binarized) return;
+  const { cropW, cropH, cropped } = cropDims(boardW, boardH, THUMB_CSS_SIZE, THUMB_MIN_PX);
+  if (!cropped) return;
+  const values = new Uint8Array(cropW * cropH);
+  for (let y = 0; y < cropH; y++) {
+    for (let x = 0; x < cropW; x++) values[y * cropW + x] = res.binarized[y * boardW + x];
+  }
+  res.thumb = { cropW, cropH, values };
+  res.binarized = null;
+}
+
+function renderThumbs() {
   const results = lastResults || {};
   els.thumbs.innerHTML = '';
   for (const r of RUNGS) {
@@ -1675,8 +1695,10 @@ function renderThumbs(trueNext) {
     nameEl.className = 'name';
     const noteEl = document.createElement('div');
     noteEl.className = 'note';
-    if (res && res.binarized) {
-      const info = drawThumb(canvas, boardW, boardH, res.binarized, false);
+    if (res && (res.binarized || res.thumb)) {
+      const info = res.thumb
+        ? { ...drawThumb(canvas, res.thumb.cropW, res.thumb.cropH, res.thumb.values, false), cropped: true, cropW: res.thumb.cropW, cropH: res.thumb.cropH }
+        : drawThumb(canvas, boardW, boardH, res.binarized, false);
       const wrongCount = res.total - res.correctCount;
       const gens = res.displayGenerations || res.generations || 1;
       let text = `after ${gens} generation${gens === 1 ? '' : 's'}`;
@@ -1702,8 +1724,9 @@ async function runEveryRung() {
   setStatus('generating', 'running every method...');
   try {
     if (!lookupTable) lookupTable = buildLookupTable();
-    const board = Uint8Array.from(app.cells());
-    const trueNext = jsLifeStepLoop(board, boardW, boardH); // single-step reference for the model rows further down
+    const board = boardCells;
+    // Single-step reference for the per-cell model rows, which only run up to 64x64.
+    const trueNext = Math.max(boardW, boardH) <= 64 ? jsLifeStepLoop(board, boardW, boardH) : null;
     const results = {};
     const total = boardW * boardH;
     const maxDim = Math.max(boardW, boardH);
@@ -1739,23 +1762,28 @@ async function runEveryRung() {
 
     const onGen = (label) => (done, gens) => setStatus('generating', `${label}: generation ${done} / ${gens}`);
 
+    // After every row: keep only what the table and thumbnails still need,
+    // free the GPU buffers between rows on very large boards, show the result.
+    const settle = () => {
+      for (const k of Object.keys(results)) if (k !== 'cpu') keepThumbOnly(results[k]);
+      lastResults = results;
+      renderLadderTable();
+    };
+
     setStatus('generating', `running the rule, ${cpuN} generations...`);
     results.cpu = await measureChainedCpu(jsLifeStepLoop, board, boardW, boardH, cpuN, onGen('rule'));
     results.cpu.correctCount = total; // the rule is the reference board itself
     results.cpu.total = total;
-    lastResults = results;
-    renderLadderTable();
+    settle();
 
     if (webGpuAvailable === false) {
       setStatus('generating', `running the lookup table, ${cpuN} generations...`);
-      results.lookup = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, boardW, boardH, cpuN, onGen('lookup table'));
+      results.lookup = await measureChainedCpu((c, w, h, out) => jsLifeStepLookup(c, w, h, lookupTable, out), board, boardW, boardH, cpuN, onGen('lookup table'));
       results.lookup.correctCount = countMatches(results.lookup.binarized, results.cpu.binarized);
       results.lookup.total = total;
-      lastResults = results;
-      renderLadderTable();
+      settle();
       for (const r of RUNGS) if (!(r.key in results)) results[r.key] = { note: NO_WEBGPU };
-      lastResults = results;
-      renderLadderTable();
+      settle();
       setStatus('ready', NO_WEBGPU + ', the two naive rows ran');
       return;
     }
@@ -1775,6 +1803,7 @@ async function runEveryRung() {
       if (cpuN === residentN) {
         return { seconds: main.seconds, totalSeconds: main.totalSeconds ?? main.seconds, binarized: main.binarized, generations: residentN, displayGenerations: residentN };
       }
+      main.binarized = null; // only its timing is used; free the board before the check run
       const check = await chainFn(board, boardW, boardH, cpuN);
       return { seconds: main.seconds, totalSeconds: main.totalSeconds ?? main.seconds, binarized: check.binarized, generations: residentN, displayGenerations: cpuN };
     }
@@ -1794,7 +1823,7 @@ async function runEveryRung() {
         const stencilGens = 3;
         try {
           const stencilResult = await measureStencilLarge(board, boardW, boardH, stencilGens);
-          const stencilRef = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, boardW, boardH, stencilGens);
+          const stencilRef = await measureChainedCpu((c, w, h, out) => jsLifeStepLookup(c, w, h, lookupTable, out), board, boardW, boardH, stencilGens);
           results['vec-stencil'] = {
             seconds: stencilResult.seconds,
             totalSeconds: stencilResult.totalSeconds,
@@ -1810,8 +1839,7 @@ async function runEveryRung() {
       } else {
         results['vec-stencil'] = { note: 'not run above 4096' };
       }
-      lastResults = results;
-      renderLadderTable();
+      settle();
     } else {
       // Going back to the base model after an adapter means a full reload
       // (there is no unload); it comes from the browser cache, a few
@@ -1826,8 +1854,7 @@ async function runEveryRung() {
       results['llm-percell-base'] = await measureWorkerStep('a', board, { calls: 'percell', liveKey: 'llm-percell-base' });
       results['llm-percell-base'].correctCount = countMatches(results['llm-percell-base'].binarized, trueNext);
       results['llm-percell-base'].total = total;
-      lastResults = results;
-      renderLadderTable();
+      settle();
 
       setStatus('generating', 'loading the per-cell adapter...');
       await ask('loadAdapter', { adapterUrl: LLM_MODEL.adapterUrl });
@@ -1836,24 +1863,21 @@ async function runEveryRung() {
       results['llm-percell-trained'] = await measureWorkerStep('a', board, { calls: 'percell', liveKey: 'llm-percell-trained' });
       results['llm-percell-trained'].correctCount = countMatches(results['llm-percell-trained'].binarized, trueNext);
       results['llm-percell-trained'].total = total;
-      lastResults = results;
-      renderLadderTable();
+      settle();
 
       setStatus('generating', 'running BERT of Life, cell by cell...');
       await ensureBert();
       results['bert-cell'] = await measureWorkerStep('bert', board);
       results['bert-cell'].correctCount = countMatches(results['bert-cell'].binarized, trueNext);
       results['bert-cell'].total = total;
-      lastResults = results;
-      renderLadderTable();
+      settle();
 
       setStatus('generating', 'running 9 numbers to centre, cell by cell...');
       await ensureVecMlp();
       results['vec-mlp-cell'] = await measureWorkerStep('vec-mlp', board);
       results['vec-mlp-cell'].correctCount = countMatches(results['vec-mlp-cell'].binarized, trueNext);
       results['vec-mlp-cell'].total = total;
-      lastResults = results;
-      renderLadderTable();
+      settle();
 
       const bAdapterUrl = B_ADAPTER_BY_SIZE[boardW];
       setStatus('generating', 'reloading the LLM, base model...');
@@ -1862,8 +1886,7 @@ async function runEveryRung() {
       results['llm-grid-base'] = await measureWorkerStep('b', board);
       results['llm-grid-base'].correctCount = countMatches(results['llm-grid-base'].binarized, trueNext);
       results['llm-grid-base'].total = total;
-      lastResults = results;
-      renderLadderTable();
+      settle();
 
       setStatus('generating', 'running the LLM whole grid, trained...');
       if (bAdapterUrl) {
@@ -1874,8 +1897,7 @@ async function runEveryRung() {
       } else {
         results['llm-grid-trained'] = { note: 'no adapter' };
       }
-      lastResults = results;
-      renderLadderTable();
+      settle();
 
       // llm-percell-batched sits after the whole-grid rows in display order,
       // but the worker now holds the whole-grid adapter (or no adapter) from
@@ -1890,30 +1912,26 @@ async function runEveryRung() {
       results['llm-percell-batched'] = await measureWorkerStep('a', board, { liveKey: 'llm-percell-batched' });
       results['llm-percell-batched'].correctCount = countMatches(results['llm-percell-batched'].binarized, trueNext);
       results['llm-percell-batched'].total = total;
-      lastResults = results;
-      renderLadderTable();
+      settle();
 
       setStatus('generating', 'running BERT of Life, batched...');
       results['bert-batched'] = await measureWorkerStep('bert-batched', board);
       results['bert-batched'].correctCount = countMatches(results['bert-batched'].binarized, trueNext);
       results['bert-batched'].total = total;
-      lastResults = results;
-      renderLadderTable();
+      settle();
 
       setStatus('generating', 'running 9 numbers to centre, batched...');
       results['vec-mlp-batched'] = await measureWorkerStep('vec-mlp-batched', board);
       results['vec-mlp-batched'].correctCount = countMatches(results['vec-mlp-batched'].binarized, trueNext);
       results['vec-mlp-batched'].total = total;
-      lastResults = results;
-      renderLadderTable();
+      settle();
 
       setStatus('generating', 'running the stencil, grid to grid...');
       await ensureVecStencil();
       results['vec-stencil'] = await measureWorkerStep('vec-stencil', board);
       results['vec-stencil'].correctCount = countMatches(results['vec-stencil'].binarized, trueNext);
       results['vec-stencil'].total = total;
-      lastResults = results;
-      renderLadderTable();
+      settle();
     }
 
     // Four rows: each of the two models run once as an ordinary float
@@ -1936,16 +1954,14 @@ async function runEveryRung() {
       } catch (e) {
         results[key] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
       }
-      lastResults = results;
-      renderLadderTable();
+      settle();
     }
 
     setStatus('generating', `running the lookup table, ${cpuN} generations...`);
-    results.lookup = await measureChainedCpu((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, boardW, boardH, cpuN, onGen('lookup table'));
+    results.lookup = await measureChainedCpu((c, w, h, out) => jsLifeStepLookup(c, w, h, lookupTable, out), board, boardW, boardH, cpuN, onGen('lookup table'));
     results.lookup.correctCount = countMatches(results.lookup.binarized, results.cpu.binarized);
     results.lookup.total = total;
-    lastResults = results;
-    renderLadderTable();
+    settle();
 
     // Unlike the resident/bitwise rows, "GPU lookup" reads back every
     // generation, so its cost scales with N the same way the CPU rows do --
@@ -1968,8 +1984,7 @@ async function runEveryRung() {
     } catch (e) {
       results['gpu-lookup'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
     }
-    lastResults = results;
-    renderLadderTable();
+    settle();
 
     setStatus('generating', `running the GPU lookup, resident, ${residentN} generations...`);
     try {
@@ -1978,8 +1993,7 @@ async function runEveryRung() {
     } catch (e) {
       results['gpu-lookup-resident'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
     }
-    lastResults = results;
-    renderLadderTable();
+    settle();
 
     setStatus('generating', `running bitwise (GPU, resident), ${residentN} generations...`);
     if (boardW % 32 !== 0) {
@@ -1992,8 +2006,7 @@ async function runEveryRung() {
         results['bitwise-resident'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
       }
     }
-    lastResults = results;
-    renderLadderTable();
+    settle();
 
     setStatus('generating', `running the ternary model, bit-packed, ${residentN} generations...`);
     if (boardW % 32 !== 0) {
@@ -2009,8 +2022,7 @@ async function runEveryRung() {
         results['quant-ternary-bitpack'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
       }
     }
-    lastResults = results;
-    renderLadderTable();
+    settle();
 
     setStatus('generating', `running the ternary model, compiled, ${residentN} generations...`);
     if (boardW % 32 !== 0) {
@@ -2023,16 +2035,14 @@ async function runEveryRung() {
         results['quant-ternary-compiled'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
       }
     }
-    lastResults = results;
-    renderLadderTable();
+    settle();
 
     setStatus('generating', `building the 2-step lookup table...`);
     try {
       await ensureLut2StepTable();
     } catch (e) {
       results['lut-2step'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
-      lastResults = results;
-      renderLadderTable();
+      settle();
     }
     if (!results['lut-2step']) {
       setStatus('generating', `running the 2-step lookup table, resident, ${residentN} generations...`);
@@ -2043,8 +2053,7 @@ async function runEveryRung() {
         results['lut-2step'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
       }
     }
-    lastResults = results;
-    renderLadderTable();
+    settle();
 
     // Same 9,601-parameter 2-step model as the compiled row (run after these two), run as an
     // ordinary network instead of a bit-sliced circuit -- one float-forward
@@ -2062,8 +2071,7 @@ async function runEveryRung() {
       } catch (e) {
         results[key] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
       }
-      lastResults = results;
-      renderLadderTable();
+      settle();
     }
 
     setStatus('generating', `running the ternary model, compiled, 2 steps per pass, ${residentN} generations...`);
@@ -2077,18 +2085,17 @@ async function runEveryRung() {
         results['quant-ternary-2step-compiled'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
       }
     }
-    lastResults = results;
-    renderLadderTable();
+    settle();
 
     if (maxDim > 64) {
       for (const r of RUNGS) {
         if (!(r.key in results)) results[r.key] = { note: 'not run above 64x64' };
       }
-      lastResults = results;
-      renderLadderTable();
+      settle();
     }
 
-    renderThumbs(trueNext);
+    keepThumbOnly(results.cpu);
+    renderThumbs();
     setStatus('ready', 'ready');
   } catch (e) {
     setStatus('error', 'a method failed: ' + e.message);
@@ -2114,11 +2121,11 @@ function cpuChain(fn, cells, generations) {
 window.__bench = {
   setSize(n) { setBoardSize(n, n); lookupTable = lookupTable || buildLookupTable(); },
   async run(method, gens) {
-    const board = Uint8Array.from(app.cells());
+    const board = boardCells;
     let r;
     switch (method) {
       case 'cpu-rule': r = cpuChain(jsLifeStepLoop, board, gens); break;
-      case 'cpu-lookup': r = cpuChain((c, w, h) => jsLifeStepLookup(c, w, h, lookupTable), board, gens); break;
+      case 'cpu-lookup': r = cpuChain((c, w, h, out) => jsLifeStepLookup(c, w, h, lookupTable, out), board, gens); break;
       case 'gpu-lookup-readback': r = await measureGpuLookupChain(board, gens); break;
       case 'gpu-lookup-resident': r = await gpuLookupResidentRun(board, boardW, boardH, gens); r.totalSeconds = r.seconds; break;
       case 'bitwise-resident': r = await bitwiseResidentRun(board, boardW, boardH, gens); r.totalSeconds = r.seconds; break;
@@ -2133,7 +2140,7 @@ window.__bench = {
     }
     return { totalSeconds: r.totalSeconds, board: Uint8Array.from(r.binarized) };
   },
-  async runAll() { await runEveryRung(); return JSON.parse(JSON.stringify(lastResults, (k, v) => (k === 'binarized' ? undefined : v))); },
+  async runAll() { await runEveryRung(); return JSON.parse(JSON.stringify(lastResults, (k, v) => (k === 'binarized' || k === 'thumb' ? undefined : v))); },
 };
 
 await init();
