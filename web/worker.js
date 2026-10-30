@@ -349,12 +349,20 @@ async function handle(id, type, payload, reply) {
       self.postMessage({ type: 'vecStencilGrid', cells: cells.length, ms });
       self.postMessage({ type: 'progress', stage: 'threshold' });
       const thresholdValue = 0.5;
-      const binarized = Array.from(p, (v) => (v >= thresholdValue ? 1 : 0));
       self.postMessage({ type: 'progress', stage: 'done' });
-      reply(true, {
-        pAlive: Array.from(p), binarized, thresholdValue,
-        chunks: 1, tokens: cells.length, seconds: (performance.now() - t0) / 1000,
-      });
+      if (payload.typed) {
+        // Large boards (compare page): one Uint8Array of 0/1 and no pAlive
+        // copy, instead of two plain arrays with one entry per cell.
+        const binarized = new Uint8Array(p.length);
+        for (let i = 0; i < p.length; i++) binarized[i] = p[i] >= thresholdValue ? 1 : 0;
+        reply(true, { binarized, thresholdValue, chunks: 1, tokens: cells.length, seconds: (performance.now() - t0) / 1000 });
+      } else {
+        const binarized = Array.from(p, (v) => (v >= thresholdValue ? 1 : 0));
+        reply(true, {
+          pAlive: Array.from(p), binarized, thresholdValue,
+          chunks: 1, tokens: cells.length, seconds: (performance.now() - t0) / 1000,
+        });
+      }
     } else if (type === 'step') {
       const t0 = performance.now();
       // The engine packs for whatever grid it was last told about; variant B
