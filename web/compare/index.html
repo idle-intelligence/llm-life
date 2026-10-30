@@ -375,7 +375,7 @@
 // Bumped whenever worker.js or the pkg/pkg-small/pkg-lean wasm builds change. The pkg
 // import above is a static import specifier and can't take this variable,
 // so its own '?v=' literal is bumped by hand alongside this constant.
-const BUILD = '2026-10-30-stencil-typed';
+const BUILD = '2026-10-30-row-notes';
 
 import init, { LifeApp } from '../pkg/life.js?v=2026-09-23';
 import { MODEL_URLS } from '../models.js';
@@ -1850,6 +1850,16 @@ async function runEveryRung() {
       renderLadderTable();
     };
 
+    // Every row that will not run at this size says so at once; the rest
+    // show "waiting" until their turn.
+    for (const r of RUNGS) {
+      const perCell = r.key.startsWith('llm-') || r.key.startsWith('bert-') || r.key.startsWith('vec-mlp-');
+      if (maxDim > 64 && perCell) results[r.key] = { note: 'not run above 64x64' };
+      else if (r.key === 'vec-stencil' && maxDim > 64 && total > 4096 * 4096) results[r.key] = { note: 'not run above 4096' };
+      else results[r.key] = { note: 'waiting' };
+    }
+    settle();
+
     setStatus('generating', `running the rule, ${cpuN} generations...`);
     results.cpu = await measureChainedCpu(jsLifeStepLoop, board, boardW, boardH, cpuN, onGen('rule'));
     results.cpu.correctCount = total; // the rule is the reference board itself
@@ -1862,7 +1872,7 @@ async function runEveryRung() {
       results.lookup.correctCount = countMatches(results.lookup.binarized, results.cpu.binarized);
       results.lookup.total = total;
       settle();
-      for (const r of RUNGS) if (!(r.key in results)) results[r.key] = { note: NO_WEBGPU };
+      for (const r of RUNGS) if (r.key !== 'cpu' && r.key !== 'lookup') results[r.key] = { note: NO_WEBGPU };
       settle();
       setStatus('ready', NO_WEBGPU + ', the two naive rows ran');
       return;
@@ -1896,8 +1906,7 @@ async function runEveryRung() {
       // Above 64x64 the per-cell/worker model rows (positions 2-10 in
       // LADDER_ORDER) don't run at all -- only the stencil does, linear in
       // cell count. It sits at the vec-stencil position; everything else in
-      // that span gets filled in as "not run above 64x64" once the whole
-      // table (quant rows and the 2-step group below) has run.
+      // that span was marked "not run above 64x64" when the run started.
       if (total <= 4096 * 4096) {
         setStatus('generating', 'running the stencil, grid to grid...');
         const stencilGens = 3;
@@ -2128,7 +2137,7 @@ async function runEveryRung() {
       results['lut-2step'] = { note: rowNote(e) };
       settle();
     }
-    if (!results['lut-2step']) {
+    if (results['lut-2step'].note === 'waiting') {
       setStatus('generating', `running the 2-step lookup table, resident, ${residentN} generations...`);
       try {
         const r = await measureGpuRow('2-step lookup table', lut2StepResidentRun);
@@ -2170,13 +2179,6 @@ async function runEveryRung() {
       }
     }
     settle();
-
-    if (maxDim > 64) {
-      for (const r of RUNGS) {
-        if (!(r.key in results)) results[r.key] = { note: 'not run above 64x64' };
-      }
-      settle();
-    }
 
     keepThumbOnly(results.cpu);
     renderThumbs();
