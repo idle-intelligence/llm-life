@@ -555,6 +555,7 @@ function buildGpuLut() {
 }
 let gpuLut = null;
 let gpuLookupEngine = null;
+let deviceLostNote = null, gpuOom = false;
 async function ensureGpuLookupEngine() {
   if (gpuLookupEngine) return gpuLookupEngine;
   if (!navigator.gpu) throw new Error('no WebGPU');
@@ -570,10 +571,20 @@ async function ensureGpuLookupEngine() {
       maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
     },
   });
-  // A device lost elsewhere in the page (e.g. the worker's stencil engine
-  // OOMing at 4096x4096) shouldn't strand the GPU lookup rows on a dead
-  // device -- the next call just builds a fresh one.
-  device.lost.then(() => { if (gpuLookupEngine && gpuLookupEngine.device === device) gpuLookupEngine = null; });
+  // A lost device must not strand the rows after it: every engine built on
+  // it (they all share this device) is dropped, so the next row builds a
+  // fresh device, and the row that was running ends with a note instead of
+  // taking the tab down.
+  deviceLostNote = null; gpuOom = false;
+  device.lost.then((info) => {
+    if (gpuLookupEngine && gpuLookupEngine.device === device) {
+      resetGpuEngines();
+      deviceLostNote = 'GPU device lost' + (info && info.reason ? ' (' + info.reason + ')' : '');
+    }
+  });
+  device.addEventListener('uncapturederror', (ev) => {
+    if (typeof GPUOutOfMemoryError !== 'undefined' && ev.error instanceof GPUOutOfMemoryError) gpuOom = true;
+  });
   const code = await (await fetch('./lut_byte.wgsl')).text();
   const module = device.createShaderModule({ code });
   const pipeline = await device.createComputePipelineAsync({
@@ -643,6 +654,12 @@ function acquireBoardBuffers(device, role, bytes, hidden = false) {
   if (hidden && !p.hidden) p.hidden = device.createBuffer({ size: bytes, usage: GPUBufferUsage.STORAGE });
   return p;
 }
+function resetGpuEngines() {
+  // The device is gone: its buffers went with it, so only the references are dropped.
+  for (const role of Object.keys(gpuPools)) delete gpuPools[role];
+  gpuLookupEngine = bitpackEngine = compiledEngine = compiled2StepEngine = null;
+  lifeQuant2StepEngine = lifeQuantEngine = lut2StepEngine = lut2StepTableBuf = null;
+}
 // One u32 per cell goes up through a small reusable chunk instead of a
 // board-sized Uint32Array (268 MB at 8192x8192).
 const UPLOAD_CHUNK = 1 << 20;
@@ -676,6 +693,7 @@ async function gpuLookupStep(cells, w, h, out) {
   if (!gpuLut) gpuLut = buildGpuLut();
   const n = w * h;
   checkGpuBufferSize(device, n * 4);
+  checkRowFits('cell');
   const { a: srcBuf, b: dstBuf, staging: stagingBuf } = acquireBoardBuffers(device, 'cell', n * 4);
   uploadCells(device, srcBuf, cells, n);
 
@@ -740,6 +758,7 @@ async function gpuLookupResidentRun(cells, w, h, generations, onProgress) {
   if (!gpuLut) gpuLut = buildGpuLut();
   const n = w * h;
   checkGpuBufferSize(device, n * 4);
+  checkRowFits('cell');
   const { a, b, staging: stagingBuf } = acquireBoardBuffers(device, 'cell', n * 4);
   uploadCells(device, a, cells, n);
 
@@ -847,6 +866,7 @@ async function bitwiseResidentRun(cells, w, h, generations, onProgress, birthMas
   const wpr = w / 32;
   const n = wpr * h;
   checkGpuBufferSize(device, n * 4);
+  checkRowFits('packed');
   const words = packBitsU32(cells, w, h);
 
   const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
@@ -922,6 +942,7 @@ async function compiledResidentRun(cells, w, h, generations, onProgress) {
   const wpr = w / 32;
   const n = wpr * h;
   checkGpuBufferSize(device, n * 4);
+  checkRowFits('packed');
   const words = packBitsU32(cells, w, h);
 
   const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
@@ -1001,6 +1022,7 @@ async function compiled2StepResidentRun(cells, w, h, generations, onProgress) {
   const wpr = w / 32;
   const n = wpr * h;
   checkGpuBufferSize(device, n * 4);
+  checkRowFits('packed');
   const words = packBitsU32(cells, w, h);
 
   const { x: dispatchXCount, y: dispatchY, dispatchX } = dispatchShape(n);
@@ -1080,6 +1102,7 @@ async function quant2StepResidentRun(model, variant, cells, w, h, generations, o
   const layer2 = variant === 'float' ? layer2Float : layer2Int;
   const n = w * h;
   checkGpuBufferSize(device, n * 4);
+  checkRowFits('hidden');
   const { a, b, staging: stagingBuf, hidden: hiddenBuf } = acquireBoardBuffers(device, 'cell', n * 4, true);
   uploadCells(device, a, cells, n);
 
@@ -1229,6 +1252,7 @@ async function lut2StepResidentRun(cells, w, h, generations, onProgress) {
   const table = await ensureLut2StepTable();
   const n = w * h;
   checkGpuBufferSize(device, n * 4);
+  checkRowFits('cell');
   const { a, b, staging: stagingBuf } = acquireBoardBuffers(device, 'cell', n * 4);
   uploadCells(device, a, cells, n);
 
@@ -1313,6 +1337,7 @@ async function quantResidentRun(model, variant, cells, w, h, generations, onProg
   const pipeline = variant === 'float' ? pipelineFloat : pipelineInt;
   const n = w * h;
   checkGpuBufferSize(device, n * 4);
+  checkRowFits('cell');
   const { a, b, staging: stagingBuf } = acquireBoardBuffers(device, 'cell', n * 4);
   uploadCells(device, a, cells, n);
 
@@ -1490,6 +1515,7 @@ async function ensureVecStencil() {
 // enough (~1M cells x 9 x 16 floats) that this can exceed the browser's GPU
 // memory, so the caller wraps this in a try/catch.
 async function measureStencilLarge(board, w, h, generations) {
+  checkRowFits('stencil');
   await ensureVecStencil();
   let cur = board;
   const t0 = performance.now();
@@ -1515,6 +1541,46 @@ function restartWorker() {
 let webGpuAvailable = null;
 const NO_WEBGPU = "doesn't work without WebGPU, yet";
 const GPU_LIMIT_ERR = "does not fit in this browser's GPU limits";
+const TOO_LARGE = 'too large for this device';
+
+// A row that would need more memory than this device can spare ends with a
+// one-line note instead of running. The estimate is host plus GPU bytes at
+// the current board size (n cells): the board, the rule's reference board and
+// the row's own output stay held (3n bytes). A u32-per-cell GPU row also holds
+// a, b and the staging buffer on the GPU (12n) and maps 4n back; the 2-step
+// networks add a hidden buffer (4n); the packed rows only touch n/8 bytes per
+// buffer; the stencil copies and returns the board a few times.
+// The cap is half the ~4 GB a tab's JS heap can reach, and a quarter of the
+// device's memory where the browser reports it (navigator.deviceMemory, in
+// GB, capped at 8).
+function memoryBudgetBytes() {
+  const gb = navigator.deviceMemory || 8;
+  return Math.min(2 * 2 ** 30, gb * 2 ** 30 / 4);
+}
+function rowBytes(kind, n) {
+  const held = 3 * n;
+  switch (kind) {
+    case 'cell': return held + 4 * n + 12 * n;
+    case 'hidden': return held + 4 * n + 16 * n;
+    case 'packed': return held + 3 * (n / 8) + n / 8;
+    case 'stencil': return held + 14 * n;
+    default: throw new Error('unknown row kind ' + kind);
+  }
+}
+function checkRowFits(kind) {
+  if (rowBytes(kind, boardW * boardH) > memoryBudgetBytes()) throw new Error(TOO_LARGE);
+}
+// The note a failed row shows in its table cell: a lost device, a GPU
+// out-of-memory or a size over the limits each get a plain line.
+function rowNote(e) {
+  if (e && e.message === TOO_LARGE) return TOO_LARGE;
+  console.error(e);
+  releaseGpuPools(); // a failed row may leave its buffers mapped or invalid
+  if (e && e.message === GPU_LIMIT_ERR) return GPU_LIMIT_ERR;
+  if (deviceLostNote) return deviceLostNote;
+  if (gpuOom) return "does not fit in this browser's GPU memory";
+  return 'error: ' + (e && e.message || e);
+}
 (async () => {
   try { webGpuAvailable = !!(navigator.gpu && await navigator.gpu.requestAdapter()); }
   catch (e) { webGpuAvailable = false; }
@@ -1779,6 +1845,7 @@ async function runEveryRung() {
     const settle = () => {
       for (const k of Object.keys(results)) if (k !== 'cpu') keepThumbOnly(results[k]);
       if (total >= 1 << 24) releaseGpuPools();
+      deviceLostNote = null; gpuOom = false;
       lastResults = results;
       renderLadderTable();
     };
@@ -1846,8 +1913,12 @@ async function runEveryRung() {
             generations: stencilGens,
           };
         } catch (e) {
-          results['vec-stencil'] = { note: "does not fit in this browser's GPU memory" };
-          restartWorker();
+          if (e.message === TOO_LARGE) {
+            results['vec-stencil'] = { note: TOO_LARGE };
+          } else {
+            results['vec-stencil'] = { note: "does not fit in this browser's GPU memory" };
+            restartWorker();
+          }
         }
       } else {
         results['vec-stencil'] = { note: 'not run above 4096' };
@@ -1965,7 +2036,7 @@ async function runEveryRung() {
         const r = await measureGpuRow(label, (b, w, h, gens, onProg) => quantResidentRun(model, variant, b, w, h, gens, onProg));
         results[key] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
       } catch (e) {
-        results[key] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+        results[key] = { note: rowNote(e) };
       }
       settle();
     }
@@ -1995,7 +2066,7 @@ async function runEveryRung() {
         correctCount: countMatches(r.binarized, ref), total,
       };
     } catch (e) {
-      results['gpu-lookup'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+      results['gpu-lookup'] = { note: rowNote(e) };
     }
     settle();
 
@@ -2004,7 +2075,7 @@ async function runEveryRung() {
       const r = await measureGpuRow('GPU lookup (resident)', gpuLookupResidentRun);
       results['gpu-lookup-resident'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
     } catch (e) {
-      results['gpu-lookup-resident'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+      results['gpu-lookup-resident'] = { note: rowNote(e) };
     }
     settle();
 
@@ -2016,7 +2087,7 @@ async function runEveryRung() {
         const r = await measureGpuRow('bitwise (GPU, resident)', bitwiseResidentRun);
         results['bitwise-resident'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
       } catch (e) {
-        results['bitwise-resident'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+        results['bitwise-resident'] = { note: rowNote(e) };
       }
     }
     settle();
@@ -2032,7 +2103,7 @@ async function runEveryRung() {
           (b, w, h, gens, onProg) => bitwiseResidentRun(b, w, h, gens, onProg, birthMask, surviveMask));
         results['quant-ternary-bitpack'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
       } catch (e) {
-        results['quant-ternary-bitpack'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+        results['quant-ternary-bitpack'] = { note: rowNote(e) };
       }
     }
     settle();
@@ -2045,7 +2116,7 @@ async function runEveryRung() {
         const r = await measureGpuRow('ternary model, compiled', compiledResidentRun);
         results['quant-ternary-compiled'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
       } catch (e) {
-        results['quant-ternary-compiled'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+        results['quant-ternary-compiled'] = { note: rowNote(e) };
       }
     }
     settle();
@@ -2054,7 +2125,7 @@ async function runEveryRung() {
     try {
       await ensureLut2StepTable();
     } catch (e) {
-      results['lut-2step'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+      results['lut-2step'] = { note: rowNote(e) };
       settle();
     }
     if (!results['lut-2step']) {
@@ -2063,7 +2134,7 @@ async function runEveryRung() {
         const r = await measureGpuRow('2-step lookup table', lut2StepResidentRun);
         results['lut-2step'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
       } catch (e) {
-        results['lut-2step'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+        results['lut-2step'] = { note: rowNote(e) };
       }
     }
     settle();
@@ -2082,7 +2153,7 @@ async function runEveryRung() {
         const r = await measureGpuRow(label, (b, w, h, gens, onProg) => quant2StepResidentRun(model2step, variant, b, w, h, gens, onProg));
         results[key] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
       } catch (e) {
-        results[key] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+        results[key] = { note: rowNote(e) };
       }
       settle();
     }
@@ -2095,7 +2166,7 @@ async function runEveryRung() {
         const r = await measureGpuRow('ternary model, compiled, 2 steps per pass', compiled2StepResidentRun);
         results['quant-ternary-2step-compiled'] = { ...r, seconds: r.seconds / residentN, correctCount: countMatches(r.binarized, results.cpu.binarized), total };
       } catch (e) {
-        results['quant-ternary-2step-compiled'] = { note: (console.error(e), e.message === GPU_LIMIT_ERR ? GPU_LIMIT_ERR : "error: " + (e && e.message || e)) };
+        results['quant-ternary-2step-compiled'] = { note: rowNote(e) };
       }
     }
     settle();
